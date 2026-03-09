@@ -41,6 +41,7 @@ import {
 } from "recharts";
 
 export default function Dashboard() {
+
   const [user, setUser] = useState(null);
   const [files, setFiles] = useState([]);
   const [views, setViews] = useState([]);
@@ -77,7 +78,9 @@ export default function Dashboard() {
 
   const navigate = useNavigate();
   
+
   /* AUTH CHECK */
+
   useEffect(()=>{
     const unsubscribe = onAuthStateChanged(auth,(currentUser)=>{
       setUser(currentUser);
@@ -86,7 +89,9 @@ export default function Dashboard() {
     return ()=>unsubscribe();
   },[]);
 
+
   /* LOGOUT */
+
   const handleLogout = async()=>{
     try{
       await signOut(auth);
@@ -97,7 +102,9 @@ export default function Dashboard() {
     }
   };
 
+
   /* LOAD PROPOSALS */
+
   useEffect(()=>{
     if(!user) return;
     const loadFiles = async()=>{
@@ -116,7 +123,9 @@ export default function Dashboard() {
     loadFiles();
   },[user]);
 
+
   /* LISTEN TO VIEW EVENTS */
+
   useEffect(()=>{
     if (!user) return;
     const q = query(
@@ -137,7 +146,9 @@ export default function Dashboard() {
     return ()=>unsub();
   },[user]);
 
+
   /* LISTEN TO ENGAGEMENT SESSIONS */
+
   useEffect(()=>{
     if (!user) return;
     const unsub = onSnapshot(
@@ -153,12 +164,16 @@ export default function Dashboard() {
     return ()=>unsub();
   },[user]);
 
+
   /* COUNT VIEWS PER FILE */
+
   const getViewCount = (fileName)=>{
     return views.filter(v=>v.fileName===fileName).length;
   };
 
+
   /* CHART DATA */
+
   const proposalChartData = files.map(file=>({
     name: file.name.length > 20 ? file.name.substring(0,20)+"..." : file.name,
     views: getViewCount(file.name),
@@ -178,14 +193,18 @@ export default function Dashboard() {
     views: dailyViews[date]
   }));
 
+
   /* VIEW PROPOSAL */
+
   const viewProposal = (file)=>{
     const fullPath = `proposals/${file.name}`;
     const encoded = btoa(fullPath);
     window.open(`${window.location.origin}/p/${encoded}`,"_blank");
   };
 
+
   /* DOWNLOAD */
+
   const downloadFile = async(file)=>{
     try{
       const url = await getDownloadURL(ref(storage,`proposals/${file.name}`));
@@ -194,6 +213,7 @@ export default function Dashboard() {
       alert(error.message);
     }
   };
+
 
   /* ========== DELETE FUNCTIONS ========== */
 
@@ -365,6 +385,7 @@ export default function Dashboard() {
     }
   };
 
+
   // Filter proposals based on search query
   const filteredProposals = files.filter(file =>
     file.name.toLowerCase().includes(proposalSearch.toLowerCase())
@@ -411,8 +432,13 @@ export default function Dashboard() {
   const totalEngagementPages = Math.ceil(filteredEngagement.length / engagementPerPage);
 
   if(!authChecked) return <div style={{padding:40}}>Loading...</div>;
+<<<<<<< Updated upstream
+  if(!user) return <Navigate to="/login"/>;
+=======
 
   if(!user) return <Navigate to="/login"/>
+>>>>>>> Stashed changes
+
 
   return(
     <div style={{display:"flex", height:"100vh", fontFamily:"Arial"}}>
@@ -532,117 +558,110 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* SIDEBAR WITH ICONS */}
-      <div style={sidebarContainerStyle(sidebarCollapsed)}>
+      {/* SIDEBAR */}
+      <div style={sidebarStyle}>
+        <h2 style={{color:"#fff", display:"flex", alignItems:"center", gap:10, marginBottom:20}}>
+          <MdDashboard size={28} />
+          <span>Admin</span>
+        </h2>
 
-        <div style={floatingSidebarStyle(sidebarCollapsed)}>
-
-          <div style={sidebarHeaderStyle}>
-            <div style={logoContainerStyle}>
-              <MdDashboard size={sidebarCollapsed ? 32 : 36} color="#00D4FF" />
-              {!sidebarCollapsed && (
-                <div>
-                  <h2 style={{color:"#fff", margin:0, fontSize:22, fontWeight:700, letterSpacing:"1px"}}>Admin</h2>
-                  <p style={{color:"rgba(0,212,255,0.7)", margin:0, fontSize:11, letterSpacing:"2px"}}>DASHBOARD</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div style={{display:"flex", flexDirection:"column", gap: sidebarCollapsed ? 16 : 10, flex:1, marginTop: sidebarCollapsed ? 30 : 20}}>
-
-          <button 
-            style={sidebarBtn(activeTab==="home", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("home")}
-          >
-            <MdHome size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Dashboard</span>}
-          </button>
-
-          <button 
-            style={sidebarBtn(activeTab==="proposals", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("proposals")}
-          >
-            <MdPictureAsPdf size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Proposals</span>}
-          </button>
-
-          <button 
-            style={sidebarBtn(activeTab==="upload", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("upload")}
-          >
-            <MdFileUpload size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Upload</span>}
-          </button>
-
-          <button 
-            style={sidebarBtn(activeTab==="views", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("views")}
-          >
-            <MdRemoveRedEye size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Live Views</span>}
-          </button>
-
-          <button 
-            style={sidebarBtn(activeTab==="engagement", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("engagement")}
-          >
-            <MdTimeline size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Engagement</span>}
-          </button>
-
-          </div>
-
-          <button
-            onClick={handleLogout}
-            style={logoutBtnStyle(sidebarCollapsed)}
-          >
-            <MdLogout size={sidebarCollapsed ? 26 : 22}/>
-            {!sidebarCollapsed && <span>Logout</span>}
-          </button>
-
-        </div>
-
+<<<<<<< Updated upstream
         <button 
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          style={collapseBtnStyle}
+          style={sidebarBtn(activeTab==="home")} 
+          onClick={()=>setActiveTab("home")}
         >
-          {sidebarCollapsed ? <MdChevronRight size={32} /> : <MdChevronLeft size={32} />}
+          <MdHome size={20} style={{marginRight:10}} />
+          Dashboard
         </button>
 
+        <button 
+          style={sidebarBtn(activeTab==="proposals")} 
+          onClick={()=>setActiveTab("proposals")}
+        >
+          <MdPictureAsPdf size={20} style={{marginRight:10}} />
+          Proposals
+        </button>
+
+        <button 
+          style={sidebarBtn(activeTab==="upload")} 
+          onClick={()=>setActiveTab("upload")}
+        >
+          <MdFileUpload size={20} style={{marginRight:10}} />
+          Upload Proposal
+        </button>
+
+        <button 
+          style={sidebarBtn(activeTab==="views")} 
+          onClick={()=>setActiveTab("views")}
+        >
+          <MdRemoveRedEye size={20} style={{marginRight:10}} />
+          Live Views
+        </button>
+
+        <button 
+          style={sidebarBtn(activeTab==="engagement")} 
+          onClick={()=>setActiveTab("engagement")}
+        >
+          <MdTimeline size={20} style={{marginRight:10}} />
+          Engagement
+        </button>
+
+        <button
+          onClick={handleLogout}
+          style={{
+            marginTop:"auto",
+            padding:12,
+            border:"none",
+            borderRadius:6,
+            cursor:"pointer",
+            background:"#e53935",
+            color:"#fff",
+            display:"flex",
+            alignItems:"center",
+            justifyContent:"center",
+            gap:8,
+            fontSize:"16px",
+            fontWeight:"bold",
+            transition:"background 0.3s"
+          }}
+          onMouseEnter={(e)=>e.currentTarget.style.background="#c62828"}
+          onMouseLeave={(e)=>e.currentTarget.style.background="#e53935"}
+        >
+          <MdLogout size={22}/>
+          Logout
+        </button>
       </div>
 
       {/* MAIN CONTENT */}
-      <div style={mainContentStyle(sidebarCollapsed)}>
-
+      <div style={mainContentStyle}>
         {/* User Info Bar */}
-        <div style={userBarStyle}>
-          <div style={avatarStyle}>
+        <div style={{
+          background: "#e3f2fd",
+          padding: "10px 20px",
+          borderRadius: 8,
+          marginBottom: 20,
+          display: "flex",
+          alignItems: "center",
+          gap: 10
+        }}>
+          <div style={{
+            width: 40,
+            height: 40,
+            borderRadius: "50%",
+            background: "#1976D2",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
+            fontWeight: "bold",
+            fontSize: 18
+          }}>
             {user?.email?.charAt(0).toUpperCase() || "A"}
           </div>
-          <div style={userInfoTextStyle}>
-            <div style={userLabelStyle}>Welcome back,</div>
-            <div style={userEmailStyle}>{user?.email}</div>
-          </div>
-          <div style={userBadgeStyle}>
-            <span style={dotStyle}></span>
-            Online
+          <div>
+            <strong>Logged in as:</strong> {user?.email}
           </div>
         </div>
-
-        {/* CSS Animation */}
-        <style>{`
-          @keyframes slideIn {
-            from {
-              transform: translateX(100%);
-              opacity: 0;
-            }
-            to {
-              transform: translateX(0);
-              opacity: 1;
-            }
-          }
-        `}</style>
 
         {/* DASHBOARD */}
         {activeTab==="home" && (
@@ -724,103 +743,51 @@ export default function Dashboard() {
               <MdPictureAsPdf size={28} color="#1976D2" />
               Uploaded Proposals
             </h2>
-            
-            {/* Search Bar */}
-            <div style={searchContainerStyle}>
-              <input
-                type="text"
-                placeholder="Search proposals..."
-                value={proposalSearch}
-                onChange={(e) => {
-                  setProposalSearch(e.target.value);
-                  setProposalPage(1);
-                }}
-                style={searchInputStyle}
-              />
-              <span style={searchResultStyle}>
-                {filteredProposals.length} proposal{filteredProposals.length !== 1 ? 's' : ''} found
-              </span>
-            </div>
 
             {loadingFiles ? (
               <p>Loading...</p>
             ) : (
-              <>
-                <table style={table}>
-                  <thead>
-                    <tr style={thead}>
-                      <th style={th}>File</th>
-                      <th style={th}>Views</th>
-                      <th style={th}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedProposals.map((file,i)=>(
-                      <tr key={i} style={i%2===0?rowEven:rowOdd}>
-                        <td style={td}>
-                          <div style={{display:"flex", alignItems:"center", gap:8}}>
-                            <MdDescription color="#1976D2" />
-                            {file.name}
-                          </div>
-                        </td>
-                        <td style={td}>
-                          <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
-                            {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
-                          </div>
-                        </td>
-                        <td style={td}>
-                          <button style={viewBtn} onClick={()=>viewProposal(file)}>
-                            <MdVisibility size={16} style={{marginRight:5}} />
-                            View
-                          </button>
-                          <button style={downloadBtn} onClick={()=>downloadFile(file)}>
-                            <MdFileUpload size={16} style={{marginRight:5}} />
-                            Download
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                
-                {/* Pagination */}
-                {totalProposalPages > 1 && (
-                  <div style={paginationContainerStyle}>
-                    <button 
-                      onClick={() => setProposalPage(p => Math.max(1, p - 1))}
-                      disabled={proposalPage === 1}
-                      style={paginationBtnStyle(proposalPage === 1)}
-                    >
-                      Previous
-                    </button>
-                    
-                    <div style={pageNumbersStyle}>
-                      {Array.from({length: totalProposalPages}, (_, i) => i + 1).map(page => (
-                        <button
-                          key={page}
-                          onClick={() => setProposalPage(page)}
-                          style={pageNumberStyle(proposalPage === page)}
-                        >
-                          {page}
+              <table style={table}>
+                <thead>
+                  <tr style={thead}>
+                    <th style={th}>File</th>
+                    <th style={th}>Views</th>
+                    <th style={th}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {files.map((file,i)=>(
+                    <tr key={i} style={i%2===0?rowEven:rowOdd}>
+                      <td style={td}>
+                        <div style={{display:"flex", alignItems:"center", gap:8}}>
+                          <MdDescription color="#1976D2" />
+                          {file.name}
+                        </div>
+                      </td>
+                      <td style={td}>
+                        <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                          {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
+                        </div>
+                      </td>
+                      <td style={td}>
+                        <button style={viewBtn} onClick={()=>viewProposal(file)}>
+                          <MdVisibility size={16} style={{marginRight:5}} />
+                          View
                         </button>
-                      ))}
-                    </div>
-                    
-                    <button 
-                      onClick={() => setProposalPage(p => Math.min(totalProposalPages, p + 1))}
-                      disabled={proposalPage === totalProposalPages}
-                      style={paginationBtnStyle(proposalPage === totalProposalPages)}
-                    >
-                      Next
-                    </button>
-                  </div>
-                )}
-              </>
+                        <button style={downloadBtn} onClick={()=>downloadFile(file)}>
+                          <MdFileUpload size={16} style={{marginRight:5}} />
+                          Download
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </>
         )}
 
-        {/* LIVE VIEWS with Delete and Search */}
+        {/* LIVE VIEWS with Delete */}
         {activeTab==="views" && (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -899,23 +866,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Search Bar */}
-            <div style={searchContainerStyle}>
-              <input
-                type="text"
-                placeholder="Search by file, viewer email or ID..."
-                value={viewsSearch}
-                onChange={(e) => {
-                  setViewsSearch(e.target.value);
-                  setViewsPage(1);
-                }}
-                style={searchInputStyle}
-              />
-              <span style={searchResultStyle}>
-                {filteredViews.length} view{filteredViews.length !== 1 ? 's' : ''} found
-              </span>
-            </div>
-
             {/* Filter Info */}
             <div style={{
               background: "#e3f2fd",
@@ -928,7 +878,7 @@ export default function Dashboard() {
               fontSize: 14
             }}>
               <MdFilterList color="#1976D2" />
-              Showing {paginatedViews.length} of {filteredViews.length} views
+              Showing {getFilteredViews().length} of {views.length} views
               {dateFilter !== "all" && ` (filtered by: ${dateFilter})`}
             </div>
 
@@ -950,7 +900,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedViews.map((v, i) => (
+                {getFilteredViews().map((v, i) => (
                   <tr key={i} style={i % 2 === 0 ? rowEven : rowOdd}>
                     <td style={td}>
                       <input
@@ -991,7 +941,7 @@ export default function Dashboard() {
                     </td>
                   </tr>
                 ))}
-                {paginatedViews.length === 0 && (
+                {getFilteredViews().length === 0 && (
                   <tr>
                     <td colSpan={6} style={{ textAlign: "center", padding: 30 }}>
                       No views found
@@ -1000,43 +950,10 @@ export default function Dashboard() {
                 )}
               </tbody>
             </table>
-            
-            {/* Pagination */}
-            {totalViewsPages > 1 && (
-              <div style={paginationContainerStyle}>
-                <button 
-                  onClick={() => setViewsPage(p => Math.max(1, p - 1))}
-                  disabled={viewsPage === 1}
-                  style={paginationBtnStyle(viewsPage === 1)}
-                >
-                  Previous
-                </button>
-                
-                <div style={pageNumbersStyle}>
-                  {Array.from({length: totalViewsPages}, (_, i) => i + 1).map(page => (
-                    <button
-                      key={page}
-                      onClick={() => setViewsPage(page)}
-                      style={pageNumberStyle(viewsPage === page)}
-                    >
-                      {page}
-                    </button>
-                  ))}
-                </div>
-                
-                <button 
-                  onClick={() => setViewsPage(p => Math.min(totalViewsPages, p + 1))}
-                  disabled={viewsPage === totalViewsPages}
-                  style={paginationBtnStyle(viewsPage === totalViewsPages)}
-                >
-                  Next
-                </button>
-              </div>
-            )}
           </>
         )}
 
-        {/* ENGAGEMENT with Delete and Search */}
+        {/* ENGAGEMENT with Delete */}
         {activeTab==="engagement" && (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -1115,23 +1032,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Search Bar */}
-            <div style={searchContainerStyle}>
-              <input
-                type="text"
-                placeholder="Search by proposal or viewer..."
-                value={engagementSearch}
-                onChange={(e) => {
-                  setEngagementSearch(e.target.value);
-                  setEngagementPage(1);
-                }}
-                style={searchInputStyle}
-              />
-              <span style={searchResultStyle}>
-                {filteredEngagement.length} session{filteredEngagement.length !== 1 ? 's' : ''} found
-              </span>
-            </div>
-
             {/* Filter Info */}
             <div style={{
               background: "#e3f2fd",
@@ -1144,7 +1044,7 @@ export default function Dashboard() {
               fontSize: 14
             }}>
               <MdFilterList color="#1976D2" />
-              Showing {paginatedEngagement.length} of {filteredEngagement.length} sessions
+              Showing {getFilteredSessions().length} of {sessions.length} sessions
               {dateFilter !== "all" && ` (filtered by: ${dateFilter})`}
             </div>
 
@@ -1166,7 +1066,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedEngagement.map((s, i) => (
+                {getFilteredSessions().map((s, i) => (
                   <tr key={i} style={i % 2 === 0 ? rowEven : rowOdd}>
                     <td style={td}>
                       <input
@@ -1215,7 +1115,7 @@ export default function Dashboard() {
                     </td>
                   </tr>
                 ))}
-                {paginatedEngagement.length === 0 && (
+                {getFilteredSessions().length === 0 && (
                   <tr>
                     <td colSpan={6} style={{ textAlign: "center", padding: 30 }}>
                       No engagement data found
@@ -1224,49 +1124,577 @@ export default function Dashboard() {
                 )}
               </tbody>
             </table>
-            
-            {/* Pagination */}
-            {totalEngagementPages > 1 && (
-              <div style={paginationContainerStyle}>
-                <button 
-                  onClick={() => setEngagementPage(p => Math.max(1, p - 1))}
-                  disabled={engagementPage === 1}
-                  style={paginationBtnStyle(engagementPage === 1)}
-                >
-                  Previous
-                </button>
-                
-                <div style={pageNumbersStyle}>
-                  {Array.from({length: totalEngagementPages}, (_, i) => i + 1).map(page => (
-                    <button
-                      key={page}
-                      onClick={() => setEngagementPage(page)}
-                      style={pageNumberStyle(engagementPage === page)}
-                    >
-                      {page}
-                    </button>
-                  ))}
-                </div>
-                
-                <button 
-                  onClick={() => setEngagementPage(p => Math.min(totalEngagementPages, p + 1))}
-                  disabled={engagementPage === totalEngagementPages}
-                  style={paginationBtnStyle(engagementPage === totalEngagementPages)}
-                >
-                  Next
-                </button>
-              </div>
-            )}
           </>
         )}
+=======
+  <div style={sidebarContainerStyle(sidebarCollapsed)}>
+
+    <div style={floatingSidebarStyle(sidebarCollapsed)}>
+
+      <div style={sidebarHeaderStyle}>
+        <div style={logoContainerStyle}>
+          <MdDashboard size={sidebarCollapsed ? 32 : 36} color="#00D4FF" />
+          {!sidebarCollapsed && (
+            <div>
+              <h2 style={{color:"#fff", margin:0, fontSize:22, fontWeight:700, letterSpacing:"1px"}}>Admin</h2>
+              <p style={{color:"rgba(0,212,255,0.7)", margin:0, fontSize:11, letterSpacing:"2px"}}>DASHBOARD</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{display:"flex", flexDirection:"column", gap: sidebarCollapsed ? 16 : 10, flex:1, marginTop: sidebarCollapsed ? 30 : 20}}>
+
+      <button 
+        style={sidebarBtn(activeTab==="home", sidebarCollapsed)} 
+        onClick={()=>setActiveTab("home")}
+      >
+        <MdHome size={sidebarCollapsed ? 28 : 22} />
+        {!sidebarCollapsed && <span>Dashboard</span>}
+      </button>
+
+      <button 
+        style={sidebarBtn(activeTab==="proposals", sidebarCollapsed)} 
+        onClick={()=>setActiveTab("proposals")}
+      >
+        <MdPictureAsPdf size={sidebarCollapsed ? 28 : 22} />
+        {!sidebarCollapsed && <span>Proposals</span>}
+      </button>
+
+      <button 
+        style={sidebarBtn(activeTab==="upload", sidebarCollapsed)} 
+        onClick={()=>setActiveTab("upload")}
+      >
+        <MdFileUpload size={sidebarCollapsed ? 28 : 22} />
+        {!sidebarCollapsed && <span>Upload</span>}
+      </button>
+
+      <button 
+        style={sidebarBtn(activeTab==="views", sidebarCollapsed)} 
+        onClick={()=>setActiveTab("views")}
+      >
+        <MdRemoveRedEye size={sidebarCollapsed ? 28 : 22} />
+        {!sidebarCollapsed && <span>Live Views</span>}
+      </button>
+
+      <button 
+        style={sidebarBtn(activeTab==="engagement", sidebarCollapsed)} 
+        onClick={()=>setActiveTab("engagement")}
+      >
+        <MdTimeline size={sidebarCollapsed ? 28 : 22} />
+        {!sidebarCollapsed && <span>Engagement</span>}
+      </button>
 
       </div>
 
+      <button
+        onClick={handleLogout}
+        style={logoutBtnStyle(sidebarCollapsed)}
+      >
+        <MdLogout size={sidebarCollapsed ? 26 : 22}/>
+        {!sidebarCollapsed && <span>Logout</span>}
+      </button>
+
     </div>
+
+    <button 
+      onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+      style={collapseBtnStyle}
+    >
+      {sidebarCollapsed ? <MdChevronRight size={32} /> : <MdChevronLeft size={32} />}
+    </button>
+
+  </div>
+
+
+  {/* MAIN CONTENT */}
+
+  <div style={mainContentStyle(sidebarCollapsed)}>
+
+    {/* User Info Bar */}
+    <div style={userBarStyle}>
+      <div style={avatarStyle}>
+        {user?.email?.charAt(0).toUpperCase() || "A"}
+      </div>
+      <div style={userInfoTextStyle}>
+        <div style={userLabelStyle}>Welcome back,</div>
+        <div style={userEmailStyle}>{user?.email}</div>
+      </div>
+      <div style={userBadgeStyle}>
+        <span style={dotStyle}></span>
+        Online
+>>>>>>> Stashed changes
+      </div>
+
+      {/* CSS Animation */}
+      <style>{`
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+      `}</style>
+    </div>
+<<<<<<< Updated upstream
+=======
+
+  {/* DASHBOARD */}
+
+  {activeTab==="home" && (
+
+  <>
+
+  <h2 style={{display:"flex", alignItems:"center", gap:10}}>
+    <MdDashboard size={28} color="#1976D2" />
+    Dashboard Summary
+  </h2>
+
+  <div style={summaryContainer}>
+
+  <div style={card}>
+    <MdDescription size={32} color="#1976D2" style={{marginBottom:10}} />
+    <h3>Total Proposals</h3>
+    <p style={number}>{files.length}</p>
+  </div>
+
+  <div style={card}>
+    <MdRemoveRedEye size={32} color="#4CAF50" style={{marginBottom:10}} />
+    <h3>Total Views</h3>
+    <p style={number}>{views.length}</p>
+  </div>
+
+  <div style={card}>
+    <MdAnalytics size={32} color="#FF9800" style={{marginBottom:10}} />
+    <h3>Unique Viewers</h3>
+    <p style={number}>
+    {new Set(
+    views
+    .filter(v=>v.viewerId)
+    .map(v=>v.viewerId)
+    ).size}
+    </p>
+  </div>
+
+  </div>
+
+
+  <h3 style={{marginTop:40, display:"flex", alignItems:"center", gap:8}}>
+    <MdTimeline color="#2196F3" />
+    Views per Proposal
+  </h3>
+
+  <ResponsiveContainer width="100%" height={300}>
+  <BarChart data={proposalChartData}>
+  <CartesianGrid strokeDasharray="3 3"/>
+  <XAxis dataKey="name"/>
+  <YAxis/>
+  <Tooltip/>
+  <Bar dataKey="views" fill="#2196F3"/>
+  </BarChart>
+  </ResponsiveContainer>
+
+
+  <h3 style={{marginTop:40, display:"flex", alignItems:"center", gap:8}}>
+    <MdAnalytics color="#4CAF50" />
+    Daily View Traffic
+  </h3>
+
+  <ResponsiveContainer width="100%" height={300}>
+  <LineChart data={dailyChartData}>
+  <CartesianGrid strokeDasharray="3 3"/>
+  <XAxis dataKey="date"/>
+  <YAxis/>
+  <Tooltip/>
+  <Line type="monotone" dataKey="views" stroke="#4CAF50" strokeWidth={3}/>
+  </LineChart>
+  </ResponsiveContainer>
+
+  </>
+
+  )}
+
+
+  {/* UPLOAD */}
+
+  {activeTab==="upload" && (
+
+  <>
+    <h2 style={{display:"flex", alignItems:"center", gap:10}}>
+      <MdFileUpload size={28} color="#1976D2" />
+      Upload New Proposal
+    </h2>
+    <ProposalUploader/>
+  </>
+
+  )}
+
+
+  {/* PROPOSALS */}
+
+  {activeTab==="proposals" && (
+
+  <>
+
+    <h2 style={{display:"flex", alignItems:"center", gap:10}}>
+      <MdPictureAsPdf size={28} color="#1976D2" />
+      Uploaded Proposals
+    </h2>
+    
+    {/* Search Bar */}
+    <div style={searchContainerStyle}>
+      <input
+        type="text"
+        placeholder="Search proposals..."
+        value={proposalSearch}
+        onChange={(e) => {
+          setProposalSearch(e.target.value);
+          setProposalPage(1); // Reset to first page on search
+        }}
+        style={searchInputStyle}
+      />
+      <span style={searchResultStyle}>
+        {filteredProposals.length} proposal{filteredProposals.length !== 1 ? 's' : ''} found
+      </span>
+    </div>
+
+  {loadingFiles ? (
+
+  <p>Loading...</p>
+
+  ):(
+
+  <>
+  <table style={table}>
+
+  <thead>
+  <tr style={thead}>
+  <th style={th}>File</th>
+  <th style={th}>Views</th>
+  <th style={th}>Actions</th>
+  </tr>
+  </thead>
+
+  <tbody>
+
+  {paginatedProposals.map((file,i)=>(
+
+  <tr key={i} style={i%2===0?rowEven:rowOdd}>
+
+  <td style={td}>
+    <div style={{display:"flex", alignItems:"center", gap:8}}>
+      <MdDescription color="#1976D2" />
+      {file.name}
+    </div>
+  </td>
+
+  <td style={td}>
+    <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+      {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
+    </div>
+  </td>
+
+  <td style={td}>
+
+  <button style={viewBtn} onClick={()=>viewProposal(file)}>
+    <MdVisibility size={16} style={{marginRight:5}} />
+    View
+  </button>
+
+  <button style={downloadBtn} onClick={()=>downloadFile(file)}>
+    <MdFileUpload size={16} style={{marginRight:5}} />
+    Download
+  </button>
+
+  </td>
+
+  </tr>
+
+  ))}
+
+  </tbody>
+
+  </table>
+  
+  {/* Pagination */}
+  {totalProposalPages > 1 && (
+    <div style={paginationContainerStyle}>
+      <button 
+        onClick={() => setProposalPage(p => Math.max(1, p - 1))}
+        disabled={proposalPage === 1}
+        style={paginationBtnStyle(proposalPage === 1)}
+      >
+        Previous
+      </button>
+      
+      <div style={pageNumbersStyle}>
+        {Array.from({length: totalProposalPages}, (_, i) => i + 1).map(page => (
+          <button
+            key={page}
+            onClick={() => setProposalPage(page)}
+            style={pageNumberStyle(proposalPage === page)}
+          >
+            {page}
+          </button>
+        ))}
+      </div>
+      
+      <button 
+        onClick={() => setProposalPage(p => Math.min(totalProposalPages, p + 1))}
+        disabled={proposalPage === totalProposalPages}
+        style={paginationBtnStyle(proposalPage === totalProposalPages)}
+      >
+        Next
+      </button>
+    </div>
+  )}
+  </>
+
+  )}
+
+  </>
+
+  )}
+
+
+  {/* LIVE VIEWS */}
+
+  {activeTab==="views" && (
+
+  <>
+
+    <h2 style={{display:"flex", alignItems:"center", gap:10}}>
+      <MdRemoveRedEye size={28} color="#1976D2" />
+      Live Proposal Views
+    </h2>
+    
+    {/* Search Bar */}
+    <div style={searchContainerStyle}>
+      <input
+        type="text"
+        placeholder="Search by file, viewer email or ID..."
+        value={viewsSearch}
+        onChange={(e) => {
+          setViewsSearch(e.target.value);
+          setViewsPage(1);
+        }}
+        style={searchInputStyle}
+      />
+      <span style={searchResultStyle}>
+        {filteredViews.length} view{filteredViews.length !== 1 ? 's' : ''} found
+      </span>
+    </div>
+
+  <table style={table}>
+
+  <thead>
+  <tr style={thead}>
+  <th style={th}>File</th>
+  <th style={th}>Viewer Email</th>
+  <th style={th}>Viewer ID</th>
+  <th style={th}>Viewed At</th>
+  </tr>
+  </thead>
+
+  <tbody>
+
+  {paginatedViews.map((v,i)=>(
+
+  <tr key={i} style={i%2===0?rowEven:rowOdd}>
+
+  <td style={td}>
+    <div style={{display:"flex", alignItems:"center", gap:8}}>
+      <MdDescription color="#1976D2" />
+      {v.fileName||"N/A"}
+    </div>
+  </td>
+
+  <td style={td}>{v.viewerEmail||"Anonymous"}</td>
+
+  <td style={td}>{v.viewerId||"Anonymous"}</td>
+
+  <td style={td}>
+  {v.viewedAt
+  ? v.viewedAt.toLocaleString()
+  : "Loading"}
+  </td>
+
+  </tr>
+
+  ))}
+
+  </tbody>
+
+  </table>
+  
+  {/* Pagination */}
+  {totalViewsPages > 1 && (
+    <div style={paginationContainerStyle}>
+      <button 
+        onClick={() => setViewsPage(p => Math.max(1, p - 1))}
+        disabled={viewsPage === 1}
+        style={paginationBtnStyle(viewsPage === 1)}
+      >
+        Previous
+      </button>
+      
+      <div style={pageNumbersStyle}>
+        {Array.from({length: totalViewsPages}, (_, i) => i + 1).map(page => (
+          <button
+            key={page}
+            onClick={() => setViewsPage(page)}
+            style={pageNumberStyle(viewsPage === page)}
+          >
+            {page}
+          </button>
+        ))}
+      </div>
+      
+      <button 
+        onClick={() => setViewsPage(p => Math.min(totalViewsPages, p + 1))}
+        disabled={viewsPage === totalViewsPages}
+        style={paginationBtnStyle(viewsPage === totalViewsPages)}
+      >
+        Next
+      </button>
+    </div>
+  )}
+
+  </>
+
+  )}
+
+
+  {/* ENGAGEMENT */}
+
+  {activeTab==="engagement" && (
+
+  <>
+
+    <h2 style={{display:"flex", alignItems:"center", gap:10}}>
+      <MdTimeline size={28} color="#1976D2" />
+      Proposal Engagement Analytics
+    </h2>
+    
+    {/* Search Bar */}
+    <div style={searchContainerStyle}>
+      <input
+        type="text"
+        placeholder="Search by proposal or viewer..."
+        value={engagementSearch}
+        onChange={(e) => {
+          setEngagementSearch(e.target.value);
+          setEngagementPage(1);
+        }}
+        style={searchInputStyle}
+      />
+      <span style={searchResultStyle}>
+        {filteredEngagement.length} session{filteredEngagement.length !== 1 ? 's' : ''} found
+      </span>
+    </div>
+
+  <table style={table}>
+
+  <thead>
+
+  <tr style={thead}>
+  <th style={th}>Proposal</th>
+  <th style={th}>Viewer</th>
+  <th style={th}>Time Spent</th>
+  <th style={th}>Pages Viewed</th>
+  </tr>
+
+  </thead>
+
+  <tbody>
+
+  {paginatedEngagement.map((s,i)=>(
+
+  <tr key={i} style={i%2===0?rowEven:rowOdd}>
+
+  <td style={td}>
+    <div style={{display:"flex", alignItems:"center", gap:8}}>
+      <MdDescription color="#1976D2" />
+      {s.fileName}
+    </div>
+  </td>
+
+  <td style={td}>{s.viewerEmail}</td>
+
+  <td style={td}>
+    <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+      <MdTimeline color="#FF9800" size={16} />
+      {Math.round((s.duration||0)/1000)} sec
+    </div>
+  </td>
+
+  <td style={td}>
+    <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+      <MdDescription color="#4CAF50" size={16} />
+      {s.pagesViewed?.length||0} pages
+    </div>
+  </td>
+
+  </tr>
+
+  ))}
+
+  </tbody>
+
+  </table>
+  
+  {/* Pagination */}
+  {totalEngagementPages > 1 && (
+    <div style={paginationContainerStyle}>
+      <button 
+        onClick={() => setEngagementPage(p => Math.max(1, p - 1))}
+        disabled={engagementPage === 1}
+        style={paginationBtnStyle(engagementPage === 1)}
+      >
+        Previous
+      </button>
+      
+      <div style={pageNumbersStyle}>
+        {Array.from({length: totalEngagementPages}, (_, i) => i + 1).map(page => (
+          <button
+            key={page}
+            onClick={() => setEngagementPage(page)}
+            style={pageNumberStyle(engagementPage === page)}
+          >
+            {page}
+          </button>
+        ))}
+      </div>
+      
+      <button 
+        onClick={() => setEngagementPage(p => Math.min(totalEngagementPages, p + 1))}
+        disabled={engagementPage === totalEngagementPages}
+        style={paginationBtnStyle(engagementPage === totalEngagementPages)}
+      >
+        Next
+      </button>
+    </div>
+  )}
+
+  </>
+
+  )}
+
+  </div>
+
+  </div>
+
+>>>>>>> Stashed changes
   );
 }
 
 /* STYLES */
+<<<<<<< Updated upstream
+=======
 
 /* FUTURISTIC FLOATING SIDEBAR CONTAINER */
 const sidebarContainerStyle = (collapsed) => ({
@@ -1530,6 +1958,7 @@ const pageNumberStyle = (isActive) => ({
 });
 
 /* OLD STYLES - Keeping for reference */
+>>>>>>> Stashed changes
 const sidebarStyle = {
   width: 250,
   background: "linear-gradient(180deg, #1976D2 0%, #1565C0 100%)",
