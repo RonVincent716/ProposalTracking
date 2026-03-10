@@ -57,6 +57,14 @@ export default function Dashboard() {
   const [deleteType, setDeleteType] = useState(null);
   const [deleteItem, setDeleteItem] = useState(null);
   const [dateFilter, setDateFilter] = useState("all");
+  
+  // Logout confirmation modal state
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  
+  // View proposal modal state
+  const [showViewModal, setShowViewModal] = useState(false);
+  const [viewingFile, setViewingFile] = useState(null);
+  const [viewUrl, setViewUrl] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteSuccess, setDeleteSuccess] = useState(null);
   
@@ -182,7 +190,10 @@ export default function Dashboard() {
   const viewProposal = (file)=>{
     const fullPath = `proposals/${file.name}`;
     const encoded = btoa(fullPath);
-    window.open(`${window.location.origin}/p/${encoded}`,"_blank");
+    const url = `${window.location.origin}/p/${encoded}`;
+    setViewUrl(url);
+    setViewingFile(file);
+    setShowViewModal(true);
   };
 
   /* DOWNLOAD */
@@ -415,7 +426,294 @@ export default function Dashboard() {
   if(!user) return <Navigate to="/login"/>
 
   return(
-    <div style={{display:"flex", height:"100vh", fontFamily:"Arial"}}>
+    <div style={{display:"flex", height:"100vh", fontFamily:"Arial", overflow:"hidden", maxWidth:"100vw"}}>
+
+      {/* LOGOUT CONFIRMATION MODAL */}
+      {showLogoutModal && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0,0,0,0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000,
+        }}>
+          <div style={{
+            background: "#fff",
+            padding: "30px 40px",
+            borderRadius: "16px",
+            maxWidth: "400px",
+            width: "90%",
+            textAlign: "center",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+          }}>
+            <div style={{
+              width: "60px",
+              height: "60px",
+              borderRadius: "50%",
+              background: "linear-gradient(135deg, #EF4444 0%, #DC2626 100%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 20px",
+            }}>
+              <MdLogout size={28} color="#fff" />
+            </div>
+            
+            <h3 style={{margin: "0 0 10px 0", color: "#1a1a2e", fontSize: "22px"}}>
+              Confirm Logout
+            </h3>
+            
+            <p style={{margin: "0 0 25px 0", color: "#666", fontSize: "15px", lineHeight: "1.5"}}>
+              Are you sure you want to logout from your account?
+            </p>
+            
+            <div style={{display: "flex", gap: "12px", justifyContent: "center"}}>
+              <button
+                onClick={() => setShowLogoutModal(false)}
+                style={{
+                  padding: "12px 24px",
+                  borderRadius: "10px",
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  color: "#666",
+                  fontSize: "15px",
+                  fontWeight: "600",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                Cancel
+              </button>
+              
+              <button
+                onClick={async () => {
+                  await handleLogout();
+                  setShowLogoutModal(false);
+                }}
+                style={{
+                  padding: "12px 24px",
+                  borderRadius: "10px",
+                  border: "none",
+                  background: "linear-gradient(135deg, #EF4444 0%, #DC2626 100%)",
+                  color: "#fff",
+                  fontSize: "15px",
+                  fontWeight: "600",
+                  cursor: "pointer",
+                  boxShadow: "0 4px 15px rgba(239, 68, 68, 0.3)",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                Yes, Logout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW PROPOSAL MODAL */}
+      {showViewModal && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(15, 23, 42, 0.85)",
+          backdropFilter: "blur(8px)",
+          WebkitBackdropFilter: "blur(8px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000,
+          padding: "20px",
+          animation: "fadeIn 0.3s ease",
+        }}>
+          <div style={{
+            background: "rgba(255, 255, 255, 0.98)",
+            borderRadius: "24px",
+            width: "100%",
+            maxWidth: "1000px",
+            height: "90vh",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            boxShadow: "0 25px 80px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1)",
+            border: "1px solid rgba(255, 255, 255, 0.2)",
+            animation: "slideUp 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "20px 30px",
+              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+              boxShadow: "0 4px 20px rgba(102, 126, 234, 0.3)",
+            }}>
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "15px",
+              }}>
+                <div style={{
+                  width: "44px",
+                  height: "44px",
+                  borderRadius: "12px",
+                  background: "rgba(255, 255, 255, 0.2)",
+                  backdropFilter: "blur(10px)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}>
+                  <MdDescription size={24} color="#fff" />
+                </div>
+                <div>
+                  <h3 style={{
+                    margin: 0,
+                    color: "#fff",
+                    fontSize: "18px",
+                    fontWeight: 600,
+                    letterSpacing: "0.5px",
+                  }}>
+                    Viewing Proposal
+                  </h3>
+                  <p style={{
+                    margin: "4px 0 0 0",
+                    color: "rgba(255,255,255,0.8)",
+                    fontSize: "13px",
+                    maxWidth: "400px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}>
+                    {viewingFile?.name || "Proposal"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowViewModal(false);
+                  setViewingFile(null);
+                  setViewUrl("");
+                }}
+                style={{
+                  background: "rgba(255,255,255,0.15)",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  color: "#fff",
+                  width: "42px",
+                  height: "42px",
+                  borderRadius: "12px",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "20px",
+                  transition: "all 0.3s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(239, 68, 68, 0.8)";
+                  e.currentTarget.style.transform = "rotate(90deg)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(255,255,255,0.15)";
+                  e.currentTarget.style.transform = "rotate(0deg)";
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            
+            {/* Modal Content - Iframe */}
+            <div style={{
+              flex: 1,
+              overflow: "hidden",
+              position: "relative",
+              background: "#f8f9fa",
+            }}>
+              {!viewUrl ? (
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  height: "100%",
+                  flexDirection: "column",
+                  gap: "20px",
+                }}>
+                  <div style={{
+                    width: "60px",
+                    height: "60px",
+                    border: "4px solid rgba(102, 126, 234, 0.1)",
+                    borderTop: "4px solid #667eea",
+                    borderRadius: "50%",
+                    animation: "spin 1s linear infinite",
+                  }} />
+                  <p style={{ color: "#666", fontSize: "14px" }}>Loading proposal...</p>
+                </div>
+              ) : (
+                <iframe
+                  src={viewUrl}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    border: "none",
+                  }}
+                  title="Proposal Viewer"
+                />
+              )}
+            </div>
+            
+            {/* Modal Footer */}
+            <div style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "18px 30px",
+              background: "#fff",
+              borderTop: "1px solid rgba(0,0,0,0.06)",
+            }}>
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                color: "#666",
+                fontSize: "13px",
+              }}>
+                <MdRemoveRedEye size={16} color="#667eea" />
+                <span>Viewing in modal mode</span>
+              </div>
+              <button
+                onClick={() => {
+                  setShowViewModal(false);
+                  setViewingFile(null);
+                  setViewUrl("");
+                }}
+                style={{
+                  padding: "12px 28px",
+                  borderRadius: "12px",
+                  border: "none",
+                  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                  color: "#fff",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  boxShadow: "0 4px 15px rgba(102, 126, 234, 0.3)",
+                  transition: "all 0.3s ease",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
+              >
+                <span>Close Viewer</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* DELETE CONFIRMATION MODAL */}
       {showDeleteModal && (
@@ -594,7 +892,7 @@ export default function Dashboard() {
           </div>
 
           <button
-            onClick={handleLogout}
+            onClick={() => setShowLogoutModal(true)}
             style={logoutBtnStyle(sidebarCollapsed)}
           >
             <MdLogout size={sidebarCollapsed ? 26 : 22}/>
@@ -642,6 +940,31 @@ export default function Dashboard() {
               opacity: 1;
             }
           }
+          @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+          }
+          @keyframes slideUp {
+            from {
+              transform: translateY(30px) scale(0.95);
+              opacity: 0;
+            }
+            to {
+              transform: translateY(0) scale(1);
+              opacity: 1;
+            }
+          }
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+          /* Hide horizontal scrollbar */
+          ::-webkit-scrollbar {
+            height: 0 !important;
+          }
+          .recharts-surface {
+            overflow: visible !important;
+          }
         `}</style>
 
         {/* DASHBOARD */}
@@ -676,33 +999,122 @@ export default function Dashboard() {
 
             <h3 style={{marginTop:40, display:"flex", alignItems:"center", gap:8}}>
               <MdTimeline color="#2196F3" />
-              Views per Proposal
+              Views per Proposal                 Daily View Traffic
             </h3>
 
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={proposalChartData}>
-                <CartesianGrid strokeDasharray="3 3"/>
-                <XAxis dataKey="name"/>
-                <YAxis/>
-                <Tooltip/>
-                <Bar dataKey="views" fill="#2196F3"/>
-              </BarChart>
-            </ResponsiveContainer>
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:30, marginTop:20}}>
+              {/* Views per Proposal Chart */}
+              <div>
+                <h4 style={{marginBottom:15, color:"#333", fontSize:16}}>Views per Proposal</h4>
+                <div style={{width:"100%", overflow:"hidden"}}>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={proposalChartData}>
+                      <CartesianGrid strokeDasharray="3 3"/>
+                      <XAxis dataKey="name"/>
+                      <YAxis/>
+                      <Tooltip/>
+                      <Bar dataKey="views" fill="#2196F3"/>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
 
+              {/* Daily View Traffic Chart */}
+              <div>
+                <h4 style={{marginBottom:15, color:"#333", fontSize:16}}>Daily View Traffic</h4>
+                <div style={{width:"100%", overflow:"hidden"}}>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <LineChart data={dailyChartData}>
+                      <CartesianGrid strokeDasharray="3 3"/>
+                      <XAxis dataKey="date"/>
+                      <YAxis/>
+                      <Tooltip/>
+                      <Line type="monotone" dataKey="views" stroke="#4CAF50" strokeWidth={3}/>
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Top User Performance */}
             <h3 style={{marginTop:40, display:"flex", alignItems:"center", gap:8}}>
-              <MdAnalytics color="#4CAF50" />
-              Daily View Traffic
+              <MdAnalytics color="#FF9800" />
+              Top User Performance
             </h3>
 
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={dailyChartData}>
-                <CartesianGrid strokeDasharray="3 3"/>
-                <XAxis dataKey="date"/>
-                <YAxis/>
-                <Tooltip/>
-                <Line type="monotone" dataKey="views" stroke="#4CAF50" strokeWidth={3}/>
-              </LineChart>
-            </ResponsiveContainer>
+            <div style={{marginTop:20}}>
+              <table style={{...table, marginTop:0}}>
+                <thead>
+                  <tr style={thead}>
+                    <th style={th}>Rank</th>
+                    <th style={th}>Viewer Email</th>
+                    <th style={th}>Total Time Spent</th>
+                    <th style={th}>Pages Viewed</th>
+                    <th style={th}>Sessions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    // Calculate top viewers by aggregating session data
+                    const userStats = {};
+                    sessions.forEach(s => {
+                      const email = s.viewerEmail || "Anonymous";
+                      if (!userStats[email]) {
+                        userStats[email] = { email, duration: 0, pages: 0, sessions: 0 };
+                      }
+                      userStats[email].duration += (s.duration || 0);
+                      userStats[email].pages += (s.pagesViewed?.length || 0);
+                      userStats[email].sessions += 1;
+                    });
+                    
+                    return Object.values(userStats)
+                      .sort((a, b) => b.duration - a.duration)
+                      .slice(0, 5)
+                      .map((user, i) => (
+                        <tr key={i} style={i % 2 === 0 ? rowEven : rowOdd}>
+                          <td style={td}>
+                            <div style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: "50%",
+                              background: i === 0 ? "#FFD700" : i === 1 ? "#C0C0C0" : i === 2 ? "#CD7F32" : "#e0e0e0",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontWeight: "bold",
+                              fontSize: 14,
+                              margin: "0 auto"
+                            }}>
+                              {i + 1}
+                            </div>
+                          </td>
+                          <td style={td}>{user.email}</td>
+                          <td style={td}>
+                            <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                              <MdTimeline color="#FF9800" size={16} />
+                              {Math.round(user.duration / 1000)} sec
+                            </div>
+                          </td>
+                          <td style={td}>
+                            <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                              <MdDescription color="#4CAF50" size={16} />
+                              {user.pages} pages
+                            </div>
+                          </td>
+                          <td style={td}>{user.sessions}</td>
+                        </tr>
+                      ));
+                  })()}
+                  {sessions.length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{textAlign: "center", padding: 30}}>
+                        No engagement data available
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
 
@@ -1386,11 +1798,10 @@ const mainContentStyle = (collapsed) => ({
   padding: "30px 40px",
   background: "#f4f6f8",
   overflowY: "auto",
-  transform: collapsed ? "translateX(20px)" : "translateX(30px)",
+  overflowX: "hidden",
   borderRadius: "24px 0 0 0",
   minHeight: "100vh",
-  transition: "margin-left 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
-  willChange: "margin-left",
+  width: collapsed ? "calc(100% - 100px)" : "calc(100% - 280px)",
 });
 
 /* USER BAR STYLES */

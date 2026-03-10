@@ -16,7 +16,8 @@ export default function ProposalPage() {
   useEffect(() => {
     const loadProposal = async () => {
       try {
-        const decoded = decodeURIComponent(path);
+        // Decode Base64 encoded path
+        const decoded = atob(path);
 
         const fileRef = ref(storage, decoded);
 
