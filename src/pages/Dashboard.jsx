@@ -166,13 +166,16 @@ export default function Dashboard() {
     return views.filter(v=>v.fileName===fileName).length;
   };
 
-  /* CHART DATA */
-  const proposalChartData = files.map(file=>({
-    name: file.name.length > 20 ? file.name.substring(0,20)+"..." : file.name,
-    views: getViewCount(file.name),
-    fullName: file.name
-  }));
+  /* ========== IMPROVED CHART DATA ========== */
 
+  // Helper function to get week number
+  const getWeekNumber = (date) => {
+    const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
+    const pastDaysOfYear = (date - firstDayOfYear) / 86400000;
+    return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+  };
+
+  // Calculate daily views for charts
   const dailyViews = {};
   views.forEach(v=>{
     if(!v.viewedAt) return;
@@ -181,10 +184,85 @@ export default function Dashboard() {
     dailyViews[date]++;
   });
 
-  const dailyChartData = Object.keys(dailyViews).map(date=>({
+  const rawDailyChartData = Object.keys(dailyViews).map(date=>({
     date,
     views: dailyViews[date]
   }));
+
+  // Process daily chart data - aggregate by week if too many points
+  const getDailyChartData = () => {
+    if (rawDailyChartData.length === 0) return [];
+    
+    // Get date range
+    const dates = rawDailyChartData.map(d => new Date(d.date));
+    const minDate = new Date(Math.min(...dates));
+    const maxDate = new Date(Math.max(...dates));
+    const dayDiff = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
+    
+    // If data spans more than 30 days, aggregate by week
+    if (dayDiff > 30) {
+      const weeklyData = {};
+      
+      rawDailyChartData.forEach(item => {
+        const date = new Date(item.date);
+        // Get week number and year
+        const weekNumber = getWeekNumber(date);
+        const weekKey = `${date.getFullYear()}-W${weekNumber}`;
+        
+        if (!weeklyData[weekKey]) {
+          weeklyData[weekKey] = {
+            date: `W${weekNumber}, ${date.getFullYear()}`,
+            views: 0,
+            originalDate: date
+          };
+        }
+        weeklyData[weekKey].views += item.views;
+      });
+      
+      // Convert to array and sort by date
+      return Object.values(weeklyData)
+        .sort((a, b) => a.originalDate - b.originalDate)
+        .map(item => ({
+          date: item.date,
+          views: item.views
+        }));
+    }
+    
+    // If data spans 30 days or less, show daily but limit to last 30 days
+    return rawDailyChartData.slice(-30);
+  };
+
+  // Process proposals chart data - show top 10 if too many
+  const getProposalChartData = () => {
+    // If there are too many files, show top 10 by views
+    if (files.length > 10) {
+      // Calculate views for each file and sort
+      const filesWithViews = files.map(file => ({
+        name: file.name,
+        views: getViewCount(file.name),
+        fullName: file.name
+      }));
+      
+      // Sort by views (descending) and take top 10
+      return filesWithViews
+        .sort((a, b) => b.views - a.views)
+        .slice(0, 10)
+        .map(file => ({
+          ...file,
+          name: file.name.length > 12 ? file.name.substring(0, 10) + "..." : file.name
+        }));
+    }
+    
+    // If 10 or fewer files, show all
+    return files.map(file => ({
+      name: file.name.length > 12 ? file.name.substring(0, 10) + "..." : file.name,
+      views: getViewCount(file.name),
+      fullName: file.name
+    }));
+  };
+
+  const proposalChartData = getProposalChartData();
+  const processedDailyChartData = getDailyChartData();
 
   /* VIEW PROPOSAL */
   const viewProposal = (file)=>{
@@ -958,19 +1036,36 @@ export default function Dashboard() {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
           }
-          /* Hide horizontal scrollbar */
-          ::-webkit-scrollbar {
-            height: 0 !important;
+          /* Responsive table styles */
+          table {
+            width: 100%;
+            table-layout: fixed;
+            word-wrap: break-word;
           }
-          .recharts-surface {
-            overflow: visible !important;
+          td, th {
+            word-break: break-word;
+            overflow-wrap: break-word;
+          }
+          .action-buttons {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+            justify-content: center;
+          }
+          @media (max-width: 768px) {
+            .action-buttons {
+              flex-direction: column;
+            }
+            .timestamp-cell {
+              font-size: 11px;
+            }
           }
         `}</style>
 
         {/* DASHBOARD */}
         {activeTab==="home" && (
           <>
-            <h2 style={{display:"flex", alignItems:"center", gap:10}}>
+            <h2 style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
               <MdDashboard size={28} color="#1976D2" />
               Dashboard Summary
             </h2>
@@ -997,59 +1092,130 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <h3 style={{marginTop:40, display:"flex", alignItems:"center", gap:8}}>
+            <h3 style={{marginTop:40, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
               <MdTimeline color="#2196F3" />
-              Views per Proposal                 Daily View Traffic
+              Analytics Overview
             </h3>
 
-            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:30, marginTop:20}}>
+            <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(400px, 1fr))", gap:30, marginTop:20}}>
               {/* Views per Proposal Chart */}
-              <div>
-                <h4 style={{marginBottom:15, color:"#333", fontSize:16}}>Views per Proposal</h4>
-                <div style={{width:"100%", overflow:"hidden"}}>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={proposalChartData}>
+              <div style={{minWidth:0, background:"#fff", padding:"20px", borderRadius:12, boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+                <h4 style={{marginBottom:15, color:"#333", fontSize:16}}>
+                  Views per Proposal {files.length > 10 && "(Top 10)"}
+                </h4>
+                <div style={{width:"100%", height:350}}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart 
+                      data={proposalChartData} 
+                      margin={{top:20, right:30, left:20, bottom:70}}
+                    >
                       <CartesianGrid strokeDasharray="3 3"/>
-                      <XAxis dataKey="name"/>
-                      <YAxis/>
-                      <Tooltip/>
-                      <Bar dataKey="views" fill="#2196F3"/>
+                      <XAxis 
+                        dataKey="name" 
+                        tick={{fontSize:11}} 
+                        interval={0}
+                        angle={-45}
+                        textAnchor="end"
+                        height={70}
+                        dy={10}
+                      />
+                      <YAxis 
+                        tick={{fontSize:11}}
+                        label={{ 
+                          value: 'Number of Views', 
+                          angle: -90, 
+                          position: 'insideLeft',
+                          style: { fontSize: 12, fill: '#666' }
+                        }}
+                      />
+                      <Tooltip 
+                        formatter={(value) => [`${value} views`, 'Views']}
+                        labelFormatter={(label) => {
+                          const file = files.find(f => f.name.startsWith(label.replace('...', '')));
+                          return file ? file.name : label;
+                        }}
+                      />
+                      <Bar 
+                        dataKey="views" 
+                        fill="#2196F3"
+                        radius={[4, 4, 0, 0]}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+                {files.length > 10 && (
+                  <p style={{fontSize:12, color:'#666', marginTop:10, textAlign:'center'}}>
+                    Showing top 10 proposals by views. Total proposals: {files.length}
+                  </p>
+                )}
               </div>
 
               {/* Daily View Traffic Chart */}
-              <div>
-                <h4 style={{marginBottom:15, color:"#333", fontSize:16}}>Daily View Traffic</h4>
-                <div style={{width:"100%", overflow:"hidden"}}>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <LineChart data={dailyChartData}>
+              <div style={{minWidth:0, background:"#fff", padding:"20px", borderRadius:12, boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+                <h4 style={{marginBottom:15, color:"#333", fontSize:16}}>
+                  Daily View Traffic {processedDailyChartData.length < rawDailyChartData.length && "(Weekly Aggregated)"}
+                </h4>
+                <div style={{width:"100%", height:350}}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart 
+                      data={processedDailyChartData} 
+                      margin={{top:20, right:30, left:20, bottom:70}}
+                    >
                       <CartesianGrid strokeDasharray="3 3"/>
-                      <XAxis dataKey="date"/>
-                      <YAxis/>
-                      <Tooltip/>
-                      <Line type="monotone" dataKey="views" stroke="#4CAF50" strokeWidth={3}/>
+                      <XAxis 
+                        dataKey="date" 
+                        tick={{fontSize:11}} 
+                        interval={Math.floor(processedDailyChartData.length / 8)}
+                        angle={-45}
+                        textAnchor="end"
+                        height={70}
+                        dy={10}
+                      />
+                      <YAxis 
+                        tick={{fontSize:11}}
+                        label={{ 
+                          value: 'Number of Views', 
+                          angle: -90, 
+                          position: 'insideLeft',
+                          style: { fontSize: 12, fill: '#666' }
+                        }}
+                      />
+                      <Tooltip 
+                        formatter={(value) => [`${value} views`, 'Views']}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="views" 
+                        stroke="#4CAF50" 
+                        strokeWidth={3}
+                        dot={{ r: 3, fill: "#4CAF50" }}
+                        activeDot={{ r: 6 }}
+                      />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
+                {processedDailyChartData.length < rawDailyChartData.length && (
+                  <p style={{fontSize:12, color:'#666', marginTop:10, textAlign:'center'}}>
+                    Data aggregated by week for better readability ({rawDailyChartData.length} days condensed to {processedDailyChartData.length} weeks)
+                  </p>
+                )}
               </div>
             </div>
 
             {/* Top User Performance */}
-            <h3 style={{marginTop:40, display:"flex", alignItems:"center", gap:8}}>
+            <h3 style={{marginTop:40, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
               <MdAnalytics color="#FF9800" />
               Top User Performance
             </h3>
 
-            <div style={{marginTop:20}}>
-              <table style={{...table, marginTop:0}}>
+            <div style={{marginTop:20, overflowX:"auto"}}>
+              <table style={{...table, minWidth:"600px"}}>
                 <thead>
                   <tr style={thead}>
                     <th style={th}>Rank</th>
                     <th style={th}>Viewer Email</th>
-                    <th style={th}>Total Time Spent</th>
-                    <th style={th}>Pages Viewed</th>
+                    <th style={th}>Time Spent</th>
+                    <th style={th}>Pages</th>
                     <th style={th}>Sessions</th>
                   </tr>
                 </thead>
@@ -1088,17 +1254,19 @@ export default function Dashboard() {
                               {i + 1}
                             </div>
                           </td>
-                          <td style={td}>{user.email}</td>
+                          <td style={{...td, maxWidth:"200px", overflow:"hidden", textOverflow:"ellipsis"}}>
+                            {user.email}
+                          </td>
                           <td style={td}>
-                            <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                            <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center", flexWrap:"wrap"}}>
                               <MdTimeline color="#FF9800" size={16} />
                               {Math.round(user.duration / 1000)} sec
                             </div>
                           </td>
                           <td style={td}>
-                            <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                            <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center", flexWrap:"wrap"}}>
                               <MdDescription color="#4CAF50" size={16} />
-                              {user.pages} pages
+                              {user.pages}
                             </div>
                           </td>
                           <td style={td}>{user.sessions}</td>
@@ -1121,7 +1289,7 @@ export default function Dashboard() {
         {/* UPLOAD */}
         {activeTab==="upload" && (
           <>
-            <h2 style={{display:"flex", alignItems:"center", gap:10}}>
+            <h2 style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
               <MdFileUpload size={28} color="#1976D2" />
               Upload New Proposal
             </h2>
@@ -1132,7 +1300,7 @@ export default function Dashboard() {
         {/* PROPOSALS */}
         {activeTab==="proposals" && (
           <>
-            <h2 style={{display:"flex", alignItems:"center", gap:10}}>
+            <h2 style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
               <MdPictureAsPdf size={28} color="#1976D2" />
               Uploaded Proposals
             </h2>
@@ -1150,7 +1318,7 @@ export default function Dashboard() {
                 style={searchInputStyle}
               />
               <span style={searchResultStyle}>
-                {filteredProposals.length} proposal{filteredProposals.length !== 1 ? 's' : ''} found
+                {filteredProposals.length} found
               </span>
             </div>
 
@@ -1158,42 +1326,46 @@ export default function Dashboard() {
               <p>Loading...</p>
             ) : (
               <>
-                <table style={table}>
-                  <thead>
-                    <tr style={thead}>
-                      <th style={th}>File</th>
-                      <th style={th}>Views</th>
-                      <th style={th}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedProposals.map((file,i)=>(
-                      <tr key={i} style={i%2===0?rowEven:rowOdd}>
-                        <td style={td}>
-                          <div style={{display:"flex", alignItems:"center", gap:8}}>
-                            <MdDescription color="#1976D2" />
-                            {file.name}
-                          </div>
-                        </td>
-                        <td style={td}>
-                          <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
-                            {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
-                          </div>
-                        </td>
-                        <td style={td}>
-                          <button style={viewBtn} onClick={()=>viewProposal(file)}>
-                            <MdVisibility size={16} style={{marginRight:5}} />
-                            View
-                          </button>
-                          <button style={downloadBtn} onClick={()=>downloadFile(file)}>
-                            <MdFileUpload size={16} style={{marginRight:5}} />
-                            Download
-                          </button>
-                        </td>
+                <div style={tableWrapperStyle}>
+                  <table style={{...table}}>
+                    <thead>
+                      <tr style={thead}>
+                        <th style={{...th, width:"60%"}}>File</th>
+                        <th style={{...th, width:"15%"}}>Views</th>
+                        <th style={{...th, width:"25%"}}>Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {paginatedProposals.map((file,i)=>(
+                        <tr key={i} style={i%2===0?rowEven:rowOdd}>
+                          <td style={{...td, textAlign:"left"}}>
+                            <div style={{display:"flex", alignItems:"center", gap:8}}>
+                              <MdDescription color="#1976D2" style={{flexShrink:0}} />
+                              <span style={{wordBreak:"break-word"}}>{file.name}</span>
+                            </div>
+                          </td>
+                          <td style={td}>
+                            <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                              {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
+                            </div>
+                          </td>
+                          <td style={td}>
+                            <div className="action-buttons">
+                              <button style={compactViewBtn} onClick={()=>viewProposal(file)}>
+                                <MdVisibility size={14} />
+                                <span>View</span>
+                              </button>
+                              <button style={compactDownloadBtn} onClick={()=>downloadFile(file)}>
+                                <MdFileUpload size={14} />
+                                <span>Download</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
                 
                 {/* Pagination */}
                 {totalProposalPages > 1 && (
@@ -1207,15 +1379,27 @@ export default function Dashboard() {
                     </button>
                     
                     <div style={pageNumbersStyle}>
-                      {Array.from({length: totalProposalPages}, (_, i) => i + 1).map(page => (
-                        <button
-                          key={page}
-                          onClick={() => setProposalPage(page)}
-                          style={pageNumberStyle(proposalPage === page)}
-                        >
-                          {page}
-                        </button>
-                      ))}
+                      {Array.from({length: Math.min(5, totalProposalPages)}, (_, i) => {
+                        let pageNum;
+                        if (totalProposalPages <= 5) {
+                          pageNum = i + 1;
+                        } else if (proposalPage <= 3) {
+                          pageNum = i + 1;
+                        } else if (proposalPage >= totalProposalPages - 2) {
+                          pageNum = totalProposalPages - 4 + i;
+                        } else {
+                          pageNum = proposalPage - 2 + i;
+                        }
+                        return (
+                          <button
+                            key={pageNum}
+                            onClick={() => setProposalPage(pageNum)}
+                            style={pageNumberStyle(proposalPage === pageNum)}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      })}
                     </div>
                     
                     <button 
@@ -1235,24 +1419,18 @@ export default function Dashboard() {
         {/* LIVE VIEWS with Delete and Search */}
         {activeTab==="views" && (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div style={headerActionsStyle}>
               <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <MdRemoveRedEye size={28} color="#1976D2" />
-                Live Proposal Views
+                Live Views
               </h2>
               
-              <div style={{ display: "flex", gap: 10 }}>
+              <div style={actionButtonsGroupStyle}>
                 {/* Filter Dropdown */}
                 <select
                   value={dateFilter}
                   onChange={(e) => setDateFilter(e.target.value)}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 6,
-                    border: "1px solid #ddd",
-                    background: "#fff",
-                    cursor: "pointer"
-                  }}
+                  style={filterSelectStyle}
                 >
                   <option value="all">All Time</option>
                   <option value="today">Today</option>
@@ -1267,21 +1445,10 @@ export default function Dashboard() {
                       setDeleteType("views");
                       setShowDeleteModal(true);
                     }}
-                    style={{
-                      padding: "8px 16px",
-                      background: "#d32f2f",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontWeight: "bold"
-                    }}
+                    style={deleteButtonStyle}
                   >
                     <MdDelete size={18} />
-                    Delete Selected ({selectedViews.length})
+                    Delete ({selectedViews.length})
                   </button>
                 )}
 
@@ -1292,20 +1459,10 @@ export default function Dashboard() {
                       setDeleteType("filteredViews");
                       setShowDeleteModal(true);
                     }}
-                    style={{
-                      padding: "8px 16px",
-                      background: "#ff9800",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8
-                    }}
+                    style={filteredDeleteButtonStyle}
                   >
                     <MdDelete size={18} />
-                    Delete {getFilteredViews().length} Filtered
+                    Delete {getFilteredViews().length}
                   </button>
                 )}
               </div>
@@ -1315,7 +1472,7 @@ export default function Dashboard() {
             <div style={searchContainerStyle}>
               <input
                 type="text"
-                placeholder="Search by file, viewer email or ID..."
+                placeholder="Search by file, email or ID..."
                 value={viewsSearch}
                 onChange={(e) => {
                   setViewsSearch(e.target.value);
@@ -1324,94 +1481,75 @@ export default function Dashboard() {
                 style={searchInputStyle}
               />
               <span style={searchResultStyle}>
-                {filteredViews.length} view{filteredViews.length !== 1 ? 's' : ''} found
+                {filteredViews.length} found
               </span>
             </div>
 
             {/* Filter Info */}
-            <div style={{
-              background: "#e3f2fd",
-              padding: "8px 15px",
-              borderRadius: 6,
-              marginBottom: 15,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 14
-            }}>
+            <div style={filterInfoStyle}>
               <MdFilterList color="#1976D2" />
               Showing {paginatedViews.length} of {filteredViews.length} views
-              {dateFilter !== "all" && ` (filtered by: ${dateFilter})`}
+              {dateFilter !== "all" && ` (${dateFilter})`}
             </div>
 
-            <table style={table}>
-              <thead>
-                <tr style={thead}>
-                  <th style={{ ...th, width: 40 }}>
-                    <input
-                      type="checkbox"
-                      onChange={(e) => selectAllViews(e.target.checked)}
-                      checked={selectedViews.length === views.length && views.length > 0}
-                    />
-                  </th>
-                  <th style={th}>File</th>
-                  <th style={th}>Viewer Email</th>
-                  <th style={th}>Viewer ID</th>
-                  <th style={th}>Viewed At</th>
-                  <th style={th}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedViews.map((v, i) => (
-                  <tr key={i} style={i % 2 === 0 ? rowEven : rowOdd}>
-                    <td style={td}>
+            <div style={tableWrapperStyle}>
+              <table style={{...table}}>
+                <thead>
+                  <tr style={thead}>
+                    <th style={{...th, width:"5%"}}>
                       <input
                         type="checkbox"
-                        checked={selectedViews.includes(v.id)}
-                        onChange={() => toggleViewSelection(v.id)}
+                        onChange={(e) => selectAllViews(e.target.checked)}
+                        checked={selectedViews.length === views.length && views.length > 0}
                       />
-                    </td>
-                    <td style={td}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <MdDescription color="#1976D2" />
-                        {v.fileName || "N/A"}
-                      </div>
-                    </td>
-                    <td style={td}>{v.viewerEmail || "Anonymous"}</td>
-                    <td style={td}>{v.viewerId || "Anonymous"}</td>
-                    <td style={td}>
-                      {v.viewedAt ? v.viewedAt.toLocaleString() : "Loading"}
-                    </td>
-                    <td style={td}>
-                      <button
-                        onClick={() => handleDeleteView(v.id, v.fileName)}
-                        style={{
-                          padding: "6px 12px",
-                          background: "#d32f2f",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 5
-                        }}
-                      >
-                        <MdDelete size={16} />
-                        Delete
-                      </button>
-                    </td>
+                    </th>
+                    <th style={{...th, width:"30%"}}>File</th>
+                    <th style={{...th, width:"30%"}}>Viewer Email</th>
+                    <th style={{...th, width:"20%"}}>Viewed At</th>
+                    <th style={{...th, width:"15%"}}>Actions</th>
                   </tr>
-                ))}
-                {paginatedViews.length === 0 && (
-                  <tr>
-                    <td colSpan={6} style={{ textAlign: "center", padding: 30 }}>
-                      No views found
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {paginatedViews.map((v, i) => (
+                    <tr key={i} style={i % 2 === 0 ? rowEven : rowOdd}>
+                      <td style={{...td, width:"5%"}}>
+                        <input
+                          type="checkbox"
+                          checked={selectedViews.includes(v.id)}
+                          onChange={() => toggleViewSelection(v.id)}
+                        />
+                      </td>
+                      <td style={{...td, textAlign:"left"}}>
+                        <div style={{display:"flex", alignItems:"center", gap:8}}>
+                          <MdDescription color="#1976D2" style={{flexShrink:0}} />
+                          <span style={{wordBreak:"break-word"}}>{v.fileName || "N/A"}</span>
+                        </div>
+                      </td>
+                      <td style={{...td, wordBreak:"break-word"}}>{v.viewerEmail || "Anonymous"}</td>
+                      <td style={{...td, fontSize:"12px", whiteSpace:"nowrap"}} className="timestamp-cell">
+                        {v.viewedAt ? new Date(v.viewedAt).toLocaleString() : "Loading"}
+                      </td>
+                      <td style={td}>
+                        <button
+                          onClick={() => handleDeleteView(v.id, v.fileName)}
+                          style={compactDeleteBtn}
+                        >
+                          <MdDelete size={14} />
+                          <span>Delete</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {paginatedViews.length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{ textAlign: "center", padding: 30 }}>
+                        No views found
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
             
             {/* Pagination */}
             {totalViewsPages > 1 && (
@@ -1425,15 +1563,27 @@ export default function Dashboard() {
                 </button>
                 
                 <div style={pageNumbersStyle}>
-                  {Array.from({length: totalViewsPages}, (_, i) => i + 1).map(page => (
-                    <button
-                      key={page}
-                      onClick={() => setViewsPage(page)}
-                      style={pageNumberStyle(viewsPage === page)}
-                    >
-                      {page}
-                    </button>
-                  ))}
+                  {Array.from({length: Math.min(5, totalViewsPages)}, (_, i) => {
+                    let pageNum;
+                    if (totalViewsPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (viewsPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (viewsPage >= totalViewsPages - 2) {
+                      pageNum = totalViewsPages - 4 + i;
+                    } else {
+                      pageNum = viewsPage - 2 + i;
+                    }
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setViewsPage(pageNum)}
+                        style={pageNumberStyle(viewsPage === pageNum)}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
                 </div>
                 
                 <button 
@@ -1448,27 +1598,21 @@ export default function Dashboard() {
           </>
         )}
 
-        {/* ENGAGEMENT with Delete and Search */}
+        {/* ENGAGEMENT with Delete and Search - UPDATED VERSION */}
         {activeTab==="engagement" && (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div style={headerActionsStyle}>
               <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <MdTimeline size={28} color="#1976D2" />
-                Proposal Engagement Analytics
+                Engagement Analytics
               </h2>
               
-              <div style={{ display: "flex", gap: 10 }}>
+              <div style={actionButtonsGroupStyle}>
                 {/* Filter Dropdown */}
                 <select
                   value={dateFilter}
                   onChange={(e) => setDateFilter(e.target.value)}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 6,
-                    border: "1px solid #ddd",
-                    background: "#fff",
-                    cursor: "pointer"
-                  }}
+                  style={filterSelectStyle}
                 >
                   <option value="all">All Time</option>
                   <option value="today">Today</option>
@@ -1483,21 +1627,10 @@ export default function Dashboard() {
                       setDeleteType("sessions");
                       setShowDeleteModal(true);
                     }}
-                    style={{
-                      padding: "8px 16px",
-                      background: "#d32f2f",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontWeight: "bold"
-                    }}
+                    style={deleteButtonStyle}
                   >
                     <MdDelete size={18} />
-                    Delete Selected ({selectedSessions.length})
+                    Delete ({selectedSessions.length})
                   </button>
                 )}
 
@@ -1508,20 +1641,10 @@ export default function Dashboard() {
                       setDeleteType("filteredSessions");
                       setShowDeleteModal(true);
                     }}
-                    style={{
-                      padding: "8px 16px",
-                      background: "#ff9800",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8
-                    }}
+                    style={filteredDeleteButtonStyle}
                   >
                     <MdDelete size={18} />
-                    Delete {getFilteredSessions().length} Filtered
+                    Delete {getFilteredSessions().length}
                   </button>
                 )}
               </div>
@@ -1540,102 +1663,167 @@ export default function Dashboard() {
                 style={searchInputStyle}
               />
               <span style={searchResultStyle}>
-                {filteredEngagement.length} session{filteredEngagement.length !== 1 ? 's' : ''} found
+                {filteredEngagement.length} found
               </span>
             </div>
 
             {/* Filter Info */}
-            <div style={{
-              background: "#e3f2fd",
-              padding: "8px 15px",
-              borderRadius: 6,
-              marginBottom: 15,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 14
-            }}>
+            <div style={filterInfoStyle}>
               <MdFilterList color="#1976D2" />
               Showing {paginatedEngagement.length} of {filteredEngagement.length} sessions
-              {dateFilter !== "all" && ` (filtered by: ${dateFilter})`}
+              {dateFilter !== "all" && ` (${dateFilter})`}
             </div>
 
-            <table style={table}>
-              <thead>
-                <tr style={thead}>
-                  <th style={{ ...th, width: 40 }}>
-                    <input
-                      type="checkbox"
-                      onChange={(e) => selectAllSessions(e.target.checked)}
-                      checked={selectedSessions.length === sessions.length && sessions.length > 0}
-                    />
-                  </th>
-                  <th style={th}>Proposal</th>
-                  <th style={th}>Viewer</th>
-                  <th style={th}>Time Spent</th>
-                  <th style={th}>Pages Viewed</th>
-                  <th style={th}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedEngagement.map((s, i) => (
-                  <tr key={i} style={i % 2 === 0 ? rowEven : rowOdd}>
-                    <td style={td}>
+            <div style={tableWrapperStyle}>
+              <table style={{...table}}>
+                <thead>
+                  <tr style={thead}>
+                    <th style={{...th, width:"5%"}}>
                       <input
                         type="checkbox"
-                        checked={selectedSessions.includes(s.id)}
-                        onChange={() => toggleSessionSelection(s.id)}
+                        onChange={(e) => selectAllSessions(e.target.checked)}
+                        checked={selectedSessions.length === sessions.length && sessions.length > 0}
                       />
-                    </td>
-                    <td style={td}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <MdDescription color="#1976D2" />
-                        {s.fileName}
-                      </div>
-                    </td>
-                    <td style={td}>{s.viewerEmail}</td>
-                    <td style={td}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "center" }}>
-                        <MdTimeline color="#FF9800" size={16} />
-                        {Math.round((s.duration || 0) / 1000)} sec
-                      </div>
-                    </td>
-                    <td style={td}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "center" }}>
-                        <MdDescription color="#4CAF50" size={16} />
-                        {s.pagesViewed?.length || 0} pages
-                      </div>
-                    </td>
-                    <td style={td}>
-                      <button
-                        onClick={() => handleDeleteSession(s.id, s.fileName)}
-                        style={{
-                          padding: "6px 12px",
-                          background: "#d32f2f",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 5
-                        }}
-                      >
-                        <MdDelete size={16} />
-                        Delete
-                      </button>
-                    </td>
+                    </th>
+                    <th style={{...th, width:"25%"}}>Proposal</th>
+                    <th style={{...th, width:"20%"}}>Viewer</th>
+                    <th style={{...th, width:"15%"}}>Started</th>
+                    <th style={{...th, width:"15%"}}>Last Active</th>
+                    <th style={{...th, width:"10%"}}>Duration</th>
+                    <th style={{...th, width:"10%"}}>Pages</th>
+                    <th style={{...th, width:"10%"}}>Actions</th>
                   </tr>
-                ))}
-                {paginatedEngagement.length === 0 && (
-                  <tr>
-                    <td colSpan={6} style={{ textAlign: "center", padding: 30 }}>
-                      No engagement data found
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {paginatedEngagement.map((s, i) => {
+                    // Calculate duration safely
+                    let durationSeconds = 0;
+                    if (s.duration) {
+                      durationSeconds = Math.round(s.duration / 1000);
+                    } else if (s.startedAt && s.lastActiveAt) {
+                      // If no duration field, calculate from timestamps
+                      const start = s.startedAt?.seconds ? new Date(s.startedAt.seconds * 1000) : null;
+                      const last = s.lastActiveAt?.seconds ? new Date(s.lastActiveAt.seconds * 1000) : null;
+                      if (start && last) {
+                        durationSeconds = Math.round((last - start) / 1000);
+                      }
+                    }
+
+                    // Format dates safely
+                    const formatDate = (timestamp) => {
+                      if (!timestamp) return 'N/A';
+                      try {
+                        const date = timestamp.seconds ? new Date(timestamp.seconds * 1000) : new Date(timestamp);
+                        return date.toLocaleString();
+                      } catch (e) {
+                        return 'Invalid date';
+                      }
+                    };
+
+                    // Get page count safely
+                    const pageCount = s.pagesViewed?.length || s.pageCount || 0;
+
+                    return (
+                      <tr key={s.id || i} style={i % 2 === 0 ? rowEven : rowOdd}>
+                        <td style={{...td, width:"5%"}}>
+                          <input
+                            type="checkbox"
+                            checked={selectedSessions.includes(s.id)}
+                            onChange={() => toggleSessionSelection(s.id)}
+                          />
+                        </td>
+                        <td style={{...td, textAlign:"left"}}>
+                          <div style={{display:"flex", alignItems:"center", gap:8}}>
+                            <MdDescription color="#1976D2" style={{flexShrink:0}} />
+                            <span style={{wordBreak:"break-word"}}>{s.fileName || 'Unknown'}</span>
+                          </div>
+                        </td>
+                        <td style={{...td, wordBreak:"break-word"}}>
+                          {s.viewerEmail || s.viewerId || 'Anonymous'}
+                        </td>
+                        <td style={{...td, fontSize:"11px", whiteSpace:"nowrap"}}>
+                          {formatDate(s.startedAt)}
+                        </td>
+                        <td style={{...td, fontSize:"11px", whiteSpace:"nowrap"}}>
+                          {formatDate(s.lastActiveAt)}
+                        </td>
+                        <td style={td}>
+                          <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                            <MdTimeline color="#FF9800" size={16} />
+                            <span style={{fontWeight:"bold"}}>
+                              {durationSeconds > 0 ? `${durationSeconds}s` : '0s'}
+                            </span>
+                          </div>
+                        </td>
+                        <td style={td}>
+                          <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                            <MdDescription color="#4CAF50" size={16} />
+                            <span style={{fontWeight:"bold"}}>{pageCount}</span>
+                          </div>
+                        </td>
+                        <td style={td}>
+                          <button
+                            onClick={() => handleDeleteSession(s.id, s.fileName)}
+                            style={compactDeleteBtn}
+                          >
+                            <MdDelete size={14} />
+                            <span>Delete</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {paginatedEngagement.length === 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ textAlign: "center", padding: 30 }}>
+                        <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:10}}>
+                          <MdTimeline size={40} color="#ccc" />
+                          <p style={{color:"#999", fontSize:14}}>No engagement data found</p>
+                          <p style={{color:"#999", fontSize:12}}>Sessions will appear here when viewers interact with proposals</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            
+            {/* Summary Stats */}
+            {sessions.length > 0 && (
+              <div style={{
+                display: "flex",
+                gap: 16,
+                marginTop: 20,
+                padding: "16px 20px",
+                background: "#fff",
+                borderRadius: 12,
+                border: "1px solid #eee",
+                flexWrap: "wrap"
+              }}>
+                <div style={{flex:1, minWidth:150}}>
+                  <div style={{fontSize:12, color:"#666", marginBottom:4}}>Total Sessions</div>
+                  <div style={{fontSize:24, fontWeight:"bold", color:"#1976D2"}}>{sessions.length}</div>
+                </div>
+                <div style={{flex:1, minWidth:150}}>
+                  <div style={{fontSize:12, color:"#666", marginBottom:4}}>Avg Time Spent</div>
+                  <div style={{fontSize:24, fontWeight:"bold", color:"#FF9800"}}>
+                    {Math.round(sessions.reduce((acc, s) => acc + (s.duration || 0), 0) / sessions.length / 1000)}s
+                  </div>
+                </div>
+                <div style={{flex:1, minWidth:150}}>
+                  <div style={{fontSize:12, color:"#666", marginBottom:4}}>Total Pages Viewed</div>
+                  <div style={{fontSize:24, fontWeight:"bold", color:"#4CAF50"}}>
+                    {sessions.reduce((acc, s) => acc + (s.pagesViewed?.length || s.pageCount || 0), 0)}
+                  </div>
+                </div>
+                <div style={{flex:1, minWidth:150}}>
+                  <div style={{fontSize:12, color:"#666", marginBottom:4}}>Unique Viewers</div>
+                  <div style={{fontSize:24, fontWeight:"bold", color:"#9C27B0"}}>
+                    {new Set(sessions.map(s => s.viewerId || s.viewerEmail)).size}
+                  </div>
+                </div>
+              </div>
+            )}
             
             {/* Pagination */}
             {totalEngagementPages > 1 && (
@@ -1649,15 +1837,27 @@ export default function Dashboard() {
                 </button>
                 
                 <div style={pageNumbersStyle}>
-                  {Array.from({length: totalEngagementPages}, (_, i) => i + 1).map(page => (
-                    <button
-                      key={page}
-                      onClick={() => setEngagementPage(page)}
-                      style={pageNumberStyle(engagementPage === page)}
-                    >
-                      {page}
-                    </button>
-                  ))}
+                  {Array.from({length: Math.min(5, totalEngagementPages)}, (_, i) => {
+                    let pageNum;
+                    if (totalEngagementPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (engagementPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (engagementPage >= totalEngagementPages - 2) {
+                      pageNum = totalEngagementPages - 4 + i;
+                    } else {
+                      pageNum = engagementPage - 2 + i;
+                    }
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setEngagementPage(pageNum)}
+                        style={pageNumberStyle(engagementPage === pageNum)}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
                 </div>
                 
                 <button 
@@ -1679,6 +1879,127 @@ export default function Dashboard() {
 }
 
 /* STYLES */
+
+/* Responsive table wrapper */
+const tableWrapperStyle = {
+  width: "100%",
+  overflowX: "auto",
+  WebkitOverflowScrolling: "touch",
+  borderRadius: "8px",
+  border: "1px solid #eee",
+  marginBottom: "10px"
+};
+
+/* Header actions styling */
+const headerActionsStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginBottom: 20,
+  flexWrap: "wrap",
+  gap: 10
+};
+
+const actionButtonsGroupStyle = {
+  display: "flex",
+  gap: 10,
+  flexWrap: "wrap"
+};
+
+const filterSelectStyle = {
+  padding: "8px 12px",
+  borderRadius: 6,
+  border: "1px solid #ddd",
+  background: "#fff",
+  cursor: "pointer",
+  fontSize: "13px"
+};
+
+const deleteButtonStyle = {
+  padding: "8px 12px",
+  background: "#d32f2f",
+  color: "#fff",
+  border: "none",
+  borderRadius: 6,
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  fontWeight: "bold",
+  fontSize: "13px",
+  whiteSpace: "nowrap"
+};
+
+const filteredDeleteButtonStyle = {
+  padding: "8px 12px",
+  background: "#ff9800",
+  color: "#fff",
+  border: "none",
+  borderRadius: 6,
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  fontSize: "13px",
+  whiteSpace: "nowrap"
+};
+
+const filterInfoStyle = {
+  background: "#e3f2fd",
+  padding: "8px 15px",
+  borderRadius: 6,
+  marginBottom: 15,
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  fontSize: 13,
+  flexWrap: "wrap"
+};
+
+/* Compact action buttons */
+const compactViewBtn = {
+  padding: "6px 10px",
+  background: "#2196F3",
+  color: "#fff",
+  border: "none",
+  borderRadius: 4,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  fontSize: "12px",
+  fontWeight: "bold",
+  whiteSpace: "nowrap"
+};
+
+const compactDownloadBtn = {
+  padding: "6px 10px",
+  background: "#4CAF50",
+  color: "#fff",
+  border: "none",
+  borderRadius: 4,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  fontSize: "12px",
+  fontWeight: "bold",
+  whiteSpace: "nowrap"
+};
+
+const compactDeleteBtn = {
+  padding: "6px 10px",
+  background: "#d32f2f",
+  color: "#fff",
+  border: "none",
+  borderRadius: 4,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  fontSize: "12px",
+  whiteSpace: "nowrap"
+};
 
 /* FUTURISTIC FLOATING SIDEBAR CONTAINER */
 const sidebarContainerStyle = (collapsed) => ({
@@ -1795,7 +2116,7 @@ const logoutBtnStyle = (collapsed) => ({
 /* MAIN CONTENT - ADAPTS TO SIDEBAR */
 const mainContentStyle = (collapsed) => ({
   flex: 1,
-  padding: "30px 40px",
+  padding: "30px 20px",
   background: "#f4f6f8",
   overflowY: "auto",
   overflowX: "hidden",
@@ -1807,7 +2128,7 @@ const mainContentStyle = (collapsed) => ({
 /* USER BAR STYLES */
 const userBarStyle = {
   background: "linear-gradient(135deg, #fff 0%, #f8fafc 100%)",
-  padding: "16px 24px",
+  padding: "16px 20px",
   borderRadius: 16,
   marginBottom: 30,
   display: "flex",
@@ -1815,6 +2136,7 @@ const userBarStyle = {
   gap: 16,
   boxShadow: "0 4px 20px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.04)",
   border: "1px solid rgba(0,0,0,0.04)",
+  flexWrap: "wrap",
 };
 
 const avatarStyle = {
@@ -1829,6 +2151,7 @@ const avatarStyle = {
   fontWeight: "bold",
   fontSize: 20,
   boxShadow: "0 4px 12px rgba(0, 212, 255, 0.3)",
+  flexShrink: 0,
 };
 
 const userInfoTextStyle = {
@@ -1836,6 +2159,7 @@ const userInfoTextStyle = {
   flexDirection: "column",
   gap: 2,
   flex: 1,
+  minWidth: "200px",
 };
 
 const userLabelStyle = {
@@ -1850,6 +2174,7 @@ const userEmailStyle = {
   fontSize: 15,
   color: "#1a1a2e",
   fontWeight: 600,
+  wordBreak: "break-all",
 };
 
 const userBadgeStyle = {
@@ -1863,6 +2188,7 @@ const userBadgeStyle = {
   fontWeight: 600,
   color: "#10B981",
   border: "1px solid rgba(16, 185, 129, 0.2)",
+  whiteSpace: "nowrap",
 };
 
 const dotStyle = {
@@ -1880,23 +2206,26 @@ const searchContainerStyle = {
   gap: 15,
   marginBottom: 20,
   marginTop: 10,
+  flexWrap: "wrap",
 };
 
 const searchInputStyle = {
   flex: 1,
-  padding: "12px 16px",
-  borderRadius: 12,
+  padding: "10px 14px",
+  borderRadius: 8,
   border: "1px solid rgba(0,0,0,0.1)",
   background: "#fff",
   fontSize: 14,
   outline: "none",
   boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+  minWidth: "200px",
 };
 
 const searchResultStyle = {
   fontSize: 13,
   color: "#666",
   fontWeight: 500,
+  whiteSpace: "nowrap",
 };
 
 const paginationContainerStyle = {
@@ -1906,6 +2235,7 @@ const paginationContainerStyle = {
   gap: 12,
   marginTop: 25,
   padding: "15px 0",
+  flexWrap: "wrap",
 };
 
 const paginationBtnStyle = (disabled) => ({
@@ -1919,17 +2249,20 @@ const paginationBtnStyle = (disabled) => ({
   cursor: disabled ? "not-allowed" : "pointer",
   boxShadow: disabled ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
   transition: "all 0.2s ease",
+  whiteSpace: "nowrap",
 });
 
 const pageNumbersStyle = {
   display: "flex",
-  gap: 6,
+  gap: 4,
+  flexWrap: "wrap",
+  justifyContent: "center",
 };
 
 const pageNumberStyle = (isActive) => ({
   width: 36,
   height: 36,
-  borderRadius: 8,
+  borderRadius: 6,
   border: "none",
   background: isActive ? "linear-gradient(135deg, #1976D2 0%, #2196F3 100%)" : "#fff",
   color: isActive ? "#fff" : "#666",
@@ -1941,56 +2274,41 @@ const pageNumberStyle = (isActive) => ({
 });
 
 /* OLD STYLES - Keeping for reference */
-const sidebarStyle = {
-  width: 250,
-  background: "linear-gradient(180deg, #1976D2 0%, #1565C0 100%)",
-  padding: "25px 15px",
-  display: "flex",
-  flexDirection: "column",
-  gap: 8,
-  boxShadow: "2px 0 10px rgba(0,0,0,0.1)"
-};
-
-const mainContentStyleOld = {
-  flex: 1,
-  padding: 30,
-  background: "#f4f6f8",
-  overflowY: "auto"
-};
-
 const summaryContainer = {
   display: "flex",
-  gap: 20,
-  marginTop: 20
+  gap: 16,
+  marginTop: 20,
+  flexWrap: "wrap"
 };
 
 const card = {
   background: "#fff",
-  padding: "25px 20px",
+  padding: "20px 16px",
   borderRadius: 12,
-  flex: 1,
+  flex: "1 1 180px",
   textAlign: "center",
   boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
   transition: "transform 0.3s",
   cursor: "pointer",
-  border: "1px solid #eee"
+  border: "1px solid #eee",
+  minWidth: "160px",
 };
 
 const number = {
-  fontSize: 32,
+  fontSize: 28,
   fontWeight: "bold",
-  margin: "10px 0 0 0",
+  margin: "8px 0 0 0",
   color: "#333"
 };
 
 const table = {
   width: "100%",
   borderCollapse: "collapse",
-  marginTop: 20,
   background: "#fff",
   borderRadius: 8,
   overflow: "hidden",
-  boxShadow: "0 2px 8px rgba(0,0,0,0.05)"
+  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+  tableLayout: "fixed",
 };
 
 const thead = {
@@ -1999,48 +2317,22 @@ const thead = {
 };
 
 const th = {
-  padding: "15px 10px",
+  padding: "12px 6px",
   border: "none",
   textAlign: "center",
-  fontSize: "14px",
-  fontWeight: "bold"
+  fontSize: "12px",
+  fontWeight: "bold",
+  whiteSpace: "nowrap",
 };
 
 const td = {
-  padding: "12px 10px",
+  padding: "10px 6px",
   border: "1px solid #eee",
   textAlign: "center",
-  fontSize: "14px"
+  fontSize: "12px",
+  verticalAlign: "middle",
+  wordBreak: "break-word",
 };
 
 const rowEven = { background: "#f9f9f9" };
 const rowOdd = { background: "#fff" };
-
-const viewBtn = {
-  padding: "8px 16px",
-  marginRight: 8,
-  background: "#2196F3",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-  display: "inline-flex",
-  alignItems: "center",
-  fontSize: "13px",
-  fontWeight: "bold",
-  transition: "background 0.3s"
-};
-
-const downloadBtn = {
-  padding: "8px 16px",
-  background: "#4CAF50",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-  display: "inline-flex",
-  alignItems: "center",
-  fontSize: "13px",
-  fontWeight: "bold",
-  transition: "background 0.3s"
-};
