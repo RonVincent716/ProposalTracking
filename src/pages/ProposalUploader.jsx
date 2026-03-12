@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { storage, auth } from "../firebase";
-import { ref, uploadBytesResumable } from "firebase/storage";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { onAuthStateChanged } from "firebase/auth";
 import { 
   MdCloudUpload, 
@@ -17,19 +17,27 @@ export default function ProposalUploader() {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [shareLink, setShareLink] = useState("");
+  const [downloadUrl, setDownloadUrl] = useState("");
+  const [uploadedFileName, setUploadedFileName] = useState("");
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
     return () => unsub();
   }, []);
 
-  const sanitizeFileName = (fileName) => fileName.replace(/[^a-zA-Z0-9.]/g, "_");
+  const sanitizeFileName = (fileName) => {
+    if (!fileName) return "";
+    return fileName.replace(/[^a-zA-Z0-9.]/g, "_");
+  };
 
   const uploadFile = () => {
     if (!file) return alert("Select a file first!");
     if (!user) return alert("Login first");
 
     setUploading(true);
+    setShareLink("");
+    setDownloadUrl("");
+    setUploadedFileName("");
 
     const cleanName = sanitizeFileName(file.name);
     const uniqueName = `${Date.now()}_${cleanName}`;
@@ -42,22 +50,51 @@ export default function ProposalUploader() {
       "state_changed",
       (snapshot) => setProgress((snapshot.bytesTransferred / snapshot.totalBytes) * 100),
       (error) => {
-        alert(error.message);
+        alert("Upload error: " + error.message);
         setUploading(false);
       },
-      () => {
-        const encoded = btoa(filePath); // Base64 encode
-        const link = `${window.location.origin}/p/${encoded}`;
-        console.log("Generated share link:", link);
-        setShareLink(link);
+      async () => {
+        try {
+          // Get the actual download URL from Firebase Storage
+          const url = await getDownloadURL(fileRef);
+          console.log("Download URL from Firebase:", url);
+          
+          // Create the viewer link using your encoded path method
+          const encoded = btoa(filePath); // Base64 encode
+          const viewerLink = `${window.location.origin}/p/${encoded}`;
+          
+          console.log("Viewer link:", viewerLink);
+          console.log("Direct download URL:", url);
+          
+          setShareLink(viewerLink);
+          setDownloadUrl(url);
+          setUploadedFileName(file.name);
 
-        setUploading(false);
-        setFile(null);
-        setProgress(0);
+          setUploading(false);
+          setFile(null);
+          setProgress(0);
 
-        alert("Upload successful! Copy or share the link below.");
+          alert("Upload successful! Copy or share the link below.");
+        } catch (error) {
+          alert("Error getting download URL: " + error.message);
+          setUploading(false);
+        }
       }
     );
+  };
+
+  // Test the link function
+  const testLink = async (link) => {
+    try {
+      const response = await fetch(link, { method: 'HEAD' });
+      if (response.ok) {
+        alert("✅ Link is reachable!");
+      } else {
+        alert("❌ Link returned status: " + response.status);
+      }
+    } catch (error) {
+      alert("❌ Link test failed: " + error.message);
+    }
   };
 
   return (
@@ -67,12 +104,25 @@ export default function ProposalUploader() {
           <MdCloudUpload size={32} color="#00D4FF" />
           <h2 style={titleStyle}>Upload Proposal</h2>
         </div>
+        {user && (
+          <div style={userInfoStyle}>
+            <MdEmail size={16} color="#00D4FF" />
+            <span>{user.email}</span>
+          </div>
+        )}
       </div>
 
       <div style={uploadCardStyle}>
         <div 
           style={dropZoneStyle(!!file, uploading)}
           onClick={() => !uploading && document.getElementById("fileInput").click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (!uploading && e.dataTransfer.files[0]) {
+              setFile(e.dataTransfer.files[0]);
+            }
+          }}
         >
           <input
             id="fileInput"
@@ -87,14 +137,14 @@ export default function ProposalUploader() {
             {file ? file.name : "Click to select or drag PDF"}
           </p>
           <p style={{ fontSize: 12, color: "rgba(0,0,0,0.4)" }}>
-            Max file size: 50MB
+            Max file size: 50MB • PDF only
           </p>
         </div>
 
         <button
-          disabled={!file || uploading}
+          disabled={!file || uploading || !user}
           onClick={uploadFile}
-          style={uploadBtnStyle(!file || uploading)}
+          style={uploadBtnStyle(!file || uploading || !user)}
         >
           {uploading ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -133,7 +183,7 @@ export default function ProposalUploader() {
             <button
               onClick={() => {
                 navigator.clipboard.writeText(shareLink);
-                alert("Link copied to clipboard!");
+                alert("✅ Link copied to clipboard!");
               }}
               style={iconButtonStyle}
               title="Copy Link"
@@ -142,33 +192,56 @@ export default function ProposalUploader() {
             </button>
           </div>
 
-          <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+          <div style={infoBoxStyle}>
+            <MdInfo size={18} color="#FF9800" />
+            <span style={{ fontSize: 13, color: "#666" }}>
+              This link will open the proposal viewer. Make sure your /p route is properly configured.
+            </span>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, marginTop: 20, flexWrap: "wrap" }}>
             <button
               onClick={() => window.open(shareLink, "_blank")}
               style={actionBtnStyle}
             >
               <MdOpenInNew size={18} />
-              Open Preview
+              Open Viewer
+            </button>
+            <button
+              onClick={() => window.open(downloadUrl, "_blank")}
+              style={{...actionBtnStyle, background: "#00D4FF", color: "#fff", border: "none"}}
+            >
+              <MdCloudUpload size={18} />
+              Direct Download
+            </button>
+            <button
+              onClick={() => testLink(shareLink)}
+              style={{...actionBtnStyle, background: "#f4f6f8"}}
+            >
+              <MdInfo size={18} />
+              Test Link
             </button>
           </div>
+
+          {/* Debug info - only show if file exists */}
+          {uploadedFileName && (
+            <div style={{
+              marginTop: 20,
+              padding: 10,
+              background: "#f4f6f8",
+              borderRadius: 8,
+              fontSize: 12,
+              color: "#666",
+              fontFamily: "monospace",
+              wordBreak: "break-all"
+            }}>
+              <strong>Debug Info:</strong><br/>
+              File: {uploadedFileName}<br/>
+              Encoded Path: {shareLink.split('/').pop()}
+            </div>
+          )}
         </div>
       )}
-
-      <style>
-        {`
-          .spinner {
-            width: 18px;
-            height: 18px;
-            border: 2px solid rgba(0,0,0,0.2);
-            border-top-color: #333;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-          }
-          @keyframes spin {
-            to { transform: rotate(360deg); }
-          }
-        `}
-      </style>
     </div>
   );
 }
@@ -306,6 +379,9 @@ const iconButtonStyle = {
   alignItems: "center",
   justifyContent: "center",
   transition: "all 0.2s",
+  ':hover': {
+    background: "#e0e0e0"
+  }
 };
 
 const actionBtnStyle = {
@@ -321,4 +397,18 @@ const actionBtnStyle = {
   fontWeight: 500,
   cursor: "pointer",
   transition: "all 0.2s",
+  ':hover': {
+    background: "#e0e0e0"
+  }
+};
+
+const infoBoxStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  marginTop: 15,
+  padding: "10px 15px",
+  background: "#FFF3E0",
+  borderRadius: 8,
+  border: "1px solid #FFE0B2",
 };
