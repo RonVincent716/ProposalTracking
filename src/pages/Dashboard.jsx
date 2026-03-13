@@ -633,31 +633,115 @@ export default function Dashboard() {
 
       {/* LOGOUT SUCCESS TOAST NOTIFICATION */}
       {showLogoutToast && (
-        <div style={toastOverlayStyle}>
-          <div style={toastContainerStyle}>
-            <div style={toastIconSectionStyle}>
-              <div style={toastIconWrapperStyle}>
+        <div style={{
+          position: "fixed",
+          top: "30px",
+          right: "30px",
+          zIndex: 10000,
+          maxWidth: "380px",
+          minWidth: "320px",
+          animation: "toastSlideIn 0.3s ease, toastFadeOut 0.3s ease 1.7s forwards",
+          boxShadow: "0 20px 40px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.05)",
+          borderRadius: "16px",
+          overflow: "hidden",
+        }}>
+          <div style={{
+            background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
+            borderRadius: "16px",
+            padding: "18px 22px",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "16px",
+            border: "1px solid rgba(16, 185, 129, 0.3)",
+            boxShadow: "0 0 30px rgba(16, 185, 129, 0.2)",
+            position: "relative",
+            overflow: "hidden",
+            backdropFilter: "blur(10px)",
+          }}>
+            <div style={{flexShrink: 0}}>
+              <div style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "50%",
+                background: "rgba(16, 185, 129, 0.15)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: "2px solid rgba(16, 185, 129, 0.3)",
+                animation: "pulse 2s infinite",
+                boxShadow: "0 0 20px rgba(16, 185, 129, 0.3)",
+              }}>
                 <MdCheckCircle size={28} color="#10B981" />
               </div>
             </div>
             
-            <div style={toastContentSectionStyle}>
-              <div style={toastTitleStyle}>Logged Out Successfully</div>
-              <div style={toastMessageStyle}>You have been securely logged out</div>
+            <div style={{flex: 1}}>
+              <div style={{
+                color: "#fff",
+                fontSize: "16px",
+                fontWeight: "700",
+                marginBottom: "4px",
+                letterSpacing: "-0.3px",
+                background: "linear-gradient(135deg, #fff 0%, #e0e0e0 100%)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+              }}>Logged Out Successfully</div>
+              <div style={{
+                color: "rgba(255, 255, 255, 0.7)",
+                fontSize: "13px",
+                marginBottom: "12px",
+              }}>You have been securely logged out</div>
               
-              <div style={toastProgressContainerStyle}>
-                <div style={toastProgressBarStyle} />
+              <div style={{
+                width: "100%",
+                height: "4px",
+                background: "rgba(255, 255, 255, 0.1)",
+                borderRadius: "4px",
+                overflow: "hidden",
+                boxShadow: "inset 0 1px 2px rgba(0,0,0,0.2)",
+              }}>
+                <div style={{
+                  height: "100%",
+                  width: "100%",
+                  background: "linear-gradient(90deg, #10B981, #34D399, #10B981)",
+                  backgroundSize: "200% 100%",
+                  animation: "toastShrink 2s linear forwards",
+                  borderRadius: "4px",
+                  boxShadow: "0 0 10px #10B981",
+                }} />
               </div>
             </div>
             
             <button 
               onClick={() => setShowLogoutToast(false)}
-              style={toastCloseButtonStyle}
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                padding: "4px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: "6px",
+                opacity: 0.7,
+                transition: "all 0.2s",
+                position: "relative",
+                zIndex: 2,
+              }}
             >
               <MdCancel size={18} color="#94A3B8" />
             </button>
           </div>
-          <div style={toastTimerStyle}>
+          <div style={{
+            background: "rgba(0, 0, 0, 0.4)",
+            backdropFilter: "blur(4px)",
+            padding: "10px 16px",
+            fontSize: "12px",
+            color: "rgba(255, 255, 255, 0.8)",
+            textAlign: "center",
+            borderTop: "1px solid rgba(255, 255, 255, 0.05)",
+            letterSpacing: "0.3px",
+          }}>
             Redirecting to login...
           </div>
         </div>
@@ -979,12 +1063,48 @@ export default function Dashboard() {
       )}
 
       {/* SIDEBAR WITH ICONS */}
-      <div style={sidebarContainerStyle(sidebarCollapsed)}>
+      <div style={{
+        position: "relative",
+        width: sidebarCollapsed ? 100 : 280,
+        minWidth: sidebarCollapsed ? 100 : 280,
+        padding: "20px 12px",
+        transition: "width 0.4s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+        display: "flex",
+        flexDirection: "column",
+        willChange: "width, min-width",
+      }}>
 
-        <div style={floatingSidebarStyle(sidebarCollapsed)}>
+        <div style={{
+          width: sidebarCollapsed ? 76 : 256,
+          height: "calc(100vh - 40px)",
+          background: "linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.98) 100%)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          borderRadius: 24,
+          padding: sidebarCollapsed ? "30px 10px" : "30px 20px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 0 60px rgba(0, 212, 255, 0.1)",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          position: "relative",
+          overflow: "hidden",
+          transition: "width 0.4s cubic-bezier(0.4, 0, 0.2, 1), padding 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+          willChange: "width, padding",
+        }}>
 
-          <div style={sidebarHeaderStyle}>
-            <div style={logoContainerStyle}>
+          <div style={{
+            position: "relative",
+            paddingBottom: 20,
+            borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+            marginBottom: 10,
+          }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 12,
+            }}>
               <MdDashboard size={sidebarCollapsed ? 32 : 36} color="#00D4FF" />
               {!sidebarCollapsed && (
                 <div>
@@ -997,59 +1117,208 @@ export default function Dashboard() {
 
           <div style={{display:"flex", flexDirection:"column", gap: sidebarCollapsed ? 16 : 10, flex:1, marginTop: sidebarCollapsed ? 30 : 20}}>
 
-          <button 
-            style={sidebarBtn(activeTab==="home", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("home")}
-          >
-            <MdHome size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Dashboard</span>}
-          </button>
+            <button 
+              style={{
+                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                border: "none",
+                borderRadius: 14,
+                cursor: "pointer",
+                background: activeTab==="home" 
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                  : "transparent",
+                color: activeTab==="home" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: 12,
+                fontSize: sidebarCollapsed ? 0 : 15,
+                fontWeight: activeTab==="home" ? 600 : 500,
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                position: "relative",
+                overflow: "hidden",
+                boxShadow: activeTab==="home" 
+                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                  : "none",
+                border: activeTab==="home" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+              }} 
+              onClick={()=>setActiveTab("home")}
+            >
+              <MdHome size={sidebarCollapsed ? 28 : 22} />
+              {!sidebarCollapsed && <span>Dashboard</span>}
+            </button>
 
-          <button 
-            style={sidebarBtn(activeTab==="proposals", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("proposals")}
-          >
-            <MdPictureAsPdf size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Proposals</span>}
-          </button>
+            <button 
+              style={{
+                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                border: "none",
+                borderRadius: 14,
+                cursor: "pointer",
+                background: activeTab==="proposals" 
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                  : "transparent",
+                color: activeTab==="proposals" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: 12,
+                fontSize: sidebarCollapsed ? 0 : 15,
+                fontWeight: activeTab==="proposals" ? 600 : 500,
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                position: "relative",
+                overflow: "hidden",
+                boxShadow: activeTab==="proposals" 
+                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                  : "none",
+                border: activeTab==="proposals" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+              }} 
+              onClick={()=>setActiveTab("proposals")}
+            >
+              <MdPictureAsPdf size={sidebarCollapsed ? 28 : 22} />
+              {!sidebarCollapsed && <span>Proposals</span>}
+            </button>
 
-          <button 
-            style={sidebarBtn(activeTab==="signed", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("signed")}
-          >
-            <MdCheckCircleOutline size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Signed</span>}
-          </button>
+            <button 
+              style={{
+                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                border: "none",
+                borderRadius: 14,
+                cursor: "pointer",
+                background: activeTab==="signed" 
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                  : "transparent",
+                color: activeTab==="signed" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: 12,
+                fontSize: sidebarCollapsed ? 0 : 15,
+                fontWeight: activeTab==="signed" ? 600 : 500,
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                position: "relative",
+                overflow: "hidden",
+                boxShadow: activeTab==="signed" 
+                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                  : "none",
+                border: activeTab==="signed" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+              }} 
+              onClick={()=>setActiveTab("signed")}
+            >
+              <MdCheckCircleOutline size={sidebarCollapsed ? 28 : 22} />
+              {!sidebarCollapsed && <span>Signed</span>}
+            </button>
 
-          <button 
-            style={sidebarBtn(activeTab==="upload", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("upload")}
-          >
-            <MdFileUpload size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Upload</span>}
-          </button>
+            <button 
+              style={{
+                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                border: "none",
+                borderRadius: 14,
+                cursor: "pointer",
+                background: activeTab==="upload" 
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                  : "transparent",
+                color: activeTab==="upload" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: 12,
+                fontSize: sidebarCollapsed ? 0 : 15,
+                fontWeight: activeTab==="upload" ? 600 : 500,
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                position: "relative",
+                overflow: "hidden",
+                boxShadow: activeTab==="upload" 
+                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                  : "none",
+                border: activeTab==="upload" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+              }} 
+              onClick={()=>setActiveTab("upload")}
+            >
+              <MdFileUpload size={sidebarCollapsed ? 28 : 22} />
+              {!sidebarCollapsed && <span>Upload</span>}
+            </button>
 
-          <button 
-            style={sidebarBtn(activeTab==="views", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("views")}
-          >
-            <MdRemoveRedEye size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Live Views</span>}
-          </button>
+            <button 
+              style={{
+                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                border: "none",
+                borderRadius: 14,
+                cursor: "pointer",
+                background: activeTab==="views" 
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                  : "transparent",
+                color: activeTab==="views" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: 12,
+                fontSize: sidebarCollapsed ? 0 : 15,
+                fontWeight: activeTab==="views" ? 600 : 500,
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                position: "relative",
+                overflow: "hidden",
+                boxShadow: activeTab==="views" 
+                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                  : "none",
+                border: activeTab==="views" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+              }} 
+              onClick={()=>setActiveTab("views")}
+            >
+              <MdRemoveRedEye size={sidebarCollapsed ? 28 : 22} />
+              {!sidebarCollapsed && <span>Live Views</span>}
+            </button>
 
-          <button 
-            style={sidebarBtn(activeTab==="engagement", sidebarCollapsed)} 
-            onClick={()=>setActiveTab("engagement")}
-          >
-            <MdTimeline size={sidebarCollapsed ? 28 : 22} />
-            {!sidebarCollapsed && <span>Engagement</span>}
-          </button>
+            <button 
+              style={{
+                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                border: "none",
+                borderRadius: 14,
+                cursor: "pointer",
+                background: activeTab==="engagement" 
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                  : "transparent",
+                color: activeTab==="engagement" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: 12,
+                fontSize: sidebarCollapsed ? 0 : 15,
+                fontWeight: activeTab==="engagement" ? 600 : 500,
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                position: "relative",
+                overflow: "hidden",
+                boxShadow: activeTab==="engagement" 
+                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                  : "none",
+                border: activeTab==="engagement" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+              }} 
+              onClick={()=>setActiveTab("engagement")}
+            >
+              <MdTimeline size={sidebarCollapsed ? 28 : 22} />
+              {!sidebarCollapsed && <span>Engagement</span>}
+            </button>
 
           </div>
 
           <button
             onClick={() => setShowLogoutModal(true)}
-            style={logoutBtnStyle(sidebarCollapsed)}
+            style={{
+              marginTop: "auto",
+              padding: sidebarCollapsed ? "14px" : "14px 18px",
+              border: "none",
+              borderRadius: 14,
+              cursor: "pointer",
+              background: "linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%)",
+              color: "#EF4444",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: sidebarCollapsed ? "center" : "flex-start",
+              gap: sidebarCollapsed ? 0 : 10,
+              fontSize: sidebarCollapsed ? 0 : 15,
+              fontWeight: 600,
+              transition: "all 0.3s ease",
+              border: "1px solid rgba(239, 68, 68, 0.3)",
+              boxShadow: "0 4px 15px rgba(239, 68, 68, 0.15)",
+            }}
           >
             <MdLogout size={sidebarCollapsed ? 26 : 22}/>
             {!sidebarCollapsed && <span>Logout</span>}
@@ -1059,7 +1328,24 @@ export default function Dashboard() {
 
         <button 
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          style={collapseBtnStyle}
+          style={{
+            position: "absolute",
+            top: 40,
+            right: -20,
+            width: 44,
+            height: 44,
+            borderRadius: "50%",
+            border: "none",
+            background: "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            boxShadow: "0 4px 20px rgba(0, 212, 255, 0.5), 0 0 0 3px rgba(255, 255, 255, 0.1)",
+            zIndex: 100,
+            transition: "all 0.3s ease",
+          }}
         >
           {sidebarCollapsed ? <MdChevronRight size={32} /> : <MdChevronLeft size={32} />}
         </button>
@@ -1067,19 +1353,87 @@ export default function Dashboard() {
       </div>
 
       {/* MAIN CONTENT */}
-      <div style={mainContentStyle(sidebarCollapsed)}>
+      <div style={{
+        flex: 1,
+        padding: "30px 20px",
+        background: "#f4f6f8",
+        overflowY: "auto",
+        overflowX: "hidden",
+        borderRadius: "24px 0 0 0",
+        minHeight: "100vh",
+        width: sidebarCollapsed ? "calc(100% - 100px)" : "calc(100% - 280px)",
+      }}>
 
         {/* User Info Bar */}
-        <div style={userBarStyle}>
-          <div style={avatarStyle}>
+        <div style={{
+          background: "linear-gradient(135deg, #fff 0%, #f8fafc 100%)",
+          padding: "16px 20px",
+          borderRadius: 16,
+          marginBottom: 30,
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          boxShadow: "0 4px 20px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.04)",
+          border: "1px solid rgba(0,0,0,0.04)",
+          flexWrap: "wrap",
+        }}>
+          <div style={{
+            width: 48,
+            height: 48,
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
+            fontWeight: "bold",
+            fontSize: 20,
+            boxShadow: "0 4px 12px rgba(0, 212, 255, 0.3)",
+            flexShrink: 0,
+          }}>
             {user?.email?.charAt(0).toUpperCase() || "A"}
           </div>
-          <div style={userInfoTextStyle}>
-            <div style={userLabelStyle}>Welcome back,</div>
-            <div style={userEmailStyle}>{user?.email}</div>
+          <div style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            flex: 1,
+            minWidth: "200px",
+          }}>
+            <div style={{
+              fontSize: 12,
+              color: "rgba(0,0,0,0.4)",
+              fontWeight: 500,
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+            }}>Welcome back,</div>
+            <div style={{
+              fontSize: 15,
+              color: "#1a1a2e",
+              fontWeight: 600,
+              wordBreak: "break-all",
+            }}>{user?.email}</div>
           </div>
-          <div style={userBadgeStyle}>
-            <span style={dotStyle}></span>
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 12px",
+            background: "rgba(16, 185, 129, 0.1)",
+            borderRadius: 100,
+            fontSize: 12,
+            fontWeight: 600,
+            color: "#10B981",
+            border: "1px solid rgba(16, 185, 129, 0.2)",
+            whiteSpace: "nowrap",
+          }}>
+            <span style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "#10B981",
+              boxShadow: "0 0 8px #10B981",
+            }}></span>
             Online
           </div>
         </div>
@@ -1096,10 +1450,12 @@ export default function Dashboard() {
               opacity: 1;
             }
           }
+          
           @keyframes fadeIn {
             from { opacity: 0; }
             to { opacity: 1; }
           }
+          
           @keyframes slideUp {
             from {
               transform: translateY(30px) scale(0.95);
@@ -1110,10 +1466,12 @@ export default function Dashboard() {
               opacity: 1;
             }
           }
+          
           @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
           }
+          
           @keyframes toastSlideIn {
             from {
               transform: translateX(100%);
@@ -1124,12 +1482,14 @@ export default function Dashboard() {
               opacity: 1;
             }
           }
+          
           @keyframes toastFadeOut {
             to {
               transform: translateX(100%);
               opacity: 0;
             }
           }
+          
           @keyframes toastShrink {
             from {
               width: 100%;
@@ -1138,22 +1498,48 @@ export default function Dashboard() {
               width: 0%;
             }
           }
+          
+          @keyframes pulse {
+            0% {
+              box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+            }
+            50% {
+              box-shadow: 0 0 20px 5px rgba(16, 185, 129, 0.2);
+            }
+            100% {
+              box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+            }
+          }
+          
+          /* Fix for Recharts containers */
+          .recharts-wrapper {
+            width: 100% !important;
+            height: 100% !important;
+          }
+          
+          .recharts-surface {
+            overflow: visible !important;
+          }
+          
           /* Responsive table styles */
           table {
             width: 100%;
             table-layout: fixed;
             word-wrap: break-word;
           }
+          
           td, th {
             word-break: break-word;
             overflow-wrap: break-word;
           }
+          
           .action-buttons {
             display: flex;
             gap: 4px;
             flex-wrap: wrap;
             justify-content: center;
           }
+          
           @media (max-width: 768px) {
             .action-buttons {
               flex-direction: column;
@@ -1172,29 +1558,98 @@ export default function Dashboard() {
               Dashboard Summary
             </h2>
 
-            <div style={summaryContainer}>
-              <div style={card}>
+            <div style={{
+              display: "flex",
+              gap: 16,
+              marginTop: 20,
+              flexWrap: "wrap"
+            }}>
+              <div style={{
+                background: "#fff",
+                padding: "20px 16px",
+                borderRadius: 12,
+                flex: "1 1 180px",
+                textAlign: "center",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
+                transition: "transform 0.3s",
+                cursor: "pointer",
+                border: "1px solid #eee",
+                minWidth: "160px",
+              }}>
                 <MdDescription size={32} color="#1976D2" style={{marginBottom:10}} />
                 <h3>Total Proposals</h3>
-                <p style={number}>{files.length}</p>
+                <p style={{
+                  fontSize: 28,
+                  fontWeight: "bold",
+                  margin: "8px 0 0 0",
+                  color: "#333"
+                }}>{files.length}</p>
               </div>
 
-              <div style={card}>
+              <div style={{
+                background: "#fff",
+                padding: "20px 16px",
+                borderRadius: 12,
+                flex: "1 1 180px",
+                textAlign: "center",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
+                transition: "transform 0.3s",
+                cursor: "pointer",
+                border: "1px solid #eee",
+                minWidth: "160px",
+              }}>
                 <MdRemoveRedEye size={32} color="#4CAF50" style={{marginBottom:10}} />
                 <h3>Total Views</h3>
-                <p style={number}>{views.length}</p>
+                <p style={{
+                  fontSize: 28,
+                  fontWeight: "bold",
+                  margin: "8px 0 0 0",
+                  color: "#333"
+                }}>{views.length}</p>
               </div>
 
-              <div style={card}>
+              <div style={{
+                background: "#fff",
+                padding: "20px 16px",
+                borderRadius: 12,
+                flex: "1 1 180px",
+                textAlign: "center",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
+                transition: "transform 0.3s",
+                cursor: "pointer",
+                border: "1px solid #eee",
+                minWidth: "160px",
+              }}>
                 <MdCheckCircleOutline size={32} color="#10B981" style={{marginBottom:10}} />
                 <h3>Signed</h3>
-                <p style={number}>{signedProposals.length}</p>
+                <p style={{
+                  fontSize: 28,
+                  fontWeight: "bold",
+                  margin: "8px 0 0 0",
+                  color: "#333"
+                }}>{signedProposals.length}</p>
               </div>
 
-              <div style={card}>
+              <div style={{
+                background: "#fff",
+                padding: "20px 16px",
+                borderRadius: 12,
+                flex: "1 1 180px",
+                textAlign: "center",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
+                transition: "transform 0.3s",
+                cursor: "pointer",
+                border: "1px solid #eee",
+                minWidth: "160px",
+              }}>
                 <MdAnalytics size={32} color="#FF9800" style={{marginBottom:10}} />
                 <h3>Unique Viewers</h3>
-                <p style={number}>
+                <p style={{
+                  fontSize: 28,
+                  fontWeight: "bold",
+                  margin: "8px 0 0 0",
+                  color: "#333"
+                }}>
                   {new Set(views.filter(v=>v.viewerId).map(v=>v.viewerId)).size}
                 </p>
               </div>
@@ -1207,11 +1662,25 @@ export default function Dashboard() {
 
             <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(400px, 1fr))", gap:30, marginTop:20}}>
               {/* Views per Proposal Chart */}
-              <div style={{minWidth:0, background:"#fff", padding:"20px", borderRadius:12, boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+              <div style={{
+                minWidth:0, 
+                background:"#fff", 
+                padding:"20px", 
+                borderRadius:12, 
+                boxShadow:"0 2px 8px rgba(0,0,0,0.05)",
+                height: "400px",
+                display: "flex",
+                flexDirection: "column"
+              }}>
                 <h4 style={{marginBottom:15, color:"#333", fontSize:16}}>
                   Views per Proposal {files.length > 10 && "(Top 10)"}
                 </h4>
-                <div style={{width:"100%", height:350}}>
+                <div style={{
+                  width: "100%", 
+                  height: "320px",
+                  position: "relative",
+                  flex: 1
+                }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart 
                       data={proposalChartData} 
@@ -1259,11 +1728,25 @@ export default function Dashboard() {
               </div>
 
               {/* Daily View Traffic Chart */}
-              <div style={{minWidth:0, background:"#fff", padding:"20px", borderRadius:12, boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+              <div style={{
+                minWidth:0, 
+                background:"#fff", 
+                padding:"20px", 
+                borderRadius:12, 
+                boxShadow:"0 2px 8px rgba(0,0,0,0.05)",
+                height: "400px",
+                display: "flex",
+                flexDirection: "column"
+              }}>
                 <h4 style={{marginBottom:15, color:"#333", fontSize:16}}>
                   Daily View Traffic {processedDailyChartData.length < rawDailyChartData.length && "(Weekly Aggregated)"}
                 </h4>
-                <div style={{width:"100%", height:350}}>
+                <div style={{
+                  width: "100%", 
+                  height: "320px",
+                  position: "relative",
+                  flex: 1
+                }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart 
                       data={processedDailyChartData} 
@@ -1317,14 +1800,61 @@ export default function Dashboard() {
             </h3>
 
             <div style={{marginTop:20, overflowX:"auto"}}>
-              <table style={{...table, minWidth:"600px"}}>
+              <table style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                background: "#fff",
+                borderRadius: 8,
+                overflow: "hidden",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                tableLayout: "fixed",
+                minWidth:"600px"
+              }}>
                 <thead>
-                  <tr style={thead}>
-                    <th style={th}>Rank</th>
-                    <th style={th}>Viewer Email</th>
-                    <th style={th}>Time Spent</th>
-                    <th style={th}>Pages</th>
-                    <th style={th}>Sessions</th>
+                  <tr style={{
+                    background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
+                    color: "#fff"
+                  }}>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                    }}>Rank</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                    }}>Viewer Email</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                    }}>Time Spent</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                    }}>Pages</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                    }}>Sessions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1345,8 +1875,15 @@ export default function Dashboard() {
                       .sort((a, b) => b.duration - a.duration)
                       .slice(0, 5)
                       .map((user, i) => (
-                        <tr key={i} style={i % 2 === 0 ? rowEven : rowOdd}>
-                          <td style={td}>
+                        <tr key={i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
+                          <td style={{
+                            padding: "10px 6px",
+                            border: "1px solid #eee",
+                            textAlign: "center",
+                            fontSize: "12px",
+                            verticalAlign: "middle",
+                            wordBreak: "break-word",
+                          }}>
                             <div style={{
                               width: 28,
                               height: 28,
@@ -1362,22 +1899,53 @@ export default function Dashboard() {
                               {i + 1}
                             </div>
                           </td>
-                          <td style={{...td, maxWidth:"200px", overflow:"hidden", textOverflow:"ellipsis"}}>
+                          <td style={{
+                            padding: "10px 6px",
+                            border: "1px solid #eee",
+                            textAlign: "center",
+                            fontSize: "12px",
+                            verticalAlign: "middle",
+                            wordBreak: "break-word",
+                            maxWidth:"200px", 
+                            overflow:"hidden", 
+                            textOverflow:"ellipsis"
+                          }}>
                             {user.email}
                           </td>
-                          <td style={td}>
+                          <td style={{
+                            padding: "10px 6px",
+                            border: "1px solid #eee",
+                            textAlign: "center",
+                            fontSize: "12px",
+                            verticalAlign: "middle",
+                            wordBreak: "break-word",
+                          }}>
                             <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center", flexWrap:"wrap"}}>
                               <MdTimeline color="#FF9800" size={16} />
                               {Math.round(user.duration / 1000)} sec
                             </div>
                           </td>
-                          <td style={td}>
+                          <td style={{
+                            padding: "10px 6px",
+                            border: "1px solid #eee",
+                            textAlign: "center",
+                            fontSize: "12px",
+                            verticalAlign: "middle",
+                            wordBreak: "break-word",
+                          }}>
                             <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center", flexWrap:"wrap"}}>
                               <MdDescription color="#4CAF50" size={16} />
                               {user.pages}
                             </div>
                           </td>
-                          <td style={td}>{user.sessions}</td>
+                          <td style={{
+                            padding: "10px 6px",
+                            border: "1px solid #eee",
+                            textAlign: "center",
+                            fontSize: "12px",
+                            verticalAlign: "middle",
+                            wordBreak: "break-word",
+                          }}>{user.sessions}</td>
                         </tr>
                       ));
                   })()}
@@ -1414,7 +1982,14 @@ export default function Dashboard() {
             </h2>
             
             {/* Search Bar */}
-            <div style={searchContainerStyle}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 15,
+              marginBottom: 20,
+              marginTop: 10,
+              flexWrap: "wrap",
+            }}>
               <input
                 type="text"
                 placeholder="Search proposals..."
@@ -1423,9 +1998,24 @@ export default function Dashboard() {
                   setProposalSearch(e.target.value);
                   setProposalPage(1);
                 }}
-                style={searchInputStyle}
+                style={{
+                  flex: 1,
+                  padding: "10px 14px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(0,0,0,0.1)",
+                  background: "#fff",
+                  fontSize: 14,
+                  outline: "none",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                  minWidth: "200px",
+                }}
               />
-              <span style={searchResultStyle}>
+              <span style={{
+                fontSize: 13,
+                color: "#666",
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+              }}>
                 {filteredProposals.length} found
               </span>
             </div>
@@ -1434,14 +2024,64 @@ export default function Dashboard() {
               <p>Loading...</p>
             ) : (
               <>
-                <div style={tableWrapperStyle}>
-                  <table style={{...table}}>
+                <div style={{
+                  width: "100%",
+                  overflowX: "auto",
+                  WebkitOverflowScrolling: "touch",
+                  borderRadius: "8px",
+                  border: "1px solid #eee",
+                  marginBottom: "10px"
+                }}>
+                  <table style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    background: "#fff",
+                    borderRadius: 8,
+                    overflow: "hidden",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                    tableLayout: "fixed",
+                  }}>
                     <thead>
-                      <tr style={thead}>
-                        <th style={{...th, width:"40%"}}>File</th>
-                        <th style={{...th, width:"15%"}}>Status</th>
-                        <th style={{...th, width:"10%"}}>Views</th>
-                        <th style={{...th, width:"35%"}}>Actions</th>
+                      <tr style={{
+                        background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
+                        color: "#fff"
+                      }}>
+                        <th style={{
+                          padding: "12px 6px",
+                          border: "none",
+                          textAlign: "center",
+                          fontSize: "12px",
+                          fontWeight: "bold",
+                          whiteSpace: "nowrap",
+                          width: "40%"
+                        }}>File</th>
+                        <th style={{
+                          padding: "12px 6px",
+                          border: "none",
+                          textAlign: "center",
+                          fontSize: "12px",
+                          fontWeight: "bold",
+                          whiteSpace: "nowrap",
+                          width: "15%"
+                        }}>Status</th>
+                        <th style={{
+                          padding: "12px 6px",
+                          border: "none",
+                          textAlign: "center",
+                          fontSize: "12px",
+                          fontWeight: "bold",
+                          whiteSpace: "nowrap",
+                          width: "10%"
+                        }}>Views</th>
+                        <th style={{
+                          padding: "12px 6px",
+                          border: "none",
+                          textAlign: "center",
+                          fontSize: "12px",
+                          fontWeight: "bold",
+                          whiteSpace: "nowrap",
+                          width: "35%"
+                        }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1452,37 +2092,105 @@ export default function Dashboard() {
                         );
                         
                         return (
-                          <tr key={i} style={i%2===0?rowEven:rowOdd}>
-                            <td style={{...td, textAlign:"left"}}>
+                          <tr key={i} style={i%2===0?{ background: "#f9f9f9" }:{ background: "#fff" }}>
+                            <td style={{
+                              padding: "10px 6px",
+                              border: "1px solid #eee",
+                              textAlign: "center",
+                              fontSize: "12px",
+                              verticalAlign: "middle",
+                              wordBreak: "break-word",
+                              textAlign:"left"
+                            }}>
                               <div style={{display:"flex", alignItems:"center", gap:8}}>
                                 <MdDescription color={isSigned ? "#10B981" : "#1976D2"} style={{flexShrink:0}} />
                                 <span style={{wordBreak:"break-word"}}>{file.name}</span>
                               </div>
                             </td>
-                            <td style={td}>
+                            <td style={{
+                              padding: "10px 6px",
+                              border: "1px solid #eee",
+                              textAlign: "center",
+                              fontSize: "12px",
+                              verticalAlign: "middle",
+                              wordBreak: "break-word",
+                            }}>
                               {isSigned ? (
                                 <ProposalStatusBadge status="signed" size="small" />
                               ) : (
                                 <ProposalStatusBadge status="pending" size="small" />
                               )}
                             </td>
-                            <td style={td}>
+                            <td style={{
+                              padding: "10px 6px",
+                              border: "1px solid #eee",
+                              textAlign: "center",
+                              fontSize: "12px",
+                              verticalAlign: "middle",
+                              wordBreak: "break-word",
+                            }}>
                               <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
                                 {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
                               </div>
                             </td>
-                            <td style={td}>
+                            <td style={{
+                              padding: "10px 6px",
+                              border: "1px solid #eee",
+                              textAlign: "center",
+                              fontSize: "12px",
+                              verticalAlign: "middle",
+                              wordBreak: "break-word",
+                            }}>
                               <div className="action-buttons">
-                                <button style={compactViewBtn} onClick={()=>viewProposal(file)}>
+                                <button style={{
+                                  padding: "6px 10px",
+                                  background: "#2196F3",
+                                  color: "#fff",
+                                  border: "none",
+                                  borderRadius: 4,
+                                  cursor: "pointer",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                  fontSize: "12px",
+                                  fontWeight: "bold",
+                                  whiteSpace: "nowrap"
+                                }} onClick={()=>viewProposal(file)}>
                                   <MdVisibility size={14} />
                                   <span>View</span>
                                 </button>
-                                <button style={compactDownloadBtn} onClick={()=>downloadFile(file)}>
+                                <button style={{
+                                  padding: "6px 10px",
+                                  background: "#4CAF50",
+                                  color: "#fff",
+                                  border: "none",
+                                  borderRadius: 4,
+                                  cursor: "pointer",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                  fontSize: "12px",
+                                  fontWeight: "bold",
+                                  whiteSpace: "nowrap"
+                                }} onClick={()=>downloadFile(file)}>
                                   <MdFileUpload size={14} />
                                   <span>Download</span>
                                 </button>
                                 <button 
-                                  style={compactSignBtn} 
+                                  style={{
+                                    padding: "6px 10px",
+                                    background: "#10B981",
+                                    color: "#fff",
+                                    border: "none",
+                                    borderRadius: 4,
+                                    cursor: "pointer",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                    fontSize: "12px",
+                                    fontWeight: "bold",
+                                    whiteSpace: "nowrap"
+                                  }} 
                                   onClick={() => handleSignProposal(file)}
                                 >
                                   <MdEdit size={14} />
@@ -1499,16 +2207,41 @@ export default function Dashboard() {
                 
                 {/* Pagination */}
                 {totalProposalPages > 1 && (
-                  <div style={paginationContainerStyle}>
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 12,
+                    marginTop: 25,
+                    padding: "15px 0",
+                    flexWrap: "wrap",
+                  }}>
                     <button 
                       onClick={() => setProposalPage(p => Math.max(1, p - 1))}
                       disabled={proposalPage === 1}
-                      style={paginationBtnStyle(proposalPage === 1)}
+                      style={{
+                        padding: "8px 16px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: proposalPage === 1 ? "rgba(0,0,0,0.05)" : "#fff",
+                        color: proposalPage === 1 ? "rgba(0,0,0,0.3)" : "#1976D2",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: proposalPage === 1 ? "not-allowed" : "pointer",
+                        boxShadow: proposalPage === 1 ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
+                        transition: "all 0.2s ease",
+                        whiteSpace: "nowrap",
+                      }}
                     >
                       Previous
                     </button>
                     
-                    <div style={pageNumbersStyle}>
+                    <div style={{
+                      display: "flex",
+                      gap: 4,
+                      flexWrap: "wrap",
+                      justifyContent: "center",
+                    }}>
                       {Array.from({length: Math.min(5, totalProposalPages)}, (_, i) => {
                         let pageNum;
                         if (totalProposalPages <= 5) {
@@ -1524,7 +2257,19 @@ export default function Dashboard() {
                           <button
                             key={pageNum}
                             onClick={() => setProposalPage(pageNum)}
-                            style={pageNumberStyle(proposalPage === pageNum)}
+                            style={{
+                              width: 36,
+                              height: 36,
+                              borderRadius: 6,
+                              border: "none",
+                              background: proposalPage === pageNum ? "linear-gradient(135deg, #1976D2 0%, #2196F3 100%)" : "#fff",
+                              color: proposalPage === pageNum ? "#fff" : "#666",
+                              fontSize: 13,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              boxShadow: proposalPage === pageNum ? "0 4px 12px rgba(25, 118, 210, 0.3)" : "0 2px 8px rgba(0,0,0,0.04)",
+                              transition: "all 0.2s ease",
+                            }}
                           >
                             {pageNum}
                           </button>
@@ -1535,7 +2280,19 @@ export default function Dashboard() {
                     <button 
                       onClick={() => setProposalPage(p => Math.min(totalProposalPages, p + 1))}
                       disabled={proposalPage === totalProposalPages}
-                      style={paginationBtnStyle(proposalPage === totalProposalPages)}
+                      style={{
+                        padding: "8px 16px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: proposalPage === totalProposalPages ? "rgba(0,0,0,0.05)" : "#fff",
+                        color: proposalPage === totalProposalPages ? "rgba(0,0,0,0.3)" : "#1976D2",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: proposalPage === totalProposalPages ? "not-allowed" : "pointer",
+                        boxShadow: proposalPage === totalProposalPages ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
+                        transition: "all 0.2s ease",
+                        whiteSpace: "nowrap",
+                      }}
                     >
                       Next
                     </button>
@@ -1549,22 +2306,54 @@ export default function Dashboard() {
         {/* SIGNED PROPOSALS TAB */}
         {activeTab==="signed" && (
           <>
-            <div style={headerActionsStyle}>
+            <div style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 20,
+              flexWrap: "wrap",
+              gap: 10
+            }}>
               <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <MdCheckCircleOutline size={28} color="#10B981" />
                 Signed Proposals
               </h2>
               
-              <div style={summaryStatsStyle}>
-                <div style={statBadgeStyle}>
-                  <span style={statLabelStyle}>Total Signed</span>
-                  <span style={statValueStyle}>{signedProposals.length}</span>
+              <div style={{
+                display: "flex",
+                gap: "10px",
+              }}>
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "8px 16px",
+                  background: "#f0fdf4",
+                  borderRadius: "100px",
+                  border: "1px solid #86efac",
+                }}>
+                  <span style={{
+                    fontSize: "13px",
+                    color: "#166534",
+                  }}>Total Signed</span>
+                  <span style={{
+                    fontSize: "16px",
+                    fontWeight: "700",
+                    color: "#059669",
+                  }}>{signedProposals.length}</span>
                 </div>
               </div>
             </div>
 
             {/* Search Bar */}
-            <div style={searchContainerStyle}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 15,
+              marginBottom: 20,
+              marginTop: 10,
+              flexWrap: "wrap",
+            }}>
               <input
                 type="text"
                 placeholder="Search signed proposals..."
@@ -1573,29 +2362,118 @@ export default function Dashboard() {
                   setViewsSearch(e.target.value);
                   setViewsPage(1);
                 }}
-                style={searchInputStyle}
+                style={{
+                  flex: 1,
+                  padding: "10px 14px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(0,0,0,0.1)",
+                  background: "#fff",
+                  fontSize: 14,
+                  outline: "none",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                  minWidth: "200px",
+                }}
               />
-              <span style={searchResultStyle}>
+              <span style={{
+                fontSize: 13,
+                color: "#666",
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+              }}>
                 {signedProposals.length} found
               </span>
             </div>
 
-            <div style={tableWrapperStyle}>
-              <table style={{...table}}>
+            <div style={{
+              width: "100%",
+              overflowX: "auto",
+              WebkitOverflowScrolling: "touch",
+              borderRadius: "8px",
+              border: "1px solid #eee",
+              marginBottom: "10px"
+            }}>
+              <table style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                background: "#fff",
+                borderRadius: 8,
+                overflow: "hidden",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                tableLayout: "fixed",
+              }}>
                 <thead>
-                  <tr style={thead}>
-                    <th style={{...th, width:"25%"}}>Proposal</th>
-                    <th style={{...th, width:"20%"}}>Signed By</th>
-                    <th style={{...th, width:"20%"}}>Email</th>
-                    <th style={{...th, width:"15%"}}>Date Signed</th>
-                    <th style={{...th, width:"10%"}}>Signature</th>
-                    <th style={{...th, width:"10%"}}>Actions</th>
+                  <tr style={{
+                    background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
+                    color: "#fff"
+                  }}>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "25%"
+                    }}>Proposal</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "20%"
+                    }}>Signed By</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "20%"
+                    }}>Email</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "15%"
+                    }}>Date Signed</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "10%"
+                    }}>Signature</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "10%"
+                    }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {signedProposals.map((proposal, i) => (
-                    <tr key={proposal.id || i} style={i % 2 === 0 ? rowEven : rowOdd}>
-                      <td style={{...td, textAlign:"left"}}>
+                    <tr key={proposal.id || i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                        textAlign:"left"
+                      }}>
                         <div style={{display:"flex", alignItems:"center", gap:8}}>
                           <MdDescription color="#10B981" style={{flexShrink:0}} />
                           <span style={{wordBreak:"break-word"}}>
@@ -1603,32 +2481,81 @@ export default function Dashboard() {
                           </span>
                         </div>
                       </td>
-                      <td style={{...td, wordBreak:"break-word"}}>
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                      }}>
                         <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
                           <MdPerson size={14} color="#64748b" />
                           {proposal.signedBy || 'Unknown'}
                         </div>
                       </td>
-                      <td style={{...td, wordBreak:"break-word"}}>
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                      }}>
                         <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
                           <MdEmail size={14} color="#64748b" />
                           {proposal.signerEmail || 'N/A'}
                         </div>
                       </td>
-                      <td style={{...td, fontSize:"12px"}}>
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                      }}>
                         <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
                           <MdSchedule size={14} color="#64748b" />
                           {proposal.signedAt ? new Date(proposal.signedAt).toLocaleDateString() : 'N/A'}
                         </div>
                       </td>
-                      <td style={td}>
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                      }}>
                         {proposal.signatureType === 'draw' ? (
-                          <span style={signatureBadgeStyle}>🖊️ Drawn</span>
+                          <span style={{
+                            display: "inline-block",
+                            padding: "4px 8px",
+                            background: "#f1f5f9",
+                            borderRadius: "4px",
+                            fontSize: "11px",
+                            color: "#64748b",
+                          }}>🖊️ Drawn</span>
                         ) : (
-                          <span style={signatureBadgeStyle}>📝 Typed</span>
+                          <span style={{
+                            display: "inline-block",
+                            padding: "4px 8px",
+                            background: "#f1f5f9",
+                            borderRadius: "4px",
+                            fontSize: "11px",
+                            color: "#64748b",
+                          }}>📝 Typed</span>
                         )}
                       </td>
-                      <td style={td}>
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                      }}>
                         <button
                           onClick={() => {
                             if (proposal.proposalPath) {
@@ -1636,7 +2563,20 @@ export default function Dashboard() {
                               window.open(`/sign/${encoded}`, '_blank');
                             }
                           }}
-                          style={compactViewBtn}
+                          style={{
+                            padding: "6px 10px",
+                            background: "#2196F3",
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            fontSize: "12px",
+                            fontWeight: "bold",
+                            whiteSpace: "nowrap"
+                          }}
                         >
                           <MdVisibility size={14} />
                           View
@@ -1663,30 +2603,92 @@ export default function Dashboard() {
 
             {/* Summary Cards */}
             {signedProposals.length > 0 && (
-              <div style={signedSummaryStyle}>
-                <div style={summaryCardStyle}>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                gap: "20px",
+                marginTop: "25px",
+              }}>
+                <div style={{
+                  background: "#fff",
+                  borderRadius: "12px",
+                  padding: "20px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "15px",
+                  border: "1px solid #e2e8f0",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                }}>
                   <MdCheckCircle size={24} color="#10B981" />
                   <div>
-                    <span style={summaryCardLabelStyle}>Total Signatures</span>
-                    <span style={summaryCardValueStyle}>{signedProposals.length}</span>
+                    <span style={{
+                      display: "block",
+                      fontSize: "12px",
+                      color: "#64748b",
+                      marginBottom: "4px",
+                    }}>Total Signatures</span>
+                    <span style={{
+                      display: "block",
+                      fontSize: "24px",
+                      fontWeight: "700",
+                      color: "#1a1a2e",
+                    }}>{signedProposals.length}</span>
                   </div>
                 </div>
                 
-                <div style={summaryCardStyle}>
+                <div style={{
+                  background: "#fff",
+                  borderRadius: "12px",
+                  padding: "20px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "15px",
+                  border: "1px solid #e2e8f0",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                }}>
                   <MdPerson size={24} color="#3b82f6" />
                   <div>
-                    <span style={summaryCardLabelStyle}>Unique Signers</span>
-                    <span style={summaryCardValueStyle}>
+                    <span style={{
+                      display: "block",
+                      fontSize: "12px",
+                      color: "#64748b",
+                      marginBottom: "4px",
+                    }}>Unique Signers</span>
+                    <span style={{
+                      display: "block",
+                      fontSize: "24px",
+                      fontWeight: "700",
+                      color: "#1a1a2e",
+                    }}>
                       {new Set(signedProposals.map(p => p.signerEmail)).size}
                     </span>
                   </div>
                 </div>
                 
-                <div style={summaryCardStyle}>
+                <div style={{
+                  background: "#fff",
+                  borderRadius: "12px",
+                  padding: "20px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "15px",
+                  border: "1px solid #e2e8f0",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                }}>
                   <MdSchedule size={24} color="#8b5cf6" />
                   <div>
-                    <span style={summaryCardLabelStyle}>Last Signed</span>
-                    <span style={summaryCardValueStyle}>
+                    <span style={{
+                      display: "block",
+                      fontSize: "12px",
+                      color: "#64748b",
+                      marginBottom: "4px",
+                    }}>Last Signed</span>
+                    <span style={{
+                      display: "block",
+                      fontSize: "24px",
+                      fontWeight: "700",
+                      color: "#1a1a2e",
+                    }}>
                       {signedProposals[0]?.signedAt 
                         ? new Date(signedProposals[0].signedAt).toLocaleDateString() 
                         : 'N/A'}
@@ -1701,18 +2703,36 @@ export default function Dashboard() {
         {/* LIVE VIEWS with Delete and Search */}
         {activeTab==="views" && (
           <>
-            <div style={headerActionsStyle}>
+            <div style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 20,
+              flexWrap: "wrap",
+              gap: 10
+            }}>
               <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <MdRemoveRedEye size={28} color="#1976D2" />
                 Live Views
               </h2>
               
-              <div style={actionButtonsGroupStyle}>
+              <div style={{
+                display: "flex",
+                gap: 10,
+                flexWrap: "wrap"
+              }}>
                 {/* Filter Dropdown */}
                 <select
                   value={dateFilter}
                   onChange={(e) => setDateFilter(e.target.value)}
-                  style={filterSelectStyle}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #ddd",
+                    background: "#fff",
+                    cursor: "pointer",
+                    fontSize: "13px"
+                  }}
                 >
                   <option value="all">All Time</option>
                   <option value="today">Today</option>
@@ -1727,7 +2747,20 @@ export default function Dashboard() {
                       setDeleteType("views");
                       setShowDeleteModal(true);
                     }}
-                    style={deleteButtonStyle}
+                    style={{
+                      padding: "8px 12px",
+                      background: "#d32f2f",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontWeight: "bold",
+                      fontSize: "13px",
+                      whiteSpace: "nowrap"
+                    }}
                   >
                     <MdDelete size={18} />
                     Delete ({selectedViews.length})
@@ -1741,7 +2774,19 @@ export default function Dashboard() {
                       setDeleteType("filteredViews");
                       setShowDeleteModal(true);
                     }}
-                    style={filteredDeleteButtonStyle}
+                    style={{
+                      padding: "8px 12px",
+                      background: "#ff9800",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontSize: "13px",
+                      whiteSpace: "nowrap"
+                    }}
                   >
                     <MdDelete size={18} />
                     Delete {getFilteredViews().length}
@@ -1751,7 +2796,14 @@ export default function Dashboard() {
             </div>
 
             {/* Search Bar */}
-            <div style={searchContainerStyle}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 15,
+              marginBottom: 20,
+              marginTop: 10,
+              flexWrap: "wrap",
+            }}>
               <input
                 type="text"
                 placeholder="Search by file, email or ID..."
@@ -1760,61 +2812,193 @@ export default function Dashboard() {
                   setViewsSearch(e.target.value);
                   setViewsPage(1);
                 }}
-                style={searchInputStyle}
+                style={{
+                  flex: 1,
+                  padding: "10px 14px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(0,0,0,0.1)",
+                  background: "#fff",
+                  fontSize: 14,
+                  outline: "none",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                  minWidth: "200px",
+                }}
               />
-              <span style={searchResultStyle}>
+              <span style={{
+                fontSize: 13,
+                color: "#666",
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+              }}>
                 {filteredViews.length} found
               </span>
             </div>
 
             {/* Filter Info */}
-            <div style={filterInfoStyle}>
+            <div style={{
+              background: "#e3f2fd",
+              padding: "8px 15px",
+              borderRadius: 6,
+              marginBottom: 15,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 13,
+              flexWrap: "wrap"
+            }}>
               <MdFilterList color="#1976D2" />
               Showing {paginatedViews.length} of {filteredViews.length} views
               {dateFilter !== "all" && ` (${dateFilter})`}
             </div>
 
-            <div style={tableWrapperStyle}>
-              <table style={{...table}}>
+            <div style={{
+              width: "100%",
+              overflowX: "auto",
+              WebkitOverflowScrolling: "touch",
+              borderRadius: "8px",
+              border: "1px solid #eee",
+              marginBottom: "10px"
+            }}>
+              <table style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                background: "#fff",
+                borderRadius: 8,
+                overflow: "hidden",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                tableLayout: "fixed",
+              }}>
                 <thead>
-                  <tr style={thead}>
-                    <th style={{...th, width:"5%"}}>
+                  <tr style={{
+                    background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
+                    color: "#fff"
+                  }}>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "5%"
+                    }}>
                       <input
                         type="checkbox"
                         onChange={(e) => selectAllViews(e.target.checked)}
                         checked={selectedViews.length === views.length && views.length > 0}
                       />
                     </th>
-                    <th style={{...th, width:"30%"}}>File</th>
-                    <th style={{...th, width:"30%"}}>Viewer Email</th>
-                    <th style={{...th, width:"20%"}}>Viewed At</th>
-                    <th style={{...th, width:"15%"}}>Actions</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "30%"
+                    }}>File</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "30%"
+                    }}>Viewer Email</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "20%"
+                    }}>Viewed At</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "15%"
+                    }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedViews.map((v, i) => (
-                    <tr key={i} style={i % 2 === 0 ? rowEven : rowOdd}>
-                      <td style={{...td, width:"5%"}}>
+                    <tr key={i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                        width: "5%"
+                      }}>
                         <input
                           type="checkbox"
                           checked={selectedViews.includes(v.id)}
                           onChange={() => toggleViewSelection(v.id)}
                         />
                       </td>
-                      <td style={{...td, textAlign:"left"}}>
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                        textAlign:"left"
+                      }}>
                         <div style={{display:"flex", alignItems:"center", gap:8}}>
                           <MdDescription color="#1976D2" style={{flexShrink:0}} />
                           <span style={{wordBreak:"break-word"}}>{v.fileName || "N/A"}</span>
                         </div>
                       </td>
-                      <td style={{...td, wordBreak:"break-word"}}>{v.viewerEmail || "Anonymous"}</td>
-                      <td style={{...td, fontSize:"12px", whiteSpace:"nowrap"}} className="timestamp-cell">
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                      }}>{v.viewerEmail || "Anonymous"}</td>
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                      }} className="timestamp-cell">
                         {v.viewedAt ? new Date(v.viewedAt).toLocaleString() : "Loading"}
                       </td>
-                      <td style={td}>
+                      <td style={{
+                        padding: "10px 6px",
+                        border: "1px solid #eee",
+                        textAlign: "center",
+                        fontSize: "12px",
+                        verticalAlign: "middle",
+                        wordBreak: "break-word",
+                      }}>
                         <button
                           onClick={() => handleDeleteView(v.id, v.fileName)}
-                          style={compactDeleteBtn}
+                          style={{
+                            padding: "6px 10px",
+                            background: "#d32f2f",
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            fontSize: "12px",
+                            whiteSpace: "nowrap"
+                          }}
                         >
                           <MdDelete size={14} />
                           <span>Delete</span>
@@ -1835,16 +3019,41 @@ export default function Dashboard() {
             
             {/* Pagination */}
             {totalViewsPages > 1 && (
-              <div style={paginationContainerStyle}>
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 12,
+                marginTop: 25,
+                padding: "15px 0",
+                flexWrap: "wrap",
+              }}>
                 <button 
                   onClick={() => setViewsPage(p => Math.max(1, p - 1))}
                   disabled={viewsPage === 1}
-                  style={paginationBtnStyle(viewsPage === 1)}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: viewsPage === 1 ? "rgba(0,0,0,0.05)" : "#fff",
+                    color: viewsPage === 1 ? "rgba(0,0,0,0.3)" : "#1976D2",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: viewsPage === 1 ? "not-allowed" : "pointer",
+                    boxShadow: viewsPage === 1 ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
+                    transition: "all 0.2s ease",
+                    whiteSpace: "nowrap",
+                  }}
                 >
                   Previous
                 </button>
                 
-                <div style={pageNumbersStyle}>
+                <div style={{
+                  display: "flex",
+                  gap: 4,
+                  flexWrap: "wrap",
+                  justifyContent: "center",
+                }}>
                   {Array.from({length: Math.min(5, totalViewsPages)}, (_, i) => {
                     let pageNum;
                     if (totalViewsPages <= 5) {
@@ -1860,7 +3069,19 @@ export default function Dashboard() {
                       <button
                         key={pageNum}
                         onClick={() => setViewsPage(pageNum)}
-                        style={pageNumberStyle(viewsPage === pageNum)}
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: 6,
+                          border: "none",
+                          background: viewsPage === pageNum ? "linear-gradient(135deg, #1976D2 0%, #2196F3 100%)" : "#fff",
+                          color: viewsPage === pageNum ? "#fff" : "#666",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          boxShadow: viewsPage === pageNum ? "0 4px 12px rgba(25, 118, 210, 0.3)" : "0 2px 8px rgba(0,0,0,0.04)",
+                          transition: "all 0.2s ease",
+                        }}
                       >
                         {pageNum}
                       </button>
@@ -1871,7 +3092,19 @@ export default function Dashboard() {
                 <button 
                   onClick={() => setViewsPage(p => Math.min(totalViewsPages, p + 1))}
                   disabled={viewsPage === totalViewsPages}
-                  style={paginationBtnStyle(viewsPage === totalViewsPages)}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: viewsPage === totalViewsPages ? "rgba(0,0,0,0.05)" : "#fff",
+                    color: viewsPage === totalViewsPages ? "rgba(0,0,0,0.3)" : "#1976D2",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: viewsPage === totalViewsPages ? "not-allowed" : "pointer",
+                    boxShadow: viewsPage === totalViewsPages ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
+                    transition: "all 0.2s ease",
+                    whiteSpace: "nowrap",
+                  }}
                 >
                   Next
                 </button>
@@ -1880,280 +3113,634 @@ export default function Dashboard() {
           </>
         )}
 
-        {/* ENGAGEMENT with Delete and Search */}
-        {activeTab==="engagement" && (
-          <>
-            <div style={headerActionsStyle}>
-              <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <MdTimeline size={28} color="#1976D2" />
-                Engagement Analytics
-              </h2>
-              
-              <div style={actionButtonsGroupStyle}>
-                {/* Filter Dropdown */}
-                <select
-                  value={dateFilter}
-                  onChange={(e) => setDateFilter(e.target.value)}
-                  style={filterSelectStyle}
-                >
-                  <option value="all">All Time</option>
-                  <option value="today">Today</option>
-                  <option value="week">This Week</option>
-                  <option value="month">This Month</option>
-                </select>
+        {/* ENGAGEMENT with Delete and Search - FIXED VERSION */}
+{activeTab === "engagement" && (
+  <>
+    <div style={{
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 20,
+      flexWrap: "wrap",
+      gap: 10
+    }}>
+      <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <MdTimeline size={28} color="#1976D2" />
+        Engagement Analytics
+      </h2>
 
-                {/* Bulk Delete Button */}
-                {selectedSessions.length > 0 && (
-                  <button
-                    onClick={() => {
-                      setDeleteType("sessions");
-                      setShowDeleteModal(true);
-                    }}
-                    style={deleteButtonStyle}
-                  >
-                    <MdDelete size={18} />
-                    Delete ({selectedSessions.length})
-                  </button>
-                )}
+      <div style={{
+        display: "flex",
+        gap: 10,
+        flexWrap: "wrap"
+      }}>
+        {/* Filter Dropdown */}
+        <select
+          value={dateFilter}
+          onChange={(e) => setDateFilter(e.target.value)}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 6,
+            border: "1px solid #ddd",
+            background: "#fff",
+            cursor: "pointer",
+            fontSize: "13px"
+          }}
+        >
+          <option value="all">All Time</option>
+          <option value="today">Today</option>
+          <option value="week">This Week</option>
+          <option value="month">This Month</option>
+        </select>
 
-                {/* Delete All Filtered Button */}
-                {getFilteredSessions().length > 0 && (
-                  <button
-                    onClick={() => {
-                      setDeleteType("filteredSessions");
-                      setShowDeleteModal(true);
-                    }}
-                    style={filteredDeleteButtonStyle}
-                  >
-                    <MdDelete size={18} />
-                    Delete {getFilteredSessions().length}
-                  </button>
-                )}
-              </div>
-            </div>
+        {/* Bulk Delete Button */}
+        {selectedSessions.length > 0 && (
+          <button
+            onClick={() => {
+              setDeleteType("sessions");
+              setShowDeleteModal(true);
+            }}
+            style={{
+              padding: "8px 12px",
+              background: "#d32f2f",
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontWeight: "bold",
+              fontSize: "13px",
+              whiteSpace: "nowrap"
+            }}
+          >
+            <MdDelete size={18} />
+            Delete ({selectedSessions.length})
+          </button>
+        )}
 
-            {/* Search Bar */}
-            <div style={searchContainerStyle}>
+        {/* Delete All Filtered Button */}
+        {getFilteredSessions().length > 0 && (
+          <button
+            onClick={() => {
+              setDeleteType("filteredSessions");
+              setShowDeleteModal(true);
+            }}
+            style={{
+              padding: "8px 12px",
+              background: "#ff9800",
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: "13px",
+              whiteSpace: "nowrap"
+            }}
+          >
+            <MdDelete size={18} />
+            Delete {getFilteredSessions().length}
+          </button>
+        )}
+      </div>
+    </div>
+
+    {/* Search Bar */}
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 15,
+      marginBottom: 20,
+      marginTop: 10,
+      flexWrap: "wrap",
+    }}>
+      <input
+        type="text"
+        placeholder="Search by proposal or viewer..."
+        value={engagementSearch}
+        onChange={(e) => {
+          setEngagementSearch(e.target.value);
+          setEngagementPage(1);
+        }}
+        style={{
+          flex: 1,
+          padding: "10px 14px",
+          borderRadius: 8,
+          border: "1px solid rgba(0,0,0,0.1)",
+          background: "#fff",
+          fontSize: 14,
+          outline: "none",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+          minWidth: "200px",
+        }}
+      />
+      <span style={{
+        fontSize: 13,
+        color: "#666",
+        fontWeight: 500,
+        whiteSpace: "nowrap",
+      }}>
+        {filteredEngagement.length} found
+      </span>
+    </div>
+
+    {/* Filter Info */}
+    <div style={{
+      background: "#e3f2fd",
+      padding: "8px 15px",
+      borderRadius: 6,
+      marginBottom: 15,
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      fontSize: 13,
+      flexWrap: "wrap"
+    }}>
+      <MdFilterList color="#1976D2" />
+      Showing {paginatedEngagement.length} of {filteredEngagement.length} sessions
+      {dateFilter !== "all" && ` (${dateFilter})`}
+    </div>
+
+    <div style={{
+      width: "100%",
+      overflowX: "auto",
+      WebkitOverflowScrolling: "touch",
+      borderRadius: "8px",
+      border: "1px solid #eee",
+      marginBottom: "10px"
+    }}>
+      <table style={{
+        width: "100%",
+        borderCollapse: "collapse",
+        background: "#fff",
+        borderRadius: 8,
+        overflow: "hidden",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+        tableLayout: "fixed",
+      }}>
+        <thead>
+          <tr style={{
+            background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
+            color: "#fff"
+          }}>
+            <th style={{
+              padding: "12px 6px",
+              border: "none",
+              textAlign: "center",
+              fontSize: "12px",
+              fontWeight: "bold",
+              whiteSpace: "nowrap",
+              width: "5%"
+            }}>
               <input
-                type="text"
-                placeholder="Search by proposal or viewer..."
-                value={engagementSearch}
-                onChange={(e) => {
-                  setEngagementSearch(e.target.value);
-                  setEngagementPage(1);
-                }}
-                style={searchInputStyle}
+                type="checkbox"
+                onChange={(e) => selectAllSessions(e.target.checked)}
+                checked={selectedSessions.length === sessions.length && sessions.length > 0}
               />
-              <span style={searchResultStyle}>
-                {filteredEngagement.length} found
-              </span>
-            </div>
-
-            {/* Filter Info */}
-            <div style={filterInfoStyle}>
-              <MdFilterList color="#1976D2" />
-              Showing {paginatedEngagement.length} of {filteredEngagement.length} sessions
-              {dateFilter !== "all" && ` (${dateFilter})`}
-            </div>
-
-            <div style={tableWrapperStyle}>
-              <table style={{...table}}>
-                <thead>
-                  <tr style={thead}>
-                    <th style={{...th, width:"5%"}}>
-                      <input
-                        type="checkbox"
-                        onChange={(e) => selectAllSessions(e.target.checked)}
-                        checked={selectedSessions.length === sessions.length && sessions.length > 0}
-                      />
-                    </th>
-                    <th style={{...th, width:"25%"}}>Proposal</th>
-                    <th style={{...th, width:"20%"}}>Viewer</th>
-                    <th style={{...th, width:"15%"}}>Started</th>
-                    <th style={{...th, width:"15%"}}>Last Active</th>
-                    <th style={{...th, width:"10%"}}>Duration</th>
-                    <th style={{...th, width:"10%"}}>Pages</th>
-                    <th style={{...th, width:"10%"}}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedEngagement.map((s, i) => {
-                    // Calculate duration safely
-                    let durationSeconds = 0;
-                    if (s.duration) {
-                      durationSeconds = Math.round(s.duration / 1000);
-                    } else if (s.startedAt && s.lastActiveAt) {
-                      // If no duration field, calculate from timestamps
-                      const start = s.startedAt?.seconds ? new Date(s.startedAt.seconds * 1000) : null;
-                      const last = s.lastActiveAt?.seconds ? new Date(s.lastActiveAt.seconds * 1000) : null;
-                      if (start && last) {
-                        durationSeconds = Math.round((last - start) / 1000);
-                      }
-                    }
-
-                    // Format dates safely
-                    const formatDate = (timestamp) => {
-                      if (!timestamp) return 'N/A';
-                      try {
-                        const date = timestamp.seconds ? new Date(timestamp.seconds * 1000) : new Date(timestamp);
-                        return date.toLocaleString();
-                      } catch (e) {
-                        return 'Invalid date';
-                      }
-                    };
-
-                    // Get page count safely
-                    const pageCount = s.pagesViewed?.length || s.pageCount || 0;
-
-                    return (
-                      <tr key={s.id || i} style={i % 2 === 0 ? rowEven : rowOdd}>
-                        <td style={{...td, width:"5%"}}>
-                          <input
-                            type="checkbox"
-                            checked={selectedSessions.includes(s.id)}
-                            onChange={() => toggleSessionSelection(s.id)}
-                          />
-                        </td>
-                        <td style={{...td, textAlign:"left"}}>
-                          <div style={{display:"flex", alignItems:"center", gap:8}}>
-                            <MdDescription color="#1976D2" style={{flexShrink:0}} />
-                            <span style={{wordBreak:"break-word"}}>{s.fileName || 'Unknown'}</span>
-                          </div>
-                        </td>
-                        <td style={{...td, wordBreak:"break-word"}}>
-                          {s.viewerEmail || s.viewerId || 'Anonymous'}
-                        </td>
-                        <td style={{...td, fontSize:"11px", whiteSpace:"nowrap"}}>
-                          {formatDate(s.startedAt)}
-                        </td>
-                        <td style={{...td, fontSize:"11px", whiteSpace:"nowrap"}}>
-                          {formatDate(s.lastActiveAt)}
-                        </td>
-                        <td style={td}>
-                          <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
-                            <MdTimeline color="#FF9800" size={16} />
-                            <span style={{fontWeight:"bold"}}>
-                              {durationSeconds > 0 ? `${durationSeconds}s` : '0s'}
-                            </span>
-                          </div>
-                        </td>
-                        <td style={td}>
-                          <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
-                            <MdDescription color="#4CAF50" size={16} />
-                            <span style={{fontWeight:"bold"}}>{pageCount}</span>
-                          </div>
-                        </td>
-                        <td style={td}>
-                          <button
-                            onClick={() => handleDeleteSession(s.id, s.fileName)}
-                            style={compactDeleteBtn}
-                          >
-                            <MdDelete size={14} />
-                            <span>Delete</span>
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {paginatedEngagement.length === 0 && (
-                    <tr>
-                      <td colSpan={8} style={{ textAlign: "center", padding: 30 }}>
-                        <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:10}}>
-                          <MdTimeline size={40} color="#ccc" />
-                          <p style={{color:"#999", fontSize:14}}>No engagement data found</p>
-                          <p style={{color:"#999", fontSize:12}}>Sessions will appear here when viewers interact with proposals</p>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Summary Stats */}
-            {sessions.length > 0 && (
-              <div style={{
-                display: "flex",
-                gap: 16,
-                marginTop: 20,
-                padding: "16px 20px",
-                background: "#fff",
-                borderRadius: 12,
-                border: "1px solid #eee",
-                flexWrap: "wrap"
-              }}>
-                <div style={{flex:1, minWidth:150}}>
-                  <div style={{fontSize:12, color:"#666", marginBottom:4}}>Total Sessions</div>
-                  <div style={{fontSize:24, fontWeight:"bold", color:"#1976D2"}}>{sessions.length}</div>
-                </div>
-                <div style={{flex:1, minWidth:150}}>
-                  <div style={{fontSize:12, color:"#666", marginBottom:4}}>Avg Time Spent</div>
-                  <div style={{fontSize:24, fontWeight:"bold", color:"#FF9800"}}>
-                    {Math.round(sessions.reduce((acc, s) => acc + (s.duration || 0), 0) / sessions.length / 1000)}s
-                  </div>
-                </div>
-                <div style={{flex:1, minWidth:150}}>
-                  <div style={{fontSize:12, color:"#666", marginBottom:4}}>Total Pages Viewed</div>
-                  <div style={{fontSize:24, fontWeight:"bold", color:"#4CAF50"}}>
-                    {sessions.reduce((acc, s) => acc + (s.pagesViewed?.length || s.pageCount || 0), 0)}
-                  </div>
-                </div>
-                <div style={{flex:1, minWidth:150}}>
-                  <div style={{fontSize:12, color:"#666", marginBottom:4}}>Unique Viewers</div>
-                  <div style={{fontSize:24, fontWeight:"bold", color:"#9C27B0"}}>
-                    {new Set(sessions.map(s => s.viewerId || s.viewerEmail)).size}
-                  </div>
-                </div>
-              </div>
-            )}
+            </th>
+            <th style={{
+              padding: "12px 6px",
+              border: "none",
+              textAlign: "center",
+              fontSize: "12px",
+              fontWeight: "bold",
+              whiteSpace: "nowrap",
+              width: "25%"
+            }}>Proposal</th>
+            <th style={{
+              padding: "12px 6px",
+              border: "none",
+              textAlign: "center",
+              fontSize: "12px",
+              fontWeight: "bold",
+              whiteSpace: "nowrap",
+              width: "20%"
+            }}>Viewer</th>
+            <th style={{
+              padding: "12px 6px",
+              border: "none",
+              textAlign: "center",
+              fontSize: "12px",
+              fontWeight: "bold",
+              whiteSpace: "nowrap",
+              width: "15%"
+            }}>Started</th>
+            <th style={{
+              padding: "12px 6px",
+              border: "none",
+              textAlign: "center",
+              fontSize: "12px",
+              fontWeight: "bold",
+              whiteSpace: "nowrap",
+              width: "15%"
+            }}>Last Active</th>
+            <th style={{
+              padding: "12px 6px",
+              border: "none",
+              textAlign: "center",
+              fontSize: "12px",
+              fontWeight: "bold",
+              whiteSpace: "nowrap",
+              width: "10%"
+            }}>Time Spent</th>
+            <th style={{
+              padding: "12px 6px",
+              border: "none",
+              textAlign: "center",
+              fontSize: "12px",
+              fontWeight: "bold",
+              whiteSpace: "nowrap",
+              width: "10%"
+            }}>Pages</th>
+            <th style={{
+              padding: "12px 6px",
+              border: "none",
+              textAlign: "center",
+              fontSize: "12px",
+              fontWeight: "bold",
+              whiteSpace: "nowrap",
+              width: "10%"
+            }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {paginatedEngagement.map((s, i) => {
+            // Calculate duration safely - check multiple possible field names
+            let durationSeconds = 0;
             
-            {/* Pagination */}
-            {totalEngagementPages > 1 && (
-              <div style={paginationContainerStyle}>
-                <button 
-                  onClick={() => setEngagementPage(p => Math.max(1, p - 1))}
-                  disabled={engagementPage === 1}
-                  style={paginationBtnStyle(engagementPage === 1)}
-                >
-                  Previous
-                </button>
-                
-                <div style={pageNumbersStyle}>
-                  {Array.from({length: Math.min(5, totalEngagementPages)}, (_, i) => {
-                    let pageNum;
-                    if (totalEngagementPages <= 5) {
-                      pageNum = i + 1;
-                    } else if (engagementPage <= 3) {
-                      pageNum = i + 1;
-                    } else if (engagementPage >= totalEngagementPages - 2) {
-                      pageNum = totalEngagementPages - 4 + i;
-                    } else {
-                      pageNum = engagementPage - 2 + i;
-                    }
-                    return (
-                      <button
-                        key={pageNum}
-                        onClick={() => setEngagementPage(pageNum)}
-                        style={pageNumberStyle(engagementPage === pageNum)}
-                      >
-                        {pageNum}
-                      </button>
-                    );
-                  })}
-                </div>
-                
-                <button 
-                  onClick={() => setEngagementPage(p => Math.min(totalEngagementPages, p + 1))}
-                  disabled={engagementPage === totalEngagementPages}
-                  style={paginationBtnStyle(engagementPage === totalEngagementPages)}
-                >
-                  Next
-                </button>
-              </div>
-            )}
-          </>
-        )}
+            // Check for duration field (could be in milliseconds or seconds)
+            if (s.duration) {
+              // If duration is in milliseconds, convert to seconds
+              if (s.duration > 1000) {
+                durationSeconds = Math.round(s.duration / 1000);
+              } else {
+                durationSeconds = Math.round(s.duration);
+              }
+            } 
+            // Check for timeSpent field
+            else if (s.timeSpent) {
+              durationSeconds = Math.round(s.timeSpent);
+            }
+            // Calculate from timestamps if available
+            else if (s.startedAt || s.startTime) {
+              const start = s.startedAt?.seconds 
+                ? new Date(s.startedAt.seconds * 1000) 
+                : s.startTime?.seconds 
+                  ? new Date(s.startTime.seconds * 1000)
+                  : s.startedAt 
+                    ? new Date(s.startedAt)
+                    : null;
+                    
+              const end = s.lastActiveAt?.seconds 
+                ? new Date(s.lastActiveAt.seconds * 1000)
+                : s.endTime?.seconds
+                  ? new Date(s.endTime.seconds * 1000)
+                  : s.lastActiveAt
+                    ? new Date(s.lastActiveAt)
+                    : new Date(); // Use current time if no end time
+              
+              if (start) {
+                durationSeconds = Math.round((end - start) / 1000);
+              }
+            }
 
+            // Ensure durationSeconds is a positive number
+            durationSeconds = Math.max(0, durationSeconds);
+
+            // Format dates safely - handle multiple possible field names
+            const formatDate = (timestamp) => {
+              if (!timestamp) return 'N/A';
+              try {
+                if (timestamp.seconds) {
+                  // Firebase timestamp
+                  return new Date(timestamp.seconds * 1000).toLocaleString();
+                } else if (timestamp instanceof Date) {
+                  return timestamp.toLocaleString();
+                } else {
+                  // Try to parse as date string
+                  return new Date(timestamp).toLocaleString();
+                }
+              } catch (e) {
+                return 'Invalid date';
+              }
+            };
+
+            // Get start time - check multiple possible field names
+            const startTime = s.startedAt || s.startTime || s.createdAt;
+            
+            // Get last active time - check multiple possible field names
+            const lastActive = s.lastActiveAt || s.endTime || s.updatedAt || s.lastActivity;
+
+            // Get page count safely - check multiple possible field names
+            const pageCount = s.pagesViewed?.length || 
+                             s.pageCount || 
+                             s.pages || 
+                             s.totalPages || 
+                             0;
+
+            // Get viewer name/email safely
+            const viewerName = s.viewerName || 
+                              s.name || 
+                              s.userName || 
+                              s.viewerEmail || 
+                              s.email || 
+                              s.userEmail || 
+                              'Anonymous';
+
+            // Get proposal name safely
+            const proposalName = s.fileName || 
+                                s.proposalName || 
+                                s.proposal || 
+                                s.documentName || 
+                                s.name || 
+                                'Unknown';
+
+            return (
+              <tr key={s.id || i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
+                <td style={{
+                  padding: "10px 6px",
+                  border: "1px solid #eee",
+                  textAlign: "center",
+                  fontSize: "12px",
+                  verticalAlign: "middle",
+                  wordBreak: "break-word",
+                  width: "5%"
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedSessions.includes(s.id)}
+                    onChange={() => toggleSessionSelection(s.id)}
+                  />
+                </td>
+                <td style={{
+                  padding: "10px 6px",
+                  border: "1px solid #eee",
+                  textAlign: "center",
+                  fontSize: "12px",
+                  verticalAlign: "middle",
+                  wordBreak: "break-word",
+                  textAlign: "left"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <MdDescription color="#1976D2" style={{ flexShrink: 0 }} />
+                    <span style={{ wordBreak: "break-word" }}>{proposalName}</span>
+                  </div>
+                </td>
+                <td style={{
+                  padding: "10px 6px",
+                  border: "1px solid #eee",
+                  textAlign: "center",
+                  fontSize: "12px",
+                  verticalAlign: "middle",
+                  wordBreak: "break-word",
+                }}>
+                  {viewerName}
+                </td>
+                <td style={{
+                  padding: "10px 6px",
+                  border: "1px solid #eee",
+                  textAlign: "center",
+                  fontSize: "11px",
+                  verticalAlign: "middle",
+                  wordBreak: "break-word",
+                  whiteSpace: "nowrap"
+                }}>
+                  {formatDate(startTime)}
+                </td>
+                <td style={{
+                  padding: "10px 6px",
+                  border: "1px solid #eee",
+                  textAlign: "center",
+                  fontSize: "11px",
+                  verticalAlign: "middle",
+                  wordBreak: "break-word",
+                  whiteSpace: "nowrap"
+                }}>
+                  {formatDate(lastActive)}
+                </td>
+                <td style={{
+                  padding: "10px 6px",
+                  border: "1px solid #eee",
+                  textAlign: "center",
+                  fontSize: "12px",
+                  verticalAlign: "middle",
+                  wordBreak: "break-word",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "center" }}>
+                    <MdTimeline color="#FF9800" size={16} />
+                    <span style={{ fontWeight: "bold" }}>
+                      {durationSeconds > 0 ? `${durationSeconds}s` : '< 1s'}
+                    </span>
+                  </div>
+                </td>
+                <td style={{
+                  padding: "10px 6px",
+                  border: "1px solid #eee",
+                  textAlign: "center",
+                  fontSize: "12px",
+                  verticalAlign: "middle",
+                  wordBreak: "break-word",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "center" }}>
+                    <MdDescription color="#4CAF50" size={16} />
+                    <span style={{ fontWeight: "bold" }}>{pageCount}</span>
+                  </div>
+                </td>
+                <td style={{
+                  padding: "10px 6px",
+                  border: "1px solid #eee",
+                  textAlign: "center",
+                  fontSize: "12px",
+                  verticalAlign: "middle",
+                  wordBreak: "break-word",
+                }}>
+                  <button
+                    onClick={() => handleDeleteSession(s.id, proposalName)}
+                    style={{
+                      padding: "6px 10px",
+                      background: "#d32f2f",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      fontSize: "12px",
+                      whiteSpace: "nowrap"
+                    }}
+                  >
+                    <MdDelete size={14} />
+                    <span>Delete</span>
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+          {paginatedEngagement.length === 0 && (
+            <tr>
+              <td colSpan={8} style={{ textAlign: "center", padding: 30 }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                  <MdTimeline size={40} color="#ccc" />
+                  <p style={{ color: "#999", fontSize: 14, margin: 0 }}>No engagement data found</p>
+                  <p style={{ color: "#999", fontSize: 12 }}>
+                    Sessions will appear here when viewers interact with proposals
+                  </p>
+                </div>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    {/* Summary Stats */}
+    {sessions.length > 0 && (
+      <div style={{
+        display: "flex",
+        gap: 16,
+        marginTop: 20,
+        padding: "16px 20px",
+        background: "#fff",
+        borderRadius: 12,
+        border: "1px solid #eee",
+        flexWrap: "wrap"
+      }}>
+        <div style={{ flex: 1, minWidth: 150 }}>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Total Sessions</div>
+          <div style={{ fontSize: 24, fontWeight: "bold", color: "#1976D2" }}>{sessions.length}</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 150 }}>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Avg Time Spent</div>
+          <div style={{ fontSize: 24, fontWeight: "bold", color: "#FF9800" }}>
+            {(() => {
+              const totalDuration = sessions.reduce((acc, s) => {
+                if (s.duration) {
+                  return acc + (s.duration > 1000 ? s.duration / 1000 : s.duration);
+                }
+                return acc;
+              }, 0);
+              const avgSeconds = Math.round(totalDuration / sessions.length);
+              return avgSeconds > 0 ? `${avgSeconds}s` : '< 1s';
+            })()}
+          </div>
+        </div>
+        <div style={{ flex: 1, minWidth: 150 }}>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Total Pages Viewed</div>
+          <div style={{ fontSize: 24, fontWeight: "bold", color: "#4CAF50" }}>
+            {sessions.reduce((acc, s) => {
+              const pages = s.pagesViewed?.length || s.pageCount || s.pages || 0;
+              return acc + pages;
+            }, 0)}
+          </div>
+        </div>
+        <div style={{ flex: 1, minWidth: 150 }}>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Unique Viewers</div>
+          <div style={{ fontSize: 24, fontWeight: "bold", color: "#9C27B0" }}>
+            {new Set(sessions.map(s => s.viewerId || s.viewerEmail || s.email || s.userId)).size}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Pagination */}
+    {totalEngagementPages > 1 && (
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 12,
+        marginTop: 25,
+        padding: "15px 0",
+        flexWrap: "wrap",
+      }}>
+        <button
+          onClick={() => setEngagementPage(p => Math.max(1, p - 1))}
+          disabled={engagementPage === 1}
+          style={{
+            padding: "8px 16px",
+            borderRadius: 8,
+            border: "none",
+            background: engagementPage === 1 ? "rgba(0,0,0,0.05)" : "#fff",
+            color: engagementPage === 1 ? "rgba(0,0,0,0.3)" : "#1976D2",
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: engagementPage === 1 ? "not-allowed" : "pointer",
+            boxShadow: engagementPage === 1 ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
+            transition: "all 0.2s ease",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Previous
+        </button>
+
+        <div style={{
+          display: "flex",
+          gap: 4,
+          flexWrap: "wrap",
+          justifyContent: "center",
+        }}>
+          {Array.from({ length: Math.min(5, totalEngagementPages) }, (_, i) => {
+            let pageNum;
+            if (totalEngagementPages <= 5) {
+              pageNum = i + 1;
+            } else if (engagementPage <= 3) {
+              pageNum = i + 1;
+            } else if (engagementPage >= totalEngagementPages - 2) {
+              pageNum = totalEngagementPages - 4 + i;
+            } else {
+              pageNum = engagementPage - 2 + i;
+            }
+            return (
+              <button
+                key={pageNum}
+                onClick={() => setEngagementPage(pageNum)}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 6,
+                  border: "none",
+                  background: engagementPage === pageNum ? "linear-gradient(135deg, #1976D2 0%, #2196F3 100%)" : "#fff",
+                  color: engagementPage === pageNum ? "#fff" : "#666",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  boxShadow: engagementPage === pageNum ? "0 4px 12px rgba(25, 118, 210, 0.3)" : "0 2px 8px rgba(0,0,0,0.04)",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                {pageNum}
+              </button>
+            );
+          })}
+        </div>
+
+        <button
+          onClick={() => setEngagementPage(p => Math.min(totalEngagementPages, p + 1))}
+          disabled={engagementPage === totalEngagementPages}
+          style={{
+            padding: "8px 16px",
+            borderRadius: 8,
+            border: "none",
+            background: engagementPage === totalEngagementPages ? "rgba(0,0,0,0.05)" : "#fff",
+            color: engagementPage === totalEngagementPages ? "rgba(0,0,0,0.3)" : "#1976D2",
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: engagementPage === totalEngagementPages ? "not-allowed" : "pointer",
+            boxShadow: engagementPage === totalEngagementPages ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
+            transition: "all 0.2s ease",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Next
+        </button>
+      </div>
+    )}
+  </>
+)}
       </div>
 
     </div>
