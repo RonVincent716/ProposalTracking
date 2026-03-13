@@ -19,7 +19,13 @@ import {
   MdFilterList,
   MdMenu,
   MdChevronLeft,
-  MdChevronRight
+  MdChevronRight,
+  MdInfo,
+  MdEdit,
+  MdPerson,
+  MdEmail,
+  MdSchedule,
+  MdCheckCircleOutline
 } from "react-icons/md";
 import { collection, onSnapshot, orderBy, query, deleteDoc, doc, writeBatch } from "firebase/firestore";
 import { ref, listAll, getDownloadURL } from "firebase/storage";
@@ -27,6 +33,7 @@ import { onAuthStateChanged, signOut } from "firebase/auth";
 
 import { Navigate, useNavigate } from "react-router-dom";
 import ProposalUploader from "./ProposalUploader";
+import ProposalStatusBadge from "./ProposalStatusBadge";
 
 import {
   BarChart,
@@ -45,6 +52,7 @@ export default function Dashboard() {
   const [files, setFiles] = useState([]);
   const [views, setViews] = useState([]);
   const [sessions, setSessions] = useState([]);
+  const [signedProposals, setSignedProposals] = useState([]);
   const [activeTab, setActiveTab] = useState("home");
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
@@ -60,6 +68,7 @@ export default function Dashboard() {
   
   // Logout confirmation modal state
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [showLogoutToast, setShowLogoutToast] = useState(false);
   
   // View proposal modal state
   const [showViewModal, setShowViewModal] = useState(false);
@@ -94,13 +103,19 @@ export default function Dashboard() {
     return ()=>unsubscribe();
   },[]);
 
-  /* LOGOUT */
-  const handleLogout = async()=>{
-    try{
+  /* UPDATED LOGOUT WITH TOAST */
+  const handleLogout = async () => {
+    try {
       await signOut(auth);
-      navigate("/login");
-      alert("Logged out successfully");
-    }catch(error){
+      setShowLogoutModal(false);
+      setShowLogoutToast(true);
+      
+      // Auto redirect after 2 seconds
+      setTimeout(() => {
+        setShowLogoutToast(false);
+        navigate("/login");
+      }, 2000);
+    } catch (error) {
       alert(error.message);
     }
   };
@@ -158,6 +173,24 @@ export default function Dashboard() {
         setSessions(data);
       }
     );
+    return ()=>unsub();
+  },[user]);
+
+  /* LISTEN TO SIGNED PROPOSALS */
+  useEffect(()=>{
+    if (!user) return;
+    const q = query(
+      collection(db, "signedProposals"),
+      orderBy("signedAt", "desc")
+    );
+    const unsub = onSnapshot(q, (snapshot)=>{
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        signedAt: doc.data().signedAt?.toDate?.() || new Date()
+      }));
+      setSignedProposals(data);
+    });
     return ()=>unsub();
   },[user]);
 
@@ -272,6 +305,14 @@ export default function Dashboard() {
     setViewUrl(url);
     setViewingFile(file);
     setShowViewModal(true);
+  };
+
+  /* HANDLE SIGN PROPOSAL */
+  const handleSignProposal = (file) => {
+    const fullPath = `proposals/${file.name}`;
+    const encoded = btoa(fullPath);
+    // Open signing page in new tab
+    window.open(`/sign/${encoded}`, '_blank');
   };
 
   /* DOWNLOAD */
@@ -569,10 +610,7 @@ export default function Dashboard() {
               </button>
               
               <button
-                onClick={async () => {
-                  await handleLogout();
-                  setShowLogoutModal(false);
-                }}
+                onClick={handleLogout}
                 style={{
                   padding: "12px 24px",
                   borderRadius: "10px",
@@ -589,6 +627,38 @@ export default function Dashboard() {
                 Yes, Logout
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* LOGOUT SUCCESS TOAST NOTIFICATION */}
+      {showLogoutToast && (
+        <div style={toastOverlayStyle}>
+          <div style={toastContainerStyle}>
+            <div style={toastIconSectionStyle}>
+              <div style={toastIconWrapperStyle}>
+                <MdCheckCircle size={28} color="#10B981" />
+              </div>
+            </div>
+            
+            <div style={toastContentSectionStyle}>
+              <div style={toastTitleStyle}>Logged Out Successfully</div>
+              <div style={toastMessageStyle}>You have been securely logged out</div>
+              
+              <div style={toastProgressContainerStyle}>
+                <div style={toastProgressBarStyle} />
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => setShowLogoutToast(false)}
+              style={toastCloseButtonStyle}
+            >
+              <MdCancel size={18} color="#94A3B8" />
+            </button>
+          </div>
+          <div style={toastTimerStyle}>
+            Redirecting to login...
           </div>
         </div>
       )}
@@ -944,6 +1014,14 @@ export default function Dashboard() {
           </button>
 
           <button 
+            style={sidebarBtn(activeTab==="signed", sidebarCollapsed)} 
+            onClick={()=>setActiveTab("signed")}
+          >
+            <MdCheckCircleOutline size={sidebarCollapsed ? 28 : 22} />
+            {!sidebarCollapsed && <span>Signed</span>}
+          </button>
+
+          <button 
             style={sidebarBtn(activeTab==="upload", sidebarCollapsed)} 
             onClick={()=>setActiveTab("upload")}
           >
@@ -1036,6 +1114,30 @@ export default function Dashboard() {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
           }
+          @keyframes toastSlideIn {
+            from {
+              transform: translateX(100%);
+              opacity: 0;
+            }
+            to {
+              transform: translateX(0);
+              opacity: 1;
+            }
+          }
+          @keyframes toastFadeOut {
+            to {
+              transform: translateX(100%);
+              opacity: 0;
+            }
+          }
+          @keyframes toastShrink {
+            from {
+              width: 100%;
+            }
+            to {
+              width: 0%;
+            }
+          }
           /* Responsive table styles */
           table {
             width: 100%;
@@ -1081,6 +1183,12 @@ export default function Dashboard() {
                 <MdRemoveRedEye size={32} color="#4CAF50" style={{marginBottom:10}} />
                 <h3>Total Views</h3>
                 <p style={number}>{views.length}</p>
+              </div>
+
+              <div style={card}>
+                <MdCheckCircleOutline size={32} color="#10B981" style={{marginBottom:10}} />
+                <h3>Signed</h3>
+                <p style={number}>{signedProposals.length}</p>
               </div>
 
               <div style={card}>
@@ -1330,39 +1438,61 @@ export default function Dashboard() {
                   <table style={{...table}}>
                     <thead>
                       <tr style={thead}>
-                        <th style={{...th, width:"60%"}}>File</th>
-                        <th style={{...th, width:"15%"}}>Views</th>
-                        <th style={{...th, width:"25%"}}>Actions</th>
+                        <th style={{...th, width:"40%"}}>File</th>
+                        <th style={{...th, width:"15%"}}>Status</th>
+                        <th style={{...th, width:"10%"}}>Views</th>
+                        <th style={{...th, width:"35%"}}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedProposals.map((file,i)=>(
-                        <tr key={i} style={i%2===0?rowEven:rowOdd}>
-                          <td style={{...td, textAlign:"left"}}>
-                            <div style={{display:"flex", alignItems:"center", gap:8}}>
-                              <MdDescription color="#1976D2" style={{flexShrink:0}} />
-                              <span style={{wordBreak:"break-word"}}>{file.name}</span>
-                            </div>
-                          </td>
-                          <td style={td}>
-                            <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
-                              {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
-                            </div>
-                          </td>
-                          <td style={td}>
-                            <div className="action-buttons">
-                              <button style={compactViewBtn} onClick={()=>viewProposal(file)}>
-                                <MdVisibility size={14} />
-                                <span>View</span>
-                              </button>
-                              <button style={compactDownloadBtn} onClick={()=>downloadFile(file)}>
-                                <MdFileUpload size={14} />
-                                <span>Download</span>
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                      {paginatedProposals.map((file,i) => {
+                        // Check if this proposal is signed
+                        const isSigned = signedProposals.some(p => 
+                          p.proposalName === file.name || p.proposalPath?.includes(file.name)
+                        );
+                        
+                        return (
+                          <tr key={i} style={i%2===0?rowEven:rowOdd}>
+                            <td style={{...td, textAlign:"left"}}>
+                              <div style={{display:"flex", alignItems:"center", gap:8}}>
+                                <MdDescription color={isSigned ? "#10B981" : "#1976D2"} style={{flexShrink:0}} />
+                                <span style={{wordBreak:"break-word"}}>{file.name}</span>
+                              </div>
+                            </td>
+                            <td style={td}>
+                              {isSigned ? (
+                                <ProposalStatusBadge status="signed" size="small" />
+                              ) : (
+                                <ProposalStatusBadge status="pending" size="small" />
+                              )}
+                            </td>
+                            <td style={td}>
+                              <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                                {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
+                              </div>
+                            </td>
+                            <td style={td}>
+                              <div className="action-buttons">
+                                <button style={compactViewBtn} onClick={()=>viewProposal(file)}>
+                                  <MdVisibility size={14} />
+                                  <span>View</span>
+                                </button>
+                                <button style={compactDownloadBtn} onClick={()=>downloadFile(file)}>
+                                  <MdFileUpload size={14} />
+                                  <span>Download</span>
+                                </button>
+                                <button 
+                                  style={compactSignBtn} 
+                                  onClick={() => handleSignProposal(file)}
+                                >
+                                  <MdEdit size={14} />
+                                  <span>Sign</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1412,6 +1542,158 @@ export default function Dashboard() {
                   </div>
                 )}
               </>
+            )}
+          </>
+        )}
+
+        {/* SIGNED PROPOSALS TAB */}
+        {activeTab==="signed" && (
+          <>
+            <div style={headerActionsStyle}>
+              <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <MdCheckCircleOutline size={28} color="#10B981" />
+                Signed Proposals
+              </h2>
+              
+              <div style={summaryStatsStyle}>
+                <div style={statBadgeStyle}>
+                  <span style={statLabelStyle}>Total Signed</span>
+                  <span style={statValueStyle}>{signedProposals.length}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Search Bar */}
+            <div style={searchContainerStyle}>
+              <input
+                type="text"
+                placeholder="Search signed proposals..."
+                value={viewsSearch}
+                onChange={(e) => {
+                  setViewsSearch(e.target.value);
+                  setViewsPage(1);
+                }}
+                style={searchInputStyle}
+              />
+              <span style={searchResultStyle}>
+                {signedProposals.length} found
+              </span>
+            </div>
+
+            <div style={tableWrapperStyle}>
+              <table style={{...table}}>
+                <thead>
+                  <tr style={thead}>
+                    <th style={{...th, width:"25%"}}>Proposal</th>
+                    <th style={{...th, width:"20%"}}>Signed By</th>
+                    <th style={{...th, width:"20%"}}>Email</th>
+                    <th style={{...th, width:"15%"}}>Date Signed</th>
+                    <th style={{...th, width:"10%"}}>Signature</th>
+                    <th style={{...th, width:"10%"}}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {signedProposals.map((proposal, i) => (
+                    <tr key={proposal.id || i} style={i % 2 === 0 ? rowEven : rowOdd}>
+                      <td style={{...td, textAlign:"left"}}>
+                        <div style={{display:"flex", alignItems:"center", gap:8}}>
+                          <MdDescription color="#10B981" style={{flexShrink:0}} />
+                          <span style={{wordBreak:"break-word"}}>
+                            {proposal.proposalName || proposal.fileName || 'Unknown'}
+                          </span>
+                        </div>
+                      </td>
+                      <td style={{...td, wordBreak:"break-word"}}>
+                        <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                          <MdPerson size={14} color="#64748b" />
+                          {proposal.signedBy || 'Unknown'}
+                        </div>
+                      </td>
+                      <td style={{...td, wordBreak:"break-word"}}>
+                        <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                          <MdEmail size={14} color="#64748b" />
+                          {proposal.signerEmail || 'N/A'}
+                        </div>
+                      </td>
+                      <td style={{...td, fontSize:"12px"}}>
+                        <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
+                          <MdSchedule size={14} color="#64748b" />
+                          {proposal.signedAt ? new Date(proposal.signedAt).toLocaleDateString() : 'N/A'}
+                        </div>
+                      </td>
+                      <td style={td}>
+                        {proposal.signatureType === 'draw' ? (
+                          <span style={signatureBadgeStyle}>🖊️ Drawn</span>
+                        ) : (
+                          <span style={signatureBadgeStyle}>📝 Typed</span>
+                        )}
+                      </td>
+                      <td style={td}>
+                        <button
+                          onClick={() => {
+                            if (proposal.proposalPath) {
+                              const encoded = btoa(proposal.proposalPath);
+                              window.open(`/sign/${encoded}`, '_blank');
+                            }
+                          }}
+                          style={compactViewBtn}
+                        >
+                          <MdVisibility size={14} />
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {signedProposals.length === 0 && (
+                    <tr>
+                      <td colSpan={6} style={{ textAlign: "center", padding: 50 }}>
+                        <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:15}}>
+                          <MdCheckCircleOutline size={48} color="#ccc" />
+                          <p style={{color:"#999", fontSize:16, margin:0}}>No signed proposals yet</p>
+                          <p style={{color:"#999", fontSize:14}}>
+                            When clients sign proposals, they will appear here
+                          </p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Summary Cards */}
+            {signedProposals.length > 0 && (
+              <div style={signedSummaryStyle}>
+                <div style={summaryCardStyle}>
+                  <MdCheckCircle size={24} color="#10B981" />
+                  <div>
+                    <span style={summaryCardLabelStyle}>Total Signatures</span>
+                    <span style={summaryCardValueStyle}>{signedProposals.length}</span>
+                  </div>
+                </div>
+                
+                <div style={summaryCardStyle}>
+                  <MdPerson size={24} color="#3b82f6" />
+                  <div>
+                    <span style={summaryCardLabelStyle}>Unique Signers</span>
+                    <span style={summaryCardValueStyle}>
+                      {new Set(signedProposals.map(p => p.signerEmail)).size}
+                    </span>
+                  </div>
+                </div>
+                
+                <div style={summaryCardStyle}>
+                  <MdSchedule size={24} color="#8b5cf6" />
+                  <div>
+                    <span style={summaryCardLabelStyle}>Last Signed</span>
+                    <span style={summaryCardValueStyle}>
+                      {signedProposals[0]?.signedAt 
+                        ? new Date(signedProposals[0].signedAt).toLocaleDateString() 
+                        : 'N/A'}
+                    </span>
+                  </div>
+                </div>
+              </div>
             )}
           </>
         )}
@@ -1598,7 +1880,7 @@ export default function Dashboard() {
           </>
         )}
 
-        {/* ENGAGEMENT with Delete and Search - UPDATED VERSION */}
+        {/* ENGAGEMENT with Delete and Search */}
         {activeTab==="engagement" && (
           <>
             <div style={headerActionsStyle}>
@@ -1787,7 +2069,7 @@ export default function Dashboard() {
                 </tbody>
               </table>
             </div>
-            
+
             {/* Summary Stats */}
             {sessions.length > 0 && (
               <div style={{
@@ -1975,6 +2257,21 @@ const compactViewBtn = {
 const compactDownloadBtn = {
   padding: "6px 10px",
   background: "#4CAF50",
+  color: "#fff",
+  border: "none",
+  borderRadius: 4,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  fontSize: "12px",
+  fontWeight: "bold",
+  whiteSpace: "nowrap"
+};
+
+const compactSignBtn = {
+  padding: "6px 10px",
+  background: "#10B981",
   color: "#fff",
   border: "none",
   borderRadius: 4,
@@ -2336,3 +2633,182 @@ const td = {
 
 const rowEven = { background: "#f9f9f9" };
 const rowOdd = { background: "#fff" };
+
+/* Toast Notification Styles */
+const toastOverlayStyle = {
+  position: "fixed",
+  top: "30px",
+  right: "30px",
+  zIndex: 10000,
+  maxWidth: "380px",
+  minWidth: "320px",
+  animation: "toastSlideIn 0.3s ease, toastFadeOut 0.3s ease 1.7s forwards",
+  boxShadow: "0 20px 40px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.05)",
+  borderRadius: "16px",
+  overflow: "hidden",
+};
+
+const toastContainerStyle = {
+  background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
+  borderRadius: "16px",
+  padding: "18px 22px",
+  display: "flex",
+  alignItems: "flex-start",
+  gap: "16px",
+  border: "1px solid rgba(16, 185, 129, 0.3)",
+  boxShadow: "0 0 30px rgba(16, 185, 129, 0.2)",
+  position: "relative",
+  overflow: "hidden",
+  backdropFilter: "blur(10px)",
+};
+
+const toastIconSectionStyle = {
+  flexShrink: 0,
+};
+
+const toastIconWrapperStyle = {
+  width: "48px",
+  height: "48px",
+  borderRadius: "50%",
+  background: "rgba(16, 185, 129, 0.15)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  border: "2px solid rgba(16, 185, 129, 0.3)",
+  animation: "pulse 2s infinite",
+  boxShadow: "0 0 20px rgba(16, 185, 129, 0.3)",
+};
+
+const toastContentSectionStyle = {
+  flex: 1,
+};
+
+const toastTitleStyle = {
+  color: "#fff",
+  fontSize: "16px",
+  fontWeight: "700",
+  marginBottom: "4px",
+  letterSpacing: "-0.3px",
+  background: "linear-gradient(135deg, #fff 0%, #e0e0e0 100%)",
+  WebkitBackgroundClip: "text",
+  WebkitTextFillColor: "transparent",
+};
+
+const toastMessageStyle = {
+  color: "rgba(255, 255, 255, 0.7)",
+  fontSize: "13px",
+  marginBottom: "12px",
+};
+
+const toastProgressContainerStyle = {
+  width: "100%",
+  height: "4px",
+  background: "rgba(255, 255, 255, 0.1)",
+  borderRadius: "4px",
+  overflow: "hidden",
+  boxShadow: "inset 0 1px 2px rgba(0,0,0,0.2)",
+};
+
+const toastProgressBarStyle = {
+  height: "100%",
+  width: "100%",
+  background: "linear-gradient(90deg, #10B981, #34D399, #10B981)",
+  backgroundSize: "200% 100%",
+  animation: "toastShrink 2s linear forwards",
+  borderRadius: "4px",
+  boxShadow: "0 0 10px #10B981",
+};
+
+const toastCloseButtonStyle = {
+  background: "transparent",
+  border: "none",
+  cursor: "pointer",
+  padding: "4px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: "6px",
+  opacity: 0.7,
+  transition: "all 0.2s",
+  position: "relative",
+  zIndex: 2,
+};
+
+const toastTimerStyle = {
+  background: "rgba(0, 0, 0, 0.4)",
+  backdropFilter: "blur(4px)",
+  padding: "10px 16px",
+  fontSize: "12px",
+  color: "rgba(255, 255, 255, 0.8)",
+  textAlign: "center",
+  borderTop: "1px solid rgba(255, 255, 255, 0.05)",
+  letterSpacing: "0.3px",
+};
+
+/* Signed Proposals Styles */
+const signedSummaryStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+  gap: "20px",
+  marginTop: "25px",
+};
+
+const summaryCardStyle = {
+  background: "#fff",
+  borderRadius: "12px",
+  padding: "20px",
+  display: "flex",
+  alignItems: "center",
+  gap: "15px",
+  border: "1px solid #e2e8f0",
+  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+};
+
+const summaryCardLabelStyle = {
+  display: "block",
+  fontSize: "12px",
+  color: "#64748b",
+  marginBottom: "4px",
+};
+
+const summaryCardValueStyle = {
+  display: "block",
+  fontSize: "24px",
+  fontWeight: "700",
+  color: "#1a1a2e",
+};
+
+const signatureBadgeStyle = {
+  display: "inline-block",
+  padding: "4px 8px",
+  background: "#f1f5f9",
+  borderRadius: "4px",
+  fontSize: "11px",
+  color: "#64748b",
+};
+
+const summaryStatsStyle = {
+  display: "flex",
+  gap: "10px",
+};
+
+const statBadgeStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "8px 16px",
+  background: "#f0fdf4",
+  borderRadius: "100px",
+  border: "1px solid #86efac",
+};
+
+const statLabelStyle = {
+  fontSize: "13px",
+  color: "#166534",
+};
+
+const statValueStyle = {
+  fontSize: "16px",
+  fontWeight: "700",
+  color: "#059669",
+};

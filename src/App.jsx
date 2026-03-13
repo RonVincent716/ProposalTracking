@@ -8,6 +8,10 @@ import ProposalDetail from "./pages/ProposalDetail";
 import AuthPage from "./Components/AuthPage";
 import Signup from "./pages/Signup";
 
+// Import your new signing components
+import ProposalSigning from "./pages/ProposalSigning";
+import ThankYou from "./pages/Thankyou";
+
 import ProtectedRoute from "./Components/ProtectedRoute";
 
 function App() {
@@ -27,7 +31,6 @@ function App() {
         <Route path="/auth" element={<AuthPage />} />
 
         {/* Protected Routes */}
-
         <Route
           path="/dashboard"
           element={
@@ -56,11 +59,15 @@ function App() {
         />
         
         {/* Public Proposal Viewer */}
-
         <Route path="/p/:path" element={<ProposalDetail />} />
 
-        {/* 404 */}
+        {/* NEW: Public Signing Route - For clients to sign proposals */}
+        <Route path="/sign/:proposalId" element={<ProposalSigning />} />
+        
+        {/* NEW: Thank You Page After Signing */}
+        <Route path="/thank-you" element={<ThankYou />} />
 
+        {/* 404 */}
         <Route path="*" element={<div>404 - Page Not Found</div>} />
 
       </Routes>

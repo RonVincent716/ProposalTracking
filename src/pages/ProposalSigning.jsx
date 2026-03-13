@@ -1,0 +1,1205 @@
+import { useState, useEffect, useRef } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { db, storage } from "../firebase";
+import { doc, setDoc, updateDoc, arrayUnion, serverTimestamp, getDoc } from "firebase/firestore";
+import { ref, getDownloadURL } from "firebase/storage";
+import { 
+  MdDraw, 
+  MdTextFields, 
+  MdCheckCircle, 
+  MdClose,
+  MdPerson,
+  MdEmail,
+  MdDescription,
+  MdSchedule,
+  MdArrowBack,
+  MdDownload,
+  MdPrint,
+  MdShare
+} from "react-icons/md";
+
+export default function ProposalSigning() {
+  const { proposalId } = useParams();
+  const navigate = useNavigate();
+  
+  const [loading, setLoading] = useState(true);
+  const [proposal, setProposal] = useState(null);
+  const [error, setError] = useState(null);
+  const [pdfUrl, setPdfUrl] = useState("");
+  
+  const [signatureType, setSignatureType] = useState("draw");
+  const [typedSignature, setTypedSignature] = useState("");
+  const [signatureData, setSignatureData] = useState(null);
+  const [signerName, setSignerName] = useState("");
+  const [signerEmail, setSignerEmail] = useState("");
+  const [signerTitle, setSignerTitle] = useState("");
+  const [agreeToTerms, setAgreeToTerms] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [signed, setSigned] = useState(false);
+  const [currentStep, setCurrentStep] = useState(1);
+  
+  const canvasRef = useRef(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [ctx, setCtx] = useState(null);
+
+  // Load proposal data
+  useEffect(() => {
+    loadProposal();
+  }, [proposalId]);
+
+  const loadProposal = async () => {
+    try {
+      setLoading(true);
+      
+      // Decode the proposalId (it's base64 encoded from the uploader)
+      let decodedPath;
+      try {
+        decodedPath = atob(proposalId);
+      } catch {
+        decodedPath = proposalId;
+      }
+
+      console.log("Decoded path:", decodedPath);
+
+      // Get download URL from Firebase Storage
+      const fileRef = ref(storage, decodedPath);
+      const url = await getDownloadURL(fileRef);
+      const fileName = decodedPath.split('/').pop();
+      
+      setProposal({
+        id: proposalId,
+        name: fileName,
+        path: decodedPath,
+        url: url,
+        uploadedAt: new Date().toISOString()
+      });
+      
+      setPdfUrl(url);
+      setLoading(false);
+      
+      // Track view in Firestore
+      await trackView(fileName);
+      
+    } catch (error) {
+      console.error("Error loading proposal:", error);
+      setError("Failed to load proposal. The link may be invalid or expired.");
+      setLoading(false);
+    }
+  };
+
+  const trackView = async (fileName) => {
+    try {
+      const viewData = {
+        fileName: fileName,
+        viewedAt: serverTimestamp(),
+        userAgent: navigator.userAgent,
+        page: "signing"
+      };
+      
+      await setDoc(doc(db, "proposalViews", `${Date.now()}`), viewData);
+    } catch (error) {
+      console.error("Error tracking view:", error);
+    }
+  };
+
+  // Initialize canvas
+  useEffect(() => {
+    if (signatureType === "draw" && canvasRef.current && !signed) {
+      const canvas = canvasRef.current;
+      const context = canvas.getContext("2d");
+      context.strokeStyle = "#1a1a2e";
+      context.lineWidth = 2.5;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      setCtx(context);
+      
+      // Set white background
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
+  }, [signatureType, signed]);
+
+  // Drawing handlers
+  const startDrawing = (e) => {
+    if (!ctx || signed) return;
+    setIsDrawing(true);
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+
+  const draw = (e) => {
+    if (!isDrawing || !ctx || signed) return;
+    e.preventDefault();
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => {
+    setIsDrawing(false);
+    ctx?.closePath();
+  };
+
+  const clearCanvas = () => {
+    if (!ctx || !canvasRef.current || signed) return;
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    setSignatureData(null);
+  };
+
+  const saveDrawing = () => {
+    if (!canvasRef.current || signed) return;
+    const dataUrl = canvasRef.current.toDataURL("image/png");
+    setSignatureData(dataUrl);
+  };
+
+  const handleSign = async () => {
+    // Validation
+    if (!signerName.trim()) {
+      alert("Please enter your full name");
+      return;
+    }
+
+    if (!signerEmail.trim()) {
+      alert("Please enter your email address");
+      return;
+    }
+
+    if (!signerEmail.includes('@')) {
+      alert("Please enter a valid email address");
+      return;
+    }
+
+    if (signatureType === "draw" && !signatureData) {
+      alert("Please draw your signature or switch to type mode");
+      return;
+    }
+
+    if (signatureType === "type" && !typedSignature.trim()) {
+      alert("Please type your signature");
+      return;
+    }
+
+    if (!agreeToTerms) {
+      alert("Please agree to the terms and conditions");
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      const signature = signatureType === "draw" 
+        ? signatureData 
+        : typedSignature;
+
+      // Create signing record
+      const signingId = `sign_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const signingData = {
+        id: signingId,
+        proposalId: proposal.id,
+        proposalName: proposal.name,
+        proposalPath: proposal.path,
+        signedBy: signerName,
+        signerEmail: signerEmail,
+        signerTitle: signerTitle || "Client",
+        signature: signature,
+        signatureType: signatureType,
+        signedAt: serverTimestamp(),
+        ipAddress: "collected", // In production, get from server
+        userAgent: navigator.userAgent,
+        status: "completed",
+        documentId: proposal.id
+      };
+
+      // Save to Firestore
+      await setDoc(doc(db, "signedProposals", signingId), signingData);
+      
+      // Also add to proposal signatures array if document exists
+      try {
+        const proposalRef = doc(db, "proposals", proposal.id);
+        await updateDoc(proposalRef, {
+          status: "signed",
+          signatures: arrayUnion({
+            signedBy: signerName,
+            signerEmail: signerEmail,
+            signedAt: new Date().toISOString()
+          }),
+          lastActivity: serverTimestamp()
+        });
+      } catch (e) {
+        // Proposal document might not exist, that's ok
+        console.log("Proposal doc not found, skipping update");
+      }
+
+      setSigned(true);
+      
+      // Redirect to thank you page after 2 seconds
+      setTimeout(() => {
+        navigate(`/thank-you?name=${encodeURIComponent(signerName)}&proposal=${encodeURIComponent(proposal.name)}&id=${signingId}`);
+      }, 2000);
+      
+    } catch (error) {
+      console.error("Error signing proposal:", error);
+      alert("Error signing proposal: " + error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div style={loadingContainerStyle}>
+        <div className="spinner"></div>
+        <p>Loading proposal...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={errorContainerStyle}>
+        <MdDescription size={64} color="#ef4444" />
+        <h2>Proposal Not Found</h2>
+        <p>{error}</p>
+        <button onClick={() => navigate('/')} style={backButtonStyle}>
+          <MdArrowBack size={18} />
+          Go to Homepage
+        </button>
+      </div>
+    );
+  }
+
+  if (signed) {
+    return (
+      <div style={successContainerStyle}>
+        <div style={successCardStyle}>
+          <div style={successIconStyle}>
+            <MdCheckCircle size={80} color="#10B981" />
+          </div>
+          <h2 style={successTitleStyle}>Thank You, {signerName}!</h2>
+          <p style={successMessageStyle}>
+            You have successfully signed <strong>{proposal?.name}</strong>
+          </p>
+          
+          <div style={successActionsStyle}>
+            <button onClick={() => window.print()} style={successButtonStyle}>
+              <MdPrint size={18} />
+              Download Copy
+            </button>
+            <button onClick={() => {
+              navigator.clipboard.writeText(window.location.href);
+              alert("Link copied!");
+            }} style={successButtonStyle}>
+              <MdShare size={18} />
+              Share
+            </button>
+          </div>
+          
+          <p style={successRedirectStyle}>
+            Redirecting to confirmation page in 2 seconds...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={containerStyle}>
+      {/* Header */}
+      <div style={headerStyle}>
+        <button onClick={() => navigate(-1)} style={backBtnStyle}>
+          <MdArrowBack size={20} />
+          Back
+        </button>
+        
+        <div style={titleGroupStyle}>
+          <div style={logoStyle}>
+            <MdDraw size={24} color="#fff" />
+          </div>
+          <div>
+            <h1 style={titleStyle}>Sign Proposal</h1>
+            <p style={subtitleStyle}>Review and sign electronically</p>
+          </div>
+        </div>
+        
+        <div style={proposalBadgeStyle}>
+          <MdDescription size={16} />
+          <span>{proposal?.name || "Proposal"}</span>
+        </div>
+      </div>
+
+      {/* Progress Steps */}
+      <div style={stepsContainerStyle}>
+        <div style={stepStyle(currentStep >= 1)}>
+          <span style={stepNumberStyle(1, currentStep >= 1)}>1</span>
+          <span style={stepLabelStyle}>Review</span>
+        </div>
+        <div style={stepLineStyle(currentStep >= 2)} />
+        <div style={stepStyle(currentStep >= 2)}>
+          <span style={stepNumberStyle(2, currentStep >= 2)}>2</span>
+          <span style={stepLabelStyle}>Sign</span>
+        </div>
+        <div style={stepLineStyle(currentStep >= 3)} />
+        <div style={stepStyle(currentStep >= 3)}>
+          <span style={stepNumberStyle(3, currentStep >= 3)}>3</span>
+          <span style={stepLabelStyle}>Confirm</span>
+        </div>
+      </div>
+
+      <div style={mainContentStyle}>
+        {/* Left Column - PDF Preview */}
+        <div style={previewContainerStyle}>
+          <div style={previewHeaderStyle}>
+            <MdDescription size={20} color="#00D4FF" />
+            <span>Document Preview</span>
+            <button 
+              onClick={() => window.open(pdfUrl, '_blank')}
+              style={previewButtonStyle}
+            >
+              <MdDownload size={16} />
+              Download
+            </button>
+          </div>
+          <iframe
+            src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1`}
+            style={previewFrameStyle}
+            title="Proposal Preview"
+          />
+        </div>
+
+        {/* Right Column - Signing Form */}
+        <div style={formContainerStyle}>
+          {/* Step 1: Review */}
+          {currentStep === 1 && (
+            <div style={stepContentStyle}>
+              <h3 style={stepTitleStyle}>Step 1: Review Document</h3>
+              <p style={stepDescriptionStyle}>
+                Please review the proposal carefully before signing.
+              </p>
+              
+              <div style={reviewCardStyle}>
+                <MdCheckCircle size={24} color="#10B981" />
+                <div>
+                  <h4>Proposal Details</h4>
+                  <p>Document: {proposal?.name}</p>
+                  <p>Size: {(proposal?.size || 0) / 1024} KB</p>
+                  <p>Uploaded: {new Date(proposal?.uploadedAt).toLocaleDateString()}</p>
+                </div>
+              </div>
+              
+              <button 
+                onClick={() => setCurrentStep(2)}
+                style={nextButtonStyle}
+              >
+                Continue to Sign
+              </button>
+            </div>
+          )}
+
+          {/* Step 2: Sign */}
+          {currentStep === 2 && (
+            <div style={stepContentStyle}>
+              <h3 style={stepTitleStyle}>Step 2: Sign Document</h3>
+              
+              {/* Signer Information */}
+              <div style={sectionStyle}>
+                <h4 style={sectionTitleStyle}>Your Information</h4>
+                <div style={inputGroupStyle}>
+                  <div style={inputWrapperStyle}>
+                    <MdPerson size={18} color="#666" />
+                    <input
+                      type="text"
+                      placeholder="Full Name *"
+                      value={signerName}
+                      onChange={(e) => setSignerName(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div style={inputWrapperStyle}>
+                    <MdEmail size={18} color="#666" />
+                    <input
+                      type="email"
+                      placeholder="Email Address *"
+                      value={signerEmail}
+                      onChange={(e) => setSignerEmail(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div style={inputWrapperStyle}>
+                    <MdPerson size={18} color="#666" />
+                    <input
+                      type="text"
+                      placeholder="Title/Position (Optional)"
+                      value={signerTitle}
+                      onChange={(e) => setSignerTitle(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Signature Type Selector */}
+              <div style={sectionStyle}>
+                <h4 style={sectionTitleStyle}>Signature Method</h4>
+                <div style={tabContainerStyle}>
+                  <button
+                    onClick={() => setSignatureType("draw")}
+                    style={tabStyle(signatureType === "draw")}
+                  >
+                    <MdDraw size={18} />
+                    Draw Signature
+                  </button>
+                  <button
+                    onClick={() => setSignatureType("type")}
+                    style={tabStyle(signatureType === "type")}
+                  >
+                    <MdTextFields size={18} />
+                    Type Signature
+                  </button>
+                </div>
+              </div>
+
+              {/* Signature Input */}
+              <div style={sectionStyle}>
+                <h4 style={sectionTitleStyle}>Your Signature</h4>
+                
+                {signatureType === "draw" ? (
+                  <div style={canvasContainerStyle}>
+                    <canvas
+                      ref={canvasRef}
+                      width={400}
+                      height={150}
+                      style={canvasStyle}
+                      onMouseDown={startDrawing}
+                      onMouseMove={draw}
+                      onMouseUp={stopDrawing}
+                      onMouseLeave={stopDrawing}
+                    />
+                    <div style={canvasControlsStyle}>
+                      <button onClick={clearCanvas} style={clearBtnStyle}>
+                        Clear
+                      </button>
+                      <button onClick={saveDrawing} style={saveBtnStyle}>
+                        <MdCheckCircle size={16} />
+                        Save Signature
+                      </button>
+                    </div>
+                    {signatureData && (
+                      <div style={savedSignatureStyle}>
+                        <img src={signatureData} alt="Signature" style={signatureImageStyle} />
+                        <span style={savedTextStyle}>✓ Signature saved</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={typeContainerStyle}>
+                    <input
+                      type="text"
+                      placeholder="Type your full name"
+                      value={typedSignature}
+                      onChange={(e) => setTypedSignature(e.target.value)}
+                      style={typeInputStyle}
+                    />
+                    {typedSignature && (
+                      <div style={typePreviewStyle}>
+                        <span style={typeSignatureStyle}>{typedSignature}</span>
+                        <span style={previewTextStyle}>✓ Will be used as signature</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Legal Disclaimer */}
+              <div style={disclaimerStyle}>
+                <label style={checkboxStyle}>
+                  <input
+                    type="checkbox"
+                    checked={agreeToTerms}
+                    onChange={(e) => setAgreeToTerms(e.target.checked)}
+                  />
+                  <span>I agree to the terms and conditions and confirm that this is my legal signature</span>
+                </label>
+              </div>
+
+              <div style={buttonGroupStyle}>
+                <button 
+                  onClick={() => setCurrentStep(1)}
+                  style={backButtonStyle}
+                >
+                  Back
+                </button>
+                <button
+                  onClick={() => setCurrentStep(3)}
+                  disabled={!signerName || !signerEmail || !agreeToTerms || (signatureType === "draw" ? !signatureData : !typedSignature)}
+                  style={continueButtonStyle(!signerName || !signerEmail || !agreeToTerms || (signatureType === "draw" ? !signatureData : !typedSignature))}
+                >
+                  Review & Confirm
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Confirm */}
+          {currentStep === 3 && (
+            <div style={stepContentStyle}>
+              <h3 style={stepTitleStyle}>Step 3: Confirm & Sign</h3>
+              
+              <div style={confirmCardStyle}>
+                <h4>Review Your Information</h4>
+                <p><strong>Name:</strong> {signerName}</p>
+                <p><strong>Email:</strong> {signerEmail}</p>
+                <p><strong>Title:</strong> {signerTitle || "Not specified"}</p>
+                <p><strong>Document:</strong> {proposal?.name}</p>
+                <p><strong>Signature Method:</strong> {signatureType === "draw" ? "Drawn Signature" : "Typed Signature"}</p>
+                
+                <div style={signaturePreviewStyle}>
+                  <strong>Signature:</strong>
+                  {signatureType === "draw" ? (
+                    <img src={signatureData} alt="Signature" style={confirmSignatureStyle} />
+                  ) : (
+                    <span style={confirmTypeStyle}>{typedSignature}</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Legal Text */}
+              <div style={legalTextStyle}>
+                <p>
+                  By clicking "Sign & Approve", you agree that this electronic signature 
+                  is the legal equivalent of your manual signature and you consent to be 
+                  legally bound by this agreement. You also acknowledge that you have 
+                  read and understood the terms of the proposal.
+                </p>
+              </div>
+
+              <div style={buttonGroupStyle}>
+                <button 
+                  onClick={() => setCurrentStep(2)}
+                  style={backButtonStyle}
+                >
+                  Back
+                </button>
+                <button
+                  onClick={handleSign}
+                  disabled={isSaving}
+                  style={signButtonStyle(isSaving)}
+                >
+                  {isSaving ? (
+                    <>
+                      <div className="spinner-small" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <MdCheckCircle size={20} />
+                      Sign & Approve
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <style>{`
+        .spinner {
+          width: 40px;
+          height: 40px;
+          border: 3px solid rgba(0, 212, 255, 0.1);
+          border-top: 3px solid #00D4FF;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+        .spinner-small {
+          width: 18px;
+          height: 18px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// Styles
+const containerStyle = {
+  minHeight: "100vh",
+  background: "#f8fafc",
+  fontFamily: "'Inter', sans-serif",
+};
+
+const headerStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  padding: "20px 40px",
+  background: "#fff",
+  borderBottom: "1px solid #e2e8f0",
+  boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+};
+
+const backBtnStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "10px 20px",
+  background: "#f1f5f9",
+  border: "1px solid #e2e8f0",
+  borderRadius: "10px",
+  color: "#64748b",
+  fontSize: "14px",
+  cursor: "pointer",
+  transition: "all 0.2s",
+};
+
+const titleGroupStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "15px",
+};
+
+const logoStyle = {
+  width: "48px",
+  height: "48px",
+  borderRadius: "12px",
+  background: "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const titleStyle = {
+  color: "#1a1a2e",
+  fontSize: "24px",
+  fontWeight: "700",
+  margin: 0,
+};
+
+const subtitleStyle = {
+  color: "#64748b",
+  fontSize: "14px",
+  margin: "4px 0 0 0",
+};
+
+const proposalBadgeStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "10px",
+  padding: "10px 20px",
+  background: "#f1f5f9",
+  borderRadius: "100px",
+  color: "#1a1a2e",
+  fontSize: "14px",
+  fontWeight: "500",
+  maxWidth: "300px",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const stepsContainerStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "20px",
+  padding: "30px 40px",
+  background: "#fff",
+  borderBottom: "1px solid #e2e8f0",
+};
+
+const stepStyle = (active) => ({
+  display: "flex",
+  alignItems: "center",
+  gap: "10px",
+  opacity: active ? 1 : 0.5,
+});
+
+const stepNumberStyle = (number, active) => ({
+  width: "32px",
+  height: "32px",
+  borderRadius: "50%",
+  background: active ? "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)" : "#e2e8f0",
+  color: active ? "#fff" : "#94a3b8",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: "14px",
+  fontWeight: "600",
+});
+
+const stepLabelStyle = {
+  fontSize: "14px",
+  fontWeight: "500",
+  color: "#1a1a2e",
+};
+
+const stepLineStyle = (active) => ({
+  width: "60px",
+  height: "2px",
+  background: active ? "#00D4FF" : "#e2e8f0",
+});
+
+const mainContentStyle = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: "30px",
+  padding: "30px 40px",
+  maxWidth: "1600px",
+  margin: "0 auto",
+};
+
+const previewContainerStyle = {
+  background: "#fff",
+  borderRadius: "16px",
+  overflow: "hidden",
+  boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
+  height: "fit-content",
+  border: "1px solid #e2e8f0",
+};
+
+const previewHeaderStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  padding: "16px 20px",
+  background: "#f8fafc",
+  borderBottom: "1px solid #e2e8f0",
+  color: "#1a1a2e",
+  fontWeight: "500",
+};
+
+const previewButtonStyle = {
+  marginLeft: "auto",
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  padding: "6px 12px",
+  background: "#fff",
+  border: "1px solid #e2e8f0",
+  borderRadius: "6px",
+  color: "#64748b",
+  fontSize: "12px",
+  cursor: "pointer",
+};
+
+const previewFrameStyle = {
+  width: "100%",
+  height: "700px",
+  border: "none",
+};
+
+const formContainerStyle = {
+  background: "#fff",
+  borderRadius: "16px",
+  padding: "30px",
+  boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
+  border: "1px solid #e2e8f0",
+};
+
+const stepContentStyle = {
+  animation: "fadeIn 0.3s ease",
+};
+
+const stepTitleStyle = {
+  color: "#1a1a2e",
+  fontSize: "20px",
+  fontWeight: "600",
+  margin: "0 0 10px 0",
+};
+
+const stepDescriptionStyle = {
+  color: "#64748b",
+  fontSize: "14px",
+  margin: "0 0 25px 0",
+};
+
+const reviewCardStyle = {
+  display: "flex",
+  gap: "20px",
+  padding: "20px",
+  background: "#f8fafc",
+  borderRadius: "12px",
+  marginBottom: "30px",
+  border: "1px solid #e2e8f0",
+};
+
+const nextButtonStyle = {
+  width: "100%",
+  padding: "14px",
+  background: "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
+  border: "none",
+  borderRadius: "10px",
+  color: "#fff",
+  fontSize: "16px",
+  fontWeight: "600",
+  cursor: "pointer",
+  boxShadow: "0 4px 15px rgba(0, 212, 255, 0.3)",
+};
+
+const sectionStyle = {
+  marginBottom: "25px",
+};
+
+const sectionTitleStyle = {
+  color: "#1a1a2e",
+  fontSize: "16px",
+  fontWeight: "600",
+  margin: "0 0 15px 0",
+};
+
+const inputGroupStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "12px",
+};
+
+const inputWrapperStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  padding: "12px 16px",
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+  borderRadius: "10px",
+  transition: "all 0.2s",
+};
+
+const inputStyle = {
+  flex: 1,
+  border: "none",
+  background: "transparent",
+  fontSize: "14px",
+  outline: "none",
+  color: "#1a1a2e",
+};
+
+const tabContainerStyle = {
+  display: "flex",
+  gap: "12px",
+};
+
+const tabStyle = (active) => ({
+  flex: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "8px",
+  padding: "12px",
+  borderRadius: "10px",
+  border: active ? "2px solid #00D4FF" : "1px solid #e2e8f0",
+  background: active ? "rgba(0, 212, 255, 0.1)" : "#fff",
+  color: active ? "#00D4FF" : "#64748b",
+  fontSize: "14px",
+  fontWeight: "500",
+  cursor: "pointer",
+  transition: "all 0.2s",
+});
+
+const canvasContainerStyle = {
+  background: "#f8fafc",
+  borderRadius: "12px",
+  padding: "20px",
+  border: "1px solid #e2e8f0",
+};
+
+const canvasStyle = {
+  width: "100%",
+  height: "150px",
+  background: "#fff",
+  borderRadius: "8px",
+  border: "1px solid #e2e8f0",
+  cursor: "crosshair",
+};
+
+const canvasControlsStyle = {
+  display: "flex",
+  gap: "10px",
+  marginTop: "12px",
+};
+
+const clearBtnStyle = {
+  padding: "8px 16px",
+  background: "#f1f5f9",
+  border: "1px solid #e2e8f0",
+  borderRadius: "6px",
+  color: "#64748b",
+  fontSize: "13px",
+  cursor: "pointer",
+};
+
+const saveBtnStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  padding: "8px 16px",
+  background: "#10B981",
+  border: "none",
+  borderRadius: "6px",
+  color: "#fff",
+  fontSize: "13px",
+  cursor: "pointer",
+};
+
+const savedSignatureStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  marginTop: "12px",
+  padding: "10px",
+  background: "#f0fdf4",
+  borderRadius: "8px",
+  border: "1px solid #86efac",
+};
+
+const signatureImageStyle = {
+  maxHeight: "40px",
+  background: "#fff",
+  padding: "4px",
+  borderRadius: "4px",
+};
+
+const savedTextStyle = {
+  fontSize: "13px",
+  color: "#10B981",
+};
+
+const typeContainerStyle = {
+  background: "#f8fafc",
+  borderRadius: "12px",
+  padding: "20px",
+  border: "1px solid #e2e8f0",
+};
+
+const typeInputStyle = {
+  width: "100%",
+  padding: "12px",
+  fontSize: "18px",
+  fontFamily: "'Dancing Script', cursive",
+  border: "1px solid #e2e8f0",
+  borderRadius: "8px",
+  outline: "none",
+  marginBottom: "12px",
+};
+
+const typePreviewStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "8px",
+  padding: "12px",
+  background: "#fff",
+  borderRadius: "8px",
+  border: "1px solid #e2e8f0",
+};
+
+const typeSignatureStyle = {
+  fontSize: "24px",
+  fontFamily: "'Dancing Script', cursive",
+  color: "#1a1a2e",
+};
+
+const previewTextStyle = {
+  fontSize: "12px",
+  color: "#10B981",
+};
+
+const disclaimerStyle = {
+  marginBottom: "25px",
+  padding: "16px",
+  background: "#fff7ed",
+  borderRadius: "10px",
+  border: "1px solid #fed7aa",
+};
+
+const checkboxStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  fontSize: "14px",
+  color: "#9a3412",
+  cursor: "pointer",
+};
+
+const buttonGroupStyle = {
+  display: "flex",
+  gap: "12px",
+  marginTop: "20px",
+};
+
+const backButtonStyle = {
+  flex: 1,
+  padding: "14px",
+  background: "#f1f5f9",
+  border: "1px solid #e2e8f0",
+  borderRadius: "10px",
+  color: "#64748b",
+  fontSize: "14px",
+  fontWeight: "500",
+  cursor: "pointer",
+};
+
+const continueButtonStyle = (disabled) => ({
+  flex: 2,
+  padding: "14px",
+  background: disabled ? "#cbd5e1" : "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
+  border: "none",
+  borderRadius: "10px",
+  color: "#fff",
+  fontSize: "14px",
+  fontWeight: "600",
+  cursor: disabled ? "not-allowed" : "pointer",
+  boxShadow: disabled ? "none" : "0 4px 15px rgba(0, 212, 255, 0.3)",
+});
+
+const confirmCardStyle = {
+  padding: "20px",
+  background: "#f8fafc",
+  borderRadius: "12px",
+  marginBottom: "20px",
+  border: "1px solid #e2e8f0",
+};
+
+const signaturePreviewStyle = {
+  marginTop: "15px",
+  padding: "15px",
+  background: "#fff",
+  borderRadius: "8px",
+  border: "1px solid #e2e8f0",
+};
+
+const confirmSignatureStyle = {
+  maxHeight: "50px",
+  marginTop: "10px",
+  display: "block",
+};
+
+const confirmTypeStyle = {
+  display: "block",
+  marginTop: "10px",
+  fontSize: "20px",
+  fontFamily: "'Dancing Script', cursive",
+  color: "#1a1a2e",
+};
+
+const legalTextStyle = {
+  padding: "16px",
+  background: "#f0f9ff",
+  borderRadius: "10px",
+  border: "1px solid #bae6fd",
+  fontSize: "13px",
+  color: "#0369a1",
+  lineHeight: "1.6",
+  marginBottom: "20px",
+};
+
+const signButtonStyle = (disabled) => ({
+  flex: 2,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "10px",
+  padding: "14px",
+  background: disabled ? "#cbd5e1" : "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+  border: "none",
+  borderRadius: "10px",
+  color: "#fff",
+  fontSize: "14px",
+  fontWeight: "600",
+  cursor: disabled ? "not-allowed" : "pointer",
+  boxShadow: disabled ? "none" : "0 4px 15px rgba(16, 185, 129, 0.3)",
+});
+
+const loadingContainerStyle = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  height: "100vh",
+  gap: "20px",
+  background: "#f8fafc",
+};
+
+const errorContainerStyle = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  height: "100vh",
+  gap: "16px",
+  background: "#f8fafc",
+  textAlign: "center",
+  padding: "0 20px",
+};
+
+const successContainerStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minHeight: "100vh",
+  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+  padding: "20px",
+};
+
+const successCardStyle = {
+  background: "#fff",
+  borderRadius: "24px",
+  padding: "50px",
+  maxWidth: "500px",
+  textAlign: "center",
+  boxShadow: "0 25px 60px rgba(0,0,0,0.3)",
+};
+
+const successIconStyle = {
+  marginBottom: "30px",
+};
+
+const successTitleStyle = {
+  color: "#1a1a2e",
+  fontSize: "32px",
+  fontWeight: "700",
+  margin: "0 0 15px 0",
+};
+
+const successMessageStyle = {
+  color: "#64748b",
+  fontSize: "16px",
+  lineHeight: "1.6",
+  margin: "0 0 30px 0",
+};
+
+const successActionsStyle = {
+  display: "flex",
+  gap: "15px",
+  justifyContent: "center",
+  marginBottom: "30px",
+};
+
+const successButtonStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "12px 24px",
+  background: "#f1f5f9",
+  border: "1px solid #e2e8f0",
+  borderRadius: "10px",
+  color: "#1a1a2e",
+  fontSize: "14px",
+  cursor: "pointer",
+};
+
+const successRedirectStyle = {
+  color: "#94a3b8",
+  fontSize: "14px",
+};
