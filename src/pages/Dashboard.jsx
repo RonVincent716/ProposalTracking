@@ -199,103 +199,67 @@ export default function Dashboard() {
     return views.filter(v=>v.fileName===fileName).length;
   };
 
-  /* ========== IMPROVED CHART DATA ========== */
+  /* ========== SIMPLIFIED CHART DATA FUNCTIONS ========== */
 
-  // Helper function to get week number
-  const getWeekNumber = (date) => {
-    const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
-    const pastDaysOfYear = (date - firstDayOfYear) / 86400000;
-    return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+  // Process proposals chart data
+  const getProposalChartData = () => {
+    if (!files.length) return [];
+    
+    // Calculate views for each file
+    const data = files.map(file => {
+      const viewCount = views.filter(v => v.fileName === file.name).length;
+      return {
+        name: file.name.length > 20 ? file.name.substring(0, 17) + "..." : file.name,
+        views: viewCount
+      };
+    });
+    
+    // Sort by views (descending) and return top 10
+    return data.sort((a, b) => b.views - a.views).slice(0, 10);
   };
 
   // Calculate daily views for charts
-  const dailyViews = {};
-  views.forEach(v=>{
-    if(!v.viewedAt) return;
-    const date = new Date(v.viewedAt).toLocaleDateString();
-    if(!dailyViews[date]) dailyViews[date] = 0;
-    dailyViews[date]++;
-  });
-
-  const rawDailyChartData = Object.keys(dailyViews).map(date=>({
-    date,
-    views: dailyViews[date]
-  }));
-
-  // Process daily chart data - aggregate by week if too many points
-  const getDailyChartData = () => {
-    if (rawDailyChartData.length === 0) return [];
+  const getDailyViewsData = () => {
+    const dailyViewsMap = {};
     
-    // Get date range
-    const dates = rawDailyChartData.map(d => new Date(d.date));
-    const minDate = new Date(Math.min(...dates));
-    const maxDate = new Date(Math.max(...dates));
-    const dayDiff = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
-    
-    // If data spans more than 30 days, aggregate by week
-    if (dayDiff > 30) {
-      const weeklyData = {};
+    views.forEach(v => {
+      if (!v.viewedAt) return;
       
-      rawDailyChartData.forEach(item => {
-        const date = new Date(item.date);
-        // Get week number and year
-        const weekNumber = getWeekNumber(date);
-        const weekKey = `${date.getFullYear()}-W${weekNumber}`;
-        
-        if (!weeklyData[weekKey]) {
-          weeklyData[weekKey] = {
-            date: `W${weekNumber}, ${date.getFullYear()}`,
-            views: 0,
-            originalDate: date
-          };
+      try {
+        let dateStr;
+        if (v.viewedAt?.toDate) {
+          // Firebase timestamp
+          dateStr = v.viewedAt.toDate().toLocaleDateString();
+        } else if (v.viewedAt instanceof Date) {
+          dateStr = v.viewedAt.toLocaleDateString();
+        } else if (typeof v.viewedAt === 'string') {
+          dateStr = new Date(v.viewedAt).toLocaleDateString();
+        } else if (v.viewedAt?.seconds) {
+          // Firebase timestamp object
+          dateStr = new Date(v.viewedAt.seconds * 1000).toLocaleDateString();
+        } else {
+          return;
         }
-        weeklyData[weekKey].views += item.views;
-      });
-      
-      // Convert to array and sort by date
-      return Object.values(weeklyData)
-        .sort((a, b) => a.originalDate - b.originalDate)
-        .map(item => ({
-          date: item.date,
-          views: item.views
-        }));
-    }
+        
+        dailyViewsMap[dateStr] = (dailyViewsMap[dateStr] || 0) + 1;
+      } catch (e) {
+        console.error("Error processing date:", e);
+      }
+    });
     
-    // If data spans 30 days or less, show daily but limit to last 30 days
-    return rawDailyChartData.slice(-30);
+    return Object.entries(dailyViewsMap)
+      .map(([date, views]) => ({ date, views }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
   };
 
-  // Process proposals chart data - show top 10 if too many
-  const getProposalChartData = () => {
-    // If there are too many files, show top 10 by views
-    if (files.length > 10) {
-      // Calculate views for each file and sort
-      const filesWithViews = files.map(file => ({
-        name: file.name,
-        views: getViewCount(file.name),
-        fullName: file.name
-      }));
-      
-      // Sort by views (descending) and take top 10
-      return filesWithViews
-        .sort((a, b) => b.views - a.views)
-        .slice(0, 10)
-        .map(file => ({
-          ...file,
-          name: file.name.length > 12 ? file.name.substring(0, 10) + "..." : file.name
-        }));
-    }
-    
-    // If 10 or fewer files, show all
-    return files.map(file => ({
-      name: file.name.length > 12 ? file.name.substring(0, 10) + "..." : file.name,
-      views: getViewCount(file.name),
-      fullName: file.name
-    }));
-  };
-
+  // Set the chart data
   const proposalChartData = getProposalChartData();
-  const processedDailyChartData = getDailyChartData();
+  const dailyChartData = getDailyViewsData();
+
+  // Log for debugging
+  console.log("Views count:", views.length);
+  console.log("Proposal chart data:", proposalChartData);
+  console.log("Daily chart data:", dailyChartData);
 
   /* VIEW PROPOSAL */
   const viewProposal = (file)=>{
@@ -311,7 +275,6 @@ export default function Dashboard() {
   const handleSignProposal = (file) => {
     const fullPath = `proposals/${file.name}`;
     const encoded = btoa(fullPath);
-    // Open signing page in new tab
     window.open(`/sign/${encoded}`, '_blank');
   };
 
@@ -396,12 +359,10 @@ export default function Dashboard() {
     setIsDeleting(true);
     try {
       if (deleteItem) {
-        // Single delete
         const collectionName = deleteItem.type === "view" ? "proposalViews" : "proposalSessions";
         await deleteDoc(doc(db, collectionName, deleteItem.id));
         setDeleteSuccess(`Successfully deleted ${deleteItem.name}`);
       } else if (deleteType === "views" && selectedViews.length > 0) {
-        // Bulk delete views
         const batch = writeBatch(db);
         selectedViews.forEach(id => {
           const ref = doc(db, "proposalViews", id);
@@ -411,7 +372,6 @@ export default function Dashboard() {
         setDeleteSuccess(`Successfully deleted ${selectedViews.length} views`);
         setSelectedViews([]);
       } else if (deleteType === "sessions" && selectedSessions.length > 0) {
-        // Bulk delete sessions
         const batch = writeBatch(db);
         selectedSessions.forEach(id => {
           const ref = doc(db, "proposalSessions", id);
@@ -421,7 +381,6 @@ export default function Dashboard() {
         setDeleteSuccess(`Successfully deleted ${selectedSessions.length} sessions`);
         setSelectedSessions([]);
       } else if (deleteType === "filteredViews") {
-        // Delete all filtered views
         const filteredViews = getFilteredViews();
         if (filteredViews.length > 0) {
           const batch = writeBatch(db);
@@ -433,7 +392,6 @@ export default function Dashboard() {
           setDeleteSuccess(`Successfully deleted ${filteredViews.length} views`);
         }
       } else if (deleteType === "filteredSessions") {
-        // Delete all filtered sessions
         const filteredSessions = getFilteredSessions();
         if (filteredSessions.length > 0) {
           const batch = writeBatch(db);
@@ -446,7 +404,6 @@ export default function Dashboard() {
         }
       }
       
-      // Clear success message after 3 seconds
       setTimeout(() => setDeleteSuccess(null), 3000);
     } catch (error) {
       console.error("Error deleting:", error);
@@ -506,7 +463,6 @@ export default function Dashboard() {
     proposalPage * proposalsPerPage
   );
 
-  // Calculate total number of pages
   const totalProposalPages = Math.ceil(filteredProposals.length / proposalsPerPage);
 
   // Filter views based on search query
@@ -516,13 +472,11 @@ export default function Dashboard() {
     (v.viewerId || "").toLowerCase().includes(viewsSearch.toLowerCase())
   );
 
-  // Paginate views
   const paginatedViews = filteredViews.slice(
     (viewsPage - 1) * viewsPerPage,
     viewsPage * viewsPerPage
   );
 
-  // Calculate total number of pages for views
   const totalViewsPages = Math.ceil(filteredViews.length / viewsPerPage);
 
   // Filter engagement based on search query
@@ -531,13 +485,11 @@ export default function Dashboard() {
     (s.viewerEmail || "").toLowerCase().includes(engagementSearch.toLowerCase())
   );
 
-  // Paginate engagement
   const paginatedEngagement = filteredEngagement.slice(
     (engagementPage - 1) * engagementPerPage,
     engagementPage * engagementPerPage
   );
 
-  // Calculate total number of pages for engagement
   const totalEngagementPages = Math.ceil(filteredEngagement.length / engagementPerPage);
 
   if(!authChecked) return <div style={{padding:40}}>Loading...</div>;
@@ -1511,16 +1463,6 @@ export default function Dashboard() {
             }
           }
           
-          /* Fix for Recharts containers */
-          .recharts-wrapper {
-            width: 100% !important;
-            height: 100% !important;
-          }
-          
-          .recharts-surface {
-            overflow: visible !important;
-          }
-          
           /* Responsive table styles */
           table {
             width: 100%;
@@ -1551,9 +1493,9 @@ export default function Dashboard() {
         `}</style>
 
         {/* DASHBOARD */}
-        {activeTab==="home" && (
+        {activeTab === "home" && (
           <>
-            <h2 style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
+            <h2 style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <MdDashboard size={28} color="#1976D2" />
               Dashboard Summary
             </h2>
@@ -1571,19 +1513,12 @@ export default function Dashboard() {
                 flex: "1 1 180px",
                 textAlign: "center",
                 boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-                transition: "transform 0.3s",
-                cursor: "pointer",
                 border: "1px solid #eee",
                 minWidth: "160px",
               }}>
-                <MdDescription size={32} color="#1976D2" style={{marginBottom:10}} />
+                <MdDescription size={32} color="#1976D2" style={{ marginBottom: 10 }} />
                 <h3>Total Proposals</h3>
-                <p style={{
-                  fontSize: 28,
-                  fontWeight: "bold",
-                  margin: "8px 0 0 0",
-                  color: "#333"
-                }}>{files.length}</p>
+                <p style={{ fontSize: 28, fontWeight: "bold", margin: "8px 0 0 0", color: "#333" }}>{files.length}</p>
               </div>
 
               <div style={{
@@ -1593,19 +1528,12 @@ export default function Dashboard() {
                 flex: "1 1 180px",
                 textAlign: "center",
                 boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-                transition: "transform 0.3s",
-                cursor: "pointer",
                 border: "1px solid #eee",
                 minWidth: "160px",
               }}>
-                <MdRemoveRedEye size={32} color="#4CAF50" style={{marginBottom:10}} />
+                <MdRemoveRedEye size={32} color="#4CAF50" style={{ marginBottom: 10 }} />
                 <h3>Total Views</h3>
-                <p style={{
-                  fontSize: 28,
-                  fontWeight: "bold",
-                  margin: "8px 0 0 0",
-                  color: "#333"
-                }}>{views.length}</p>
+                <p style={{ fontSize: 28, fontWeight: "bold", margin: "8px 0 0 0", color: "#333" }}>{views.length}</p>
               </div>
 
               <div style={{
@@ -1615,19 +1543,12 @@ export default function Dashboard() {
                 flex: "1 1 180px",
                 textAlign: "center",
                 boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-                transition: "transform 0.3s",
-                cursor: "pointer",
                 border: "1px solid #eee",
                 minWidth: "160px",
               }}>
-                <MdCheckCircleOutline size={32} color="#10B981" style={{marginBottom:10}} />
+                <MdCheckCircleOutline size={32} color="#10B981" style={{ marginBottom: 10 }} />
                 <h3>Signed</h3>
-                <p style={{
-                  fontSize: 28,
-                  fontWeight: "bold",
-                  margin: "8px 0 0 0",
-                  color: "#333"
-                }}>{signedProposals.length}</p>
+                <p style={{ fontSize: 28, fontWeight: "bold", margin: "8px 0 0 0", color: "#333" }}>{signedProposals.length}</p>
               </div>
 
               <div style={{
@@ -1637,169 +1558,123 @@ export default function Dashboard() {
                 flex: "1 1 180px",
                 textAlign: "center",
                 boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-                transition: "transform 0.3s",
-                cursor: "pointer",
                 border: "1px solid #eee",
                 minWidth: "160px",
               }}>
-                <MdAnalytics size={32} color="#FF9800" style={{marginBottom:10}} />
+                <MdAnalytics size={32} color="#FF9800" style={{ marginBottom: 10 }} />
                 <h3>Unique Viewers</h3>
-                <p style={{
-                  fontSize: 28,
-                  fontWeight: "bold",
-                  margin: "8px 0 0 0",
-                  color: "#333"
-                }}>
-                  {new Set(views.filter(v=>v.viewerId).map(v=>v.viewerId)).size}
+                <p style={{ fontSize: 28, fontWeight: "bold", margin: "8px 0 0 0", color: "#333" }}>
+                  {new Set(views.filter(v => v.viewerId).map(v => v.viewerId)).size}
                 </p>
               </div>
             </div>
 
-            <h3 style={{marginTop:40, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+            {/* FIXED ANALYTICS OVERVIEW SECTION */}
+            <h3 style={{ marginTop: 40, marginBottom: 20, display: "flex", alignItems: "center", gap: 8 }}>
               <MdTimeline color="#2196F3" />
               Analytics Overview
             </h3>
 
-            <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(400px, 1fr))", gap:30, marginTop:20}}>
-              {/* Views per Proposal Chart */}
-              <div style={{
-                minWidth:0, 
-                background:"#fff", 
-                padding:"20px", 
-                borderRadius:12, 
-                boxShadow:"0 2px 8px rgba(0,0,0,0.05)",
-                height: "400px",
-                display: "flex",
-                flexDirection: "column"
-              }}>
-                <h4 style={{marginBottom:15, color:"#333", fontSize:16}}>
-                  Views per Proposal {files.length > 10 && "(Top 10)"}
-                </h4>
-                <div style={{
-                  width: "100%", 
-                  height: "320px",
-                  position: "relative",
-                  flex: 1
-                }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart 
-                      data={proposalChartData} 
-                      margin={{top:20, right:30, left:20, bottom:70}}
-                    >
-                      <CartesianGrid strokeDasharray="3 3"/>
-                      <XAxis 
-                        dataKey="name" 
-                        tick={{fontSize:11}} 
-                        interval={0}
-                        angle={-45}
-                        textAnchor="end"
-                        height={70}
-                        dy={10}
-                      />
-                      <YAxis 
-                        tick={{fontSize:11}}
-                        label={{ 
-                          value: 'Number of Views', 
-                          angle: -90, 
-                          position: 'insideLeft',
-                          style: { fontSize: 12, fill: '#666' }
-                        }}
-                      />
-                      <Tooltip 
-                        formatter={(value) => [`${value} views`, 'Views']}
-                        labelFormatter={(label) => {
-                          const file = files.find(f => f.name.startsWith(label.replace('...', '')));
-                          return file ? file.name : label;
-                        }}
-                      />
-                      <Bar 
-                        dataKey="views" 
-                        fill="#2196F3"
-                        radius={[4, 4, 0, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-                {files.length > 10 && (
-                  <p style={{fontSize:12, color:'#666', marginTop:10, textAlign:'center'}}>
-                    Showing top 10 proposals by views. Total proposals: {files.length}
-                  </p>
-                )}
-              </div>
+            {/* Debug info to see what data is available */}
+            <div style={{ 
+              marginBottom: 20, 
+              padding: 10, 
+              background: "#f0f0f0", 
+              borderRadius: 8,
+              fontSize: 12,
+              color: "#666"
+            }}>
+              <strong>Debug Info:</strong><br />
+              Total Views: {views.length}<br />
+              Proposals: {files.length}<br />
+              Chart Data Points: {proposalChartData.length}<br />
+              Daily Data Points: {dailyChartData.length}
+            </div>
 
-              {/* Daily View Traffic Chart */}
-              <div style={{
-                minWidth:0, 
-                background:"#fff", 
-                padding:"20px", 
-                borderRadius:12, 
-                boxShadow:"0 2px 8px rgba(0,0,0,0.05)",
-                height: "400px",
-                display: "flex",
-                flexDirection: "column"
-              }}>
-                <h4 style={{marginBottom:15, color:"#333", fontSize:16}}>
-                  Daily View Traffic {processedDailyChartData.length < rawDailyChartData.length && "(Weekly Aggregated)"}
-                </h4>
-                <div style={{
-                  width: "100%", 
-                  height: "320px",
-                  position: "relative",
-                  flex: 1
-                }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart 
-                      data={processedDailyChartData} 
-                      margin={{top:20, right:30, left:20, bottom:70}}
-                    >
-                      <CartesianGrid strokeDasharray="3 3"/>
-                      <XAxis 
-                        dataKey="date" 
-                        tick={{fontSize:11}} 
-                        interval={Math.floor(processedDailyChartData.length / 8)}
-                        angle={-45}
-                        textAnchor="end"
-                        height={70}
-                        dy={10}
-                      />
-                      <YAxis 
-                        tick={{fontSize:11}}
-                        label={{ 
-                          value: 'Number of Views', 
-                          angle: -90, 
-                          position: 'insideLeft',
-                          style: { fontSize: 12, fill: '#666' }
-                        }}
-                      />
-                      <Tooltip 
-                        formatter={(value) => [`${value} views`, 'Views']}
-                      />
-                      <Line 
-                        type="monotone" 
-                        dataKey="views" 
-                        stroke="#4CAF50" 
-                        strokeWidth={3}
-                        dot={{ r: 3, fill: "#4CAF50" }}
-                        activeDot={{ r: 6 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-                {processedDailyChartData.length < rawDailyChartData.length && (
-                  <p style={{fontSize:12, color:'#666', marginTop:10, textAlign:'center'}}>
-                    Data aggregated by week for better readability ({rawDailyChartData.length} days condensed to {processedDailyChartData.length} weeks)
-                  </p>
-                )}
+            {/* First chart - Views per Proposal */}
+            <div style={{ 
+              background: "#fff", 
+              borderRadius: 12, 
+              padding: 20, 
+              marginBottom: 30,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.05)" 
+            }}>
+              <h4 style={{ margin: "0 0 20px 0", color: "#333", fontSize: 16 }}>
+                Views per Proposal {files.length > 10 && "(Top 10)"}
+              </h4>
+              
+              {/* Fixed height container for chart */}
+              <div style={{ width: "100%", height: 400 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={proposalChartData.length ? proposalChartData : [{ name: "No Data", views: 0 }]}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 70 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="name" 
+                      angle={-45} 
+                      textAnchor="end" 
+                      height={70}
+                      tick={{ fontSize: 12 }}
+                    />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Bar dataKey="views" fill="#2196F3" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
+              
+              {files.length === 0 && (
+                <p style={{ textAlign: "center", color: "#999", marginTop: 20 }}>No proposals uploaded yet</p>
+              )}
+            </div>
+
+            {/* Second chart - Daily View Traffic */}
+            <div style={{ 
+              background: "#fff", 
+              borderRadius: 12, 
+              padding: 20,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.05)" 
+            }}>
+              <h4 style={{ margin: "0 0 20px 0", color: "#333", fontSize: 16 }}>
+                Daily View Traffic
+              </h4>
+              
+              {/* Fixed height container for chart */}
+              <div style={{ width: "100%", height: 400 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={dailyChartData.length ? dailyChartData : [{ date: "No Data", views: 0 }]}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 70 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="date" 
+                      angle={-45} 
+                      textAnchor="end" 
+                      height={70}
+                      tick={{ fontSize: 12 }}
+                    />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="views" stroke="#4CAF50" strokeWidth={3} dot={{ r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              
+              {views.length === 0 && (
+                <p style={{ textAlign: "center", color: "#999", marginTop: 20 }}>No view data available yet</p>
+              )}
             </div>
 
             {/* Top User Performance */}
-            <h3 style={{marginTop:40, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+            <h3 style={{ marginTop: 40, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <MdAnalytics color="#FF9800" />
               Top User Performance
             </h3>
 
-            <div style={{marginTop:20, overflowX:"auto"}}>
+            <div style={{ marginTop: 20, overflowX: "auto" }}>
               <table style={{
                 width: "100%",
                 borderCollapse: "collapse",
@@ -1808,58 +1683,22 @@ export default function Dashboard() {
                 overflow: "hidden",
                 boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
                 tableLayout: "fixed",
-                minWidth:"600px"
+                minWidth: "600px"
               }}>
                 <thead>
                   <tr style={{
                     background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
                     color: "#fff"
                   }}>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                    }}>Rank</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                    }}>Viewer Email</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                    }}>Time Spent</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                    }}>Pages</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                    }}>Sessions</th>
+                    <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Rank</th>
+                    <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Viewer Email</th>
+                    <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Time Spent</th>
+                    <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Pages</th>
+                    <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Sessions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(() => {
-                    // Calculate top viewers by aggregating session data
                     const userStats = {};
                     sessions.forEach(s => {
                       const email = s.viewerEmail || "Anonymous";
@@ -1870,91 +1709,35 @@ export default function Dashboard() {
                       userStats[email].pages += (s.pagesViewed?.length || 0);
                       userStats[email].sessions += 1;
                     });
-                    
+
                     return Object.values(userStats)
                       .sort((a, b) => b.duration - a.duration)
                       .slice(0, 5)
                       .map((user, i) => (
                         <tr key={i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
-                          <td style={{
-                            padding: "10px 6px",
-                            border: "1px solid #eee",
-                            textAlign: "center",
-                            fontSize: "12px",
-                            verticalAlign: "middle",
-                            wordBreak: "break-word",
-                          }}>
+                          <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
                             <div style={{
-                              width: 28,
-                              height: 28,
-                              borderRadius: "50%",
+                              width: 28, height: 28, borderRadius: "50%",
                               background: i === 0 ? "#FFD700" : i === 1 ? "#C0C0C0" : i === 2 ? "#CD7F32" : "#e0e0e0",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              fontWeight: "bold",
-                              fontSize: 14,
-                              margin: "0 auto"
-                            }}>
-                              {i + 1}
-                            </div>
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              fontWeight: "bold", fontSize: 14, margin: "0 auto"
+                            }}>{i + 1}</div>
                           </td>
-                          <td style={{
-                            padding: "10px 6px",
-                            border: "1px solid #eee",
-                            textAlign: "center",
-                            fontSize: "12px",
-                            verticalAlign: "middle",
-                            wordBreak: "break-word",
-                            maxWidth:"200px", 
-                            overflow:"hidden", 
-                            textOverflow:"ellipsis"
-                          }}>
-                            {user.email}
+                          <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>{user.email}</td>
+                          <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                            {Math.round(user.duration / 1000)} sec
                           </td>
-                          <td style={{
-                            padding: "10px 6px",
-                            border: "1px solid #eee",
-                            textAlign: "center",
-                            fontSize: "12px",
-                            verticalAlign: "middle",
-                            wordBreak: "break-word",
-                          }}>
-                            <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center", flexWrap:"wrap"}}>
-                              <MdTimeline color="#FF9800" size={16} />
-                              {Math.round(user.duration / 1000)} sec
-                            </div>
+                          <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                            {user.pages}
                           </td>
-                          <td style={{
-                            padding: "10px 6px",
-                            border: "1px solid #eee",
-                            textAlign: "center",
-                            fontSize: "12px",
-                            verticalAlign: "middle",
-                            wordBreak: "break-word",
-                          }}>
-                            <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center", flexWrap:"wrap"}}>
-                              <MdDescription color="#4CAF50" size={16} />
-                              {user.pages}
-                            </div>
+                          <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                            {user.sessions}
                           </td>
-                          <td style={{
-                            padding: "10px 6px",
-                            border: "1px solid #eee",
-                            textAlign: "center",
-                            fontSize: "12px",
-                            verticalAlign: "middle",
-                            wordBreak: "break-word",
-                          }}>{user.sessions}</td>
                         </tr>
                       ));
                   })()}
                   {sessions.length === 0 && (
-                    <tr>
-                      <td colSpan={5} style={{textAlign: "center", padding: 30}}>
-                        No engagement data available
-                      </td>
-                    </tr>
+                    <tr><td colSpan={5} style={{ textAlign: "center", padding: 30 }}>No engagement data available</td></tr>
                   )}
                 </tbody>
               </table>
@@ -1963,59 +1746,36 @@ export default function Dashboard() {
         )}
 
         {/* UPLOAD */}
-        {activeTab==="upload" && (
+        {activeTab === "upload" && (
           <>
-            <h2 style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
+            <h2 style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <MdFileUpload size={28} color="#1976D2" />
               Upload New Proposal
             </h2>
-            <ProposalUploader/>
+            <ProposalUploader />
           </>
         )}
 
         {/* PROPOSALS */}
-        {activeTab==="proposals" && (
+        {activeTab === "proposals" && (
           <>
-            <h2 style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
+            <h2 style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <MdPictureAsPdf size={28} color="#1976D2" />
               Uploaded Proposals
             </h2>
-            
-            {/* Search Bar */}
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 15,
-              marginBottom: 20,
-              marginTop: 10,
-              flexWrap: "wrap",
-            }}>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 20, marginTop: 10, flexWrap: "wrap" }}>
               <input
                 type="text"
                 placeholder="Search proposals..."
                 value={proposalSearch}
-                onChange={(e) => {
-                  setProposalSearch(e.target.value);
-                  setProposalPage(1);
-                }}
+                onChange={(e) => { setProposalSearch(e.target.value); setProposalPage(1); }}
                 style={{
-                  flex: 1,
-                  padding: "10px 14px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(0,0,0,0.1)",
-                  background: "#fff",
-                  fontSize: 14,
-                  outline: "none",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-                  minWidth: "200px",
+                  flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.1)",
+                  background: "#fff", fontSize: 14, outline: "none", minWidth: "200px"
                 }}
               />
-              <span style={{
-                fontSize: 13,
-                color: "#666",
-                fontWeight: 500,
-                whiteSpace: "nowrap",
-              }}>
+              <span style={{ fontSize: 13, color: "#666", fontWeight: 500, whiteSpace: "nowrap" }}>
                 {filteredProposals.length} found
               </span>
             </div>
@@ -2024,177 +1784,43 @@ export default function Dashboard() {
               <p>Loading...</p>
             ) : (
               <>
-                <div style={{
-                  width: "100%",
-                  overflowX: "auto",
-                  WebkitOverflowScrolling: "touch",
-                  borderRadius: "8px",
-                  border: "1px solid #eee",
-                  marginBottom: "10px"
-                }}>
-                  <table style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    background: "#fff",
-                    borderRadius: 8,
-                    overflow: "hidden",
-                    boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-                    tableLayout: "fixed",
-                  }}>
+                <div style={{ width: "100%", overflowX: "auto", borderRadius: "8px", border: "1px solid #eee", marginBottom: "10px" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", tableLayout: "fixed" }}>
                     <thead>
-                      <tr style={{
-                        background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
-                        color: "#fff"
-                      }}>
-                        <th style={{
-                          padding: "12px 6px",
-                          border: "none",
-                          textAlign: "center",
-                          fontSize: "12px",
-                          fontWeight: "bold",
-                          whiteSpace: "nowrap",
-                          width: "40%"
-                        }}>File</th>
-                        <th style={{
-                          padding: "12px 6px",
-                          border: "none",
-                          textAlign: "center",
-                          fontSize: "12px",
-                          fontWeight: "bold",
-                          whiteSpace: "nowrap",
-                          width: "15%"
-                        }}>Status</th>
-                        <th style={{
-                          padding: "12px 6px",
-                          border: "none",
-                          textAlign: "center",
-                          fontSize: "12px",
-                          fontWeight: "bold",
-                          whiteSpace: "nowrap",
-                          width: "10%"
-                        }}>Views</th>
-                        <th style={{
-                          padding: "12px 6px",
-                          border: "none",
-                          textAlign: "center",
-                          fontSize: "12px",
-                          fontWeight: "bold",
-                          whiteSpace: "nowrap",
-                          width: "35%"
-                        }}>Actions</th>
+                      <tr style={{ background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)", color: "#fff" }}>
+                        <th style={{ padding: "12px 6px", width: "40%" }}>File</th>
+                        <th style={{ padding: "12px 6px", width: "15%" }}>Status</th>
+                        <th style={{ padding: "12px 6px", width: "10%" }}>Views</th>
+                        <th style={{ padding: "12px 6px", width: "35%" }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedProposals.map((file,i) => {
-                        // Check if this proposal is signed
-                        const isSigned = signedProposals.some(p => 
-                          p.proposalName === file.name || p.proposalPath?.includes(file.name)
-                        );
-                        
+                      {paginatedProposals.map((file, i) => {
+                        const isSigned = signedProposals.some(p => p.proposalName === file.name || p.proposalPath?.includes(file.name));
                         return (
-                          <tr key={i} style={i%2===0?{ background: "#f9f9f9" }:{ background: "#fff" }}>
-                            <td style={{
-                              padding: "10px 6px",
-                              border: "1px solid #eee",
-                              textAlign: "center",
-                              fontSize: "12px",
-                              verticalAlign: "middle",
-                              wordBreak: "break-word",
-                              textAlign:"left"
-                            }}>
-                              <div style={{display:"flex", alignItems:"center", gap:8}}>
-                                <MdDescription color={isSigned ? "#10B981" : "#1976D2"} style={{flexShrink:0}} />
-                                <span style={{wordBreak:"break-word"}}>{file.name}</span>
+                          <tr key={i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
+                            <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "left" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <MdDescription color={isSigned ? "#10B981" : "#1976D2"} />
+                                <span>{file.name}</span>
                               </div>
                             </td>
-                            <td style={{
-                              padding: "10px 6px",
-                              border: "1px solid #eee",
-                              textAlign: "center",
-                              fontSize: "12px",
-                              verticalAlign: "middle",
-                              wordBreak: "break-word",
-                            }}>
-                              {isSigned ? (
-                                <ProposalStatusBadge status="signed" size="small" />
-                              ) : (
-                                <ProposalStatusBadge status="pending" size="small" />
-                              )}
+                            <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                              {isSigned ? <ProposalStatusBadge status="signed" size="small" /> : <ProposalStatusBadge status="pending" size="small" />}
                             </td>
-                            <td style={{
-                              padding: "10px 6px",
-                              border: "1px solid #eee",
-                              textAlign: "center",
-                              fontSize: "12px",
-                              verticalAlign: "middle",
-                              wordBreak: "break-word",
-                            }}>
-                              <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
-                                {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
-                              </div>
+                            <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                              {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
                             </td>
-                            <td style={{
-                              padding: "10px 6px",
-                              border: "1px solid #eee",
-                              textAlign: "center",
-                              fontSize: "12px",
-                              verticalAlign: "middle",
-                              wordBreak: "break-word",
-                            }}>
+                            <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
                               <div className="action-buttons">
-                                <button style={{
-                                  padding: "6px 10px",
-                                  background: "#2196F3",
-                                  color: "#fff",
-                                  border: "none",
-                                  borderRadius: 4,
-                                  cursor: "pointer",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 4,
-                                  fontSize: "12px",
-                                  fontWeight: "bold",
-                                  whiteSpace: "nowrap"
-                                }} onClick={()=>viewProposal(file)}>
-                                  <MdVisibility size={14} />
-                                  <span>View</span>
+                                <button style={{ padding: "6px 10px", background: "#2196F3", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }} onClick={() => viewProposal(file)}>
+                                  <MdVisibility size={14} /> View
                                 </button>
-                                <button style={{
-                                  padding: "6px 10px",
-                                  background: "#4CAF50",
-                                  color: "#fff",
-                                  border: "none",
-                                  borderRadius: 4,
-                                  cursor: "pointer",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 4,
-                                  fontSize: "12px",
-                                  fontWeight: "bold",
-                                  whiteSpace: "nowrap"
-                                }} onClick={()=>downloadFile(file)}>
-                                  <MdFileUpload size={14} />
-                                  <span>Download</span>
+                                <button style={{ padding: "6px 10px", background: "#4CAF50", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }} onClick={() => downloadFile(file)}>
+                                  <MdFileUpload size={14} /> Download
                                 </button>
-                                <button 
-                                  style={{
-                                    padding: "6px 10px",
-                                    background: "#10B981",
-                                    color: "#fff",
-                                    border: "none",
-                                    borderRadius: 4,
-                                    cursor: "pointer",
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                    fontSize: "12px",
-                                    fontWeight: "bold",
-                                    whiteSpace: "nowrap"
-                                  }} 
-                                  onClick={() => handleSignProposal(file)}
-                                >
-                                  <MdEdit size={14} />
-                                  <span>Sign</span>
+                                <button style={{ padding: "6px 10px", background: "#10B981", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }} onClick={() => handleSignProposal(file)}>
+                                  <MdEdit size={14} /> Sign
                                 </button>
                               </div>
                             </td>
@@ -2204,96 +1830,30 @@ export default function Dashboard() {
                     </tbody>
                   </table>
                 </div>
-                
-                {/* Pagination */}
+
                 {totalProposalPages > 1 && (
-                  <div style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 12,
-                    marginTop: 25,
-                    padding: "15px 0",
-                    flexWrap: "wrap",
-                  }}>
-                    <button 
-                      onClick={() => setProposalPage(p => Math.max(1, p - 1))}
-                      disabled={proposalPage === 1}
-                      style={{
-                        padding: "8px 16px",
-                        borderRadius: 8,
-                        border: "none",
-                        background: proposalPage === 1 ? "rgba(0,0,0,0.05)" : "#fff",
-                        color: proposalPage === 1 ? "rgba(0,0,0,0.3)" : "#1976D2",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: proposalPage === 1 ? "not-allowed" : "pointer",
-                        boxShadow: proposalPage === 1 ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
-                        transition: "all 0.2s ease",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 25, flexWrap: "wrap" }}>
+                    <button onClick={() => setProposalPage(p => Math.max(1, p - 1))} disabled={proposalPage === 1}
+                      style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: proposalPage === 1 ? "rgba(0,0,0,0.05)" : "#fff", color: proposalPage === 1 ? "rgba(0,0,0,0.3)" : "#1976D2", cursor: proposalPage === 1 ? "not-allowed" : "pointer" }}>
                       Previous
                     </button>
-                    
-                    <div style={{
-                      display: "flex",
-                      gap: 4,
-                      flexWrap: "wrap",
-                      justifyContent: "center",
-                    }}>
-                      {Array.from({length: Math.min(5, totalProposalPages)}, (_, i) => {
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      {Array.from({ length: Math.min(5, totalProposalPages) }, (_, i) => {
                         let pageNum;
-                        if (totalProposalPages <= 5) {
-                          pageNum = i + 1;
-                        } else if (proposalPage <= 3) {
-                          pageNum = i + 1;
-                        } else if (proposalPage >= totalProposalPages - 2) {
-                          pageNum = totalProposalPages - 4 + i;
-                        } else {
-                          pageNum = proposalPage - 2 + i;
-                        }
+                        if (totalProposalPages <= 5) pageNum = i + 1;
+                        else if (proposalPage <= 3) pageNum = i + 1;
+                        else if (proposalPage >= totalProposalPages - 2) pageNum = totalProposalPages - 4 + i;
+                        else pageNum = proposalPage - 2 + i;
                         return (
-                          <button
-                            key={pageNum}
-                            onClick={() => setProposalPage(pageNum)}
-                            style={{
-                              width: 36,
-                              height: 36,
-                              borderRadius: 6,
-                              border: "none",
-                              background: proposalPage === pageNum ? "linear-gradient(135deg, #1976D2 0%, #2196F3 100%)" : "#fff",
-                              color: proposalPage === pageNum ? "#fff" : "#666",
-                              fontSize: 13,
-                              fontWeight: 600,
-                              cursor: "pointer",
-                              boxShadow: proposalPage === pageNum ? "0 4px 12px rgba(25, 118, 210, 0.3)" : "0 2px 8px rgba(0,0,0,0.04)",
-                              transition: "all 0.2s ease",
-                            }}
-                          >
+                          <button key={pageNum} onClick={() => setProposalPage(pageNum)}
+                            style={{ width: 36, height: 36, borderRadius: 6, border: "none", background: proposalPage === pageNum ? "linear-gradient(135deg, #1976D2 0%, #2196F3 100%)" : "#fff", color: proposalPage === pageNum ? "#fff" : "#666", cursor: "pointer" }}>
                             {pageNum}
                           </button>
                         );
                       })}
                     </div>
-                    
-                    <button 
-                      onClick={() => setProposalPage(p => Math.min(totalProposalPages, p + 1))}
-                      disabled={proposalPage === totalProposalPages}
-                      style={{
-                        padding: "8px 16px",
-                        borderRadius: 8,
-                        border: "none",
-                        background: proposalPage === totalProposalPages ? "rgba(0,0,0,0.05)" : "#fff",
-                        color: proposalPage === totalProposalPages ? "rgba(0,0,0,0.3)" : "#1976D2",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: proposalPage === totalProposalPages ? "not-allowed" : "pointer",
-                        boxShadow: proposalPage === totalProposalPages ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
-                        transition: "all 0.2s ease",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
+                    <button onClick={() => setProposalPage(p => Math.min(totalProposalPages, p + 1))} disabled={proposalPage === totalProposalPages}
+                      style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: proposalPage === totalProposalPages ? "rgba(0,0,0,0.05)" : "#fff", color: proposalPage === totalProposalPages ? "rgba(0,0,0,0.3)" : "#1976D2", cursor: proposalPage === totalProposalPages ? "not-allowed" : "pointer" }}>
                       Next
                     </button>
                   </div>
@@ -2304,715 +1864,145 @@ export default function Dashboard() {
         )}
 
         {/* SIGNED PROPOSALS TAB */}
-        {activeTab==="signed" && (
+        {activeTab === "signed" && (
           <>
-            <div style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: 20,
-              flexWrap: "wrap",
-              gap: 10
-            }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
               <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <MdCheckCircleOutline size={28} color="#10B981" />
                 Signed Proposals
               </h2>
-              
-              <div style={{
-                display: "flex",
-                gap: "10px",
-              }}>
-                <div style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  padding: "8px 16px",
-                  background: "#f0fdf4",
-                  borderRadius: "100px",
-                  border: "1px solid #86efac",
-                }}>
-                  <span style={{
-                    fontSize: "13px",
-                    color: "#166534",
-                  }}>Total Signed</span>
-                  <span style={{
-                    fontSize: "16px",
-                    fontWeight: "700",
-                    color: "#059669",
-                  }}>{signedProposals.length}</span>
+              <div style={{ display: "flex", gap: "10px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 16px", background: "#f0fdf4", borderRadius: "100px", border: "1px solid #86efac" }}>
+                  <span style={{ fontSize: "13px", color: "#166534" }}>Total Signed</span>
+                  <span style={{ fontSize: "16px", fontWeight: "700", color: "#059669" }}>{signedProposals.length}</span>
                 </div>
               </div>
             </div>
 
-            {/* Search Bar */}
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 15,
-              marginBottom: 20,
-              marginTop: 10,
-              flexWrap: "wrap",
-            }}>
-              <input
-                type="text"
-                placeholder="Search signed proposals..."
-                value={viewsSearch}
-                onChange={(e) => {
-                  setViewsSearch(e.target.value);
-                  setViewsPage(1);
-                }}
-                style={{
-                  flex: 1,
-                  padding: "10px 14px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(0,0,0,0.1)",
-                  background: "#fff",
-                  fontSize: 14,
-                  outline: "none",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-                  minWidth: "200px",
-                }}
-              />
-              <span style={{
-                fontSize: 13,
-                color: "#666",
-                fontWeight: 500,
-                whiteSpace: "nowrap",
-              }}>
-                {signedProposals.length} found
-              </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 20, marginTop: 10, flexWrap: "wrap" }}>
+              <input type="text" placeholder="Search signed proposals..." value={viewsSearch}
+                onChange={(e) => { setViewsSearch(e.target.value); setViewsPage(1); }}
+                style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.1)", background: "#fff", minWidth: "200px" }} />
+              <span style={{ fontSize: 13, color: "#666", fontWeight: 500, whiteSpace: "nowrap" }}>{signedProposals.length} found</span>
             </div>
 
-            <div style={{
-              width: "100%",
-              overflowX: "auto",
-              WebkitOverflowScrolling: "touch",
-              borderRadius: "8px",
-              border: "1px solid #eee",
-              marginBottom: "10px"
-            }}>
-              <table style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                background: "#fff",
-                borderRadius: 8,
-                overflow: "hidden",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-                tableLayout: "fixed",
-              }}>
+            <div style={{ width: "100%", overflowX: "auto", borderRadius: "8px", border: "1px solid #eee", marginBottom: "10px" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", tableLayout: "fixed" }}>
                 <thead>
-                  <tr style={{
-                    background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
-                    color: "#fff"
-                  }}>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "25%"
-                    }}>Proposal</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "20%"
-                    }}>Signed By</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "20%"
-                    }}>Email</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "15%"
-                    }}>Date Signed</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "10%"
-                    }}>Signature</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "10%"
-                    }}>Actions</th>
+                  <tr style={{ background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)", color: "#fff" }}>
+                    <th style={{ padding: "12px 6px", width: "25%" }}>Proposal</th>
+                    <th style={{ padding: "12px 6px", width: "20%" }}>Signed By</th>
+                    <th style={{ padding: "12px 6px", width: "20%" }}>Email</th>
+                    <th style={{ padding: "12px 6px", width: "15%" }}>Date Signed</th>
+                    <th style={{ padding: "12px 6px", width: "10%" }}>Signature</th>
+                    <th style={{ padding: "12px 6px", width: "10%" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {signedProposals.map((proposal, i) => (
                     <tr key={proposal.id || i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                        textAlign:"left"
-                      }}>
-                        <div style={{display:"flex", alignItems:"center", gap:8}}>
-                          <MdDescription color="#10B981" style={{flexShrink:0}} />
-                          <span style={{wordBreak:"break-word"}}>
-                            {proposal.proposalName || proposal.fileName || 'Unknown'}
-                          </span>
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "left" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <MdDescription color="#10B981" />
+                          <span>{proposal.proposalName || proposal.fileName || 'Unknown'}</span>
                         </div>
                       </td>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                      }}>
-                        <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
-                          <MdPerson size={14} color="#64748b" />
-                          {proposal.signedBy || 'Unknown'}
-                        </div>
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>{proposal.signedBy || 'Unknown'}</td>
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>{proposal.signerEmail || 'N/A'}</td>
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                        {proposal.signedAt ? new Date(proposal.signedAt).toLocaleDateString() : 'N/A'}
                       </td>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                      }}>
-                        <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
-                          <MdEmail size={14} color="#64748b" />
-                          {proposal.signerEmail || 'N/A'}
-                        </div>
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                        {proposal.signatureType === 'draw' ? '🖊️ Drawn' : '📝 Typed'}
                       </td>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                      }}>
-                        <div style={{display:"flex", alignItems:"center", gap:5, justifyContent:"center"}}>
-                          <MdSchedule size={14} color="#64748b" />
-                          {proposal.signedAt ? new Date(proposal.signedAt).toLocaleDateString() : 'N/A'}
-                        </div>
-                      </td>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                      }}>
-                        {proposal.signatureType === 'draw' ? (
-                          <span style={{
-                            display: "inline-block",
-                            padding: "4px 8px",
-                            background: "#f1f5f9",
-                            borderRadius: "4px",
-                            fontSize: "11px",
-                            color: "#64748b",
-                          }}>🖊️ Drawn</span>
-                        ) : (
-                          <span style={{
-                            display: "inline-block",
-                            padding: "4px 8px",
-                            background: "#f1f5f9",
-                            borderRadius: "4px",
-                            fontSize: "11px",
-                            color: "#64748b",
-                          }}>📝 Typed</span>
-                        )}
-                      </td>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                      }}>
-                        <button
-                          onClick={() => {
-                            if (proposal.proposalPath) {
-                              const encoded = btoa(proposal.proposalPath);
-                              window.open(`/sign/${encoded}`, '_blank');
-                            }
-                          }}
-                          style={{
-                            padding: "6px 10px",
-                            background: "#2196F3",
-                            color: "#fff",
-                            border: "none",
-                            borderRadius: 4,
-                            cursor: "pointer",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                            fontSize: "12px",
-                            fontWeight: "bold",
-                            whiteSpace: "nowrap"
-                          }}
-                        >
-                          <MdVisibility size={14} />
-                          View
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                        <button onClick={() => { if (proposal.proposalPath) { const encoded = btoa(proposal.proposalPath); window.open(`/sign/${encoded}`, '_blank'); } }}
+                          style={{ padding: "6px 10px", background: "#2196F3", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }}>
+                          <MdVisibility size={14} /> View
                         </button>
                       </td>
                     </tr>
                   ))}
                   {signedProposals.length === 0 && (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: "center", padding: 50 }}>
-                        <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:15}}>
-                          <MdCheckCircleOutline size={48} color="#ccc" />
-                          <p style={{color:"#999", fontSize:16, margin:0}}>No signed proposals yet</p>
-                          <p style={{color:"#999", fontSize:14}}>
-                            When clients sign proposals, they will appear here
-                          </p>
-                        </div>
-                      </td>
-                    </tr>
+                    <tr><td colSpan={6} style={{ textAlign: "center", padding: 50 }}>No signed proposals yet</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
-
-            {/* Summary Cards */}
-            {signedProposals.length > 0 && (
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                gap: "20px",
-                marginTop: "25px",
-              }}>
-                <div style={{
-                  background: "#fff",
-                  borderRadius: "12px",
-                  padding: "20px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "15px",
-                  border: "1px solid #e2e8f0",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-                }}>
-                  <MdCheckCircle size={24} color="#10B981" />
-                  <div>
-                    <span style={{
-                      display: "block",
-                      fontSize: "12px",
-                      color: "#64748b",
-                      marginBottom: "4px",
-                    }}>Total Signatures</span>
-                    <span style={{
-                      display: "block",
-                      fontSize: "24px",
-                      fontWeight: "700",
-                      color: "#1a1a2e",
-                    }}>{signedProposals.length}</span>
-                  </div>
-                </div>
-                
-                <div style={{
-                  background: "#fff",
-                  borderRadius: "12px",
-                  padding: "20px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "15px",
-                  border: "1px solid #e2e8f0",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-                }}>
-                  <MdPerson size={24} color="#3b82f6" />
-                  <div>
-                    <span style={{
-                      display: "block",
-                      fontSize: "12px",
-                      color: "#64748b",
-                      marginBottom: "4px",
-                    }}>Unique Signers</span>
-                    <span style={{
-                      display: "block",
-                      fontSize: "24px",
-                      fontWeight: "700",
-                      color: "#1a1a2e",
-                    }}>
-                      {new Set(signedProposals.map(p => p.signerEmail)).size}
-                    </span>
-                  </div>
-                </div>
-                
-                <div style={{
-                  background: "#fff",
-                  borderRadius: "12px",
-                  padding: "20px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "15px",
-                  border: "1px solid #e2e8f0",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-                }}>
-                  <MdSchedule size={24} color="#8b5cf6" />
-                  <div>
-                    <span style={{
-                      display: "block",
-                      fontSize: "12px",
-                      color: "#64748b",
-                      marginBottom: "4px",
-                    }}>Last Signed</span>
-                    <span style={{
-                      display: "block",
-                      fontSize: "24px",
-                      fontWeight: "700",
-                      color: "#1a1a2e",
-                    }}>
-                      {signedProposals[0]?.signedAt 
-                        ? new Date(signedProposals[0].signedAt).toLocaleDateString() 
-                        : 'N/A'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
           </>
         )}
 
-        {/* LIVE VIEWS with Delete and Search */}
-        {activeTab==="views" && (
+        {/* LIVE VIEWS TAB */}
+        {activeTab === "views" && (
           <>
-            <div style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: 20,
-              flexWrap: "wrap",
-              gap: 10
-            }}>
-              <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <MdRemoveRedEye size={28} color="#1976D2" />
-                Live Views
-              </h2>
-              
-              <div style={{
-                display: "flex",
-                gap: 10,
-                flexWrap: "wrap"
-              }}>
-                {/* Filter Dropdown */}
-                <select
-                  value={dateFilter}
-                  onChange={(e) => setDateFilter(e.target.value)}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 6,
-                    border: "1px solid #ddd",
-                    background: "#fff",
-                    cursor: "pointer",
-                    fontSize: "13px"
-                  }}
-                >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+              <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}><MdRemoveRedEye size={28} color="#1976D2" /> Live Views</h2>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)}
+                  style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", fontSize: "13px" }}>
                   <option value="all">All Time</option>
                   <option value="today">Today</option>
                   <option value="week">This Week</option>
                   <option value="month">This Month</option>
                 </select>
-
-                {/* Bulk Delete Button */}
                 {selectedViews.length > 0 && (
-                  <button
-                    onClick={() => {
-                      setDeleteType("views");
-                      setShowDeleteModal(true);
-                    }}
-                    style={{
-                      padding: "8px 12px",
-                      background: "#d32f2f",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      fontWeight: "bold",
-                      fontSize: "13px",
-                      whiteSpace: "nowrap"
-                    }}
-                  >
-                    <MdDelete size={18} />
-                    Delete ({selectedViews.length})
+                  <button onClick={() => { setDeleteType("views"); setShowDeleteModal(true); }}
+                    style={{ padding: "8px 12px", background: "#d32f2f", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                    <MdDelete size={18} /> Delete ({selectedViews.length})
                   </button>
                 )}
-
-                {/* Delete All Filtered Button */}
                 {getFilteredViews().length > 0 && (
-                  <button
-                    onClick={() => {
-                      setDeleteType("filteredViews");
-                      setShowDeleteModal(true);
-                    }}
-                    style={{
-                      padding: "8px 12px",
-                      background: "#ff9800",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      fontSize: "13px",
-                      whiteSpace: "nowrap"
-                    }}
-                  >
-                    <MdDelete size={18} />
-                    Delete {getFilteredViews().length}
+                  <button onClick={() => { setDeleteType("filteredViews"); setShowDeleteModal(true); }}
+                    style={{ padding: "8px 12px", background: "#ff9800", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                    <MdDelete size={18} /> Delete {getFilteredViews().length}
                   </button>
                 )}
               </div>
             </div>
 
-            {/* Search Bar */}
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 15,
-              marginBottom: 20,
-              marginTop: 10,
-              flexWrap: "wrap",
-            }}>
-              <input
-                type="text"
-                placeholder="Search by file, email or ID..."
-                value={viewsSearch}
-                onChange={(e) => {
-                  setViewsSearch(e.target.value);
-                  setViewsPage(1);
-                }}
-                style={{
-                  flex: 1,
-                  padding: "10px 14px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(0,0,0,0.1)",
-                  background: "#fff",
-                  fontSize: 14,
-                  outline: "none",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-                  minWidth: "200px",
-                }}
-              />
-              <span style={{
-                fontSize: 13,
-                color: "#666",
-                fontWeight: 500,
-                whiteSpace: "nowrap",
-              }}>
-                {filteredViews.length} found
-              </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 20, flexWrap: "wrap" }}>
+              <input type="text" placeholder="Search by file, email or ID..." value={viewsSearch}
+                onChange={(e) => { setViewsSearch(e.target.value); setViewsPage(1); }}
+                style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.1)", background: "#fff", minWidth: "200px" }} />
+              <span style={{ fontSize: 13, color: "#666" }}>{filteredViews.length} found</span>
             </div>
 
-            {/* Filter Info */}
-            <div style={{
-              background: "#e3f2fd",
-              padding: "8px 15px",
-              borderRadius: 6,
-              marginBottom: 15,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 13,
-              flexWrap: "wrap"
-            }}>
-              <MdFilterList color="#1976D2" />
-              Showing {paginatedViews.length} of {filteredViews.length} views
-              {dateFilter !== "all" && ` (${dateFilter})`}
-            </div>
-
-            <div style={{
-              width: "100%",
-              overflowX: "auto",
-              WebkitOverflowScrolling: "touch",
-              borderRadius: "8px",
-              border: "1px solid #eee",
-              marginBottom: "10px"
-            }}>
-              <table style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                background: "#fff",
-                borderRadius: 8,
-                overflow: "hidden",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-                tableLayout: "fixed",
-              }}>
+            <div style={{ width: "100%", overflowX: "auto", borderRadius: "8px", border: "1px solid #eee", marginBottom: "10px" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", tableLayout: "fixed" }}>
                 <thead>
-                  <tr style={{
-                    background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
-                    color: "#fff"
-                  }}>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "5%"
-                    }}>
-                      <input
-                        type="checkbox"
-                        onChange={(e) => selectAllViews(e.target.checked)}
-                        checked={selectedViews.length === views.length && views.length > 0}
-                      />
-                    </th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "30%"
-                    }}>File</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "30%"
-                    }}>Viewer Email</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "20%"
-                    }}>Viewed At</th>
-                    <th style={{
-                      padding: "12px 6px",
-                      border: "none",
-                      textAlign: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      whiteSpace: "nowrap",
-                      width: "15%"
-                    }}>Actions</th>
+                  <tr style={{ background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)", color: "#fff" }}>
+                    <th style={{ padding: "12px 6px", width: "5%" }}><input type="checkbox" onChange={(e) => selectAllViews(e.target.checked)} checked={selectedViews.length === views.length && views.length > 0} /></th>
+                    <th style={{ padding: "12px 6px", width: "30%" }}>File</th>
+                    <th style={{ padding: "12px 6px", width: "30%" }}>Viewer Email</th>
+                    <th style={{ padding: "12px 6px", width: "20%" }}>Viewed At</th>
+                    <th style={{ padding: "12px 6px", width: "15%" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedViews.map((v, i) => (
                     <tr key={i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                        width: "5%"
-                      }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedViews.includes(v.id)}
-                          onChange={() => toggleViewSelection(v.id)}
-                        />
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                        <input type="checkbox" checked={selectedViews.includes(v.id)} onChange={() => toggleViewSelection(v.id)} />
                       </td>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                        textAlign:"left"
-                      }}>
-                        <div style={{display:"flex", alignItems:"center", gap:8}}>
-                          <MdDescription color="#1976D2" style={{flexShrink:0}} />
-                          <span style={{wordBreak:"break-word"}}>{v.fileName || "N/A"}</span>
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "left" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <MdDescription color="#1976D2" />
+                          <span>{v.fileName || "N/A"}</span>
                         </div>
                       </td>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                      }}>{v.viewerEmail || "Anonymous"}</td>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                      }} className="timestamp-cell">
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>{v.viewerEmail || "Anonymous"}</td>
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
                         {v.viewedAt ? new Date(v.viewedAt).toLocaleString() : "Loading"}
                       </td>
-                      <td style={{
-                        padding: "10px 6px",
-                        border: "1px solid #eee",
-                        textAlign: "center",
-                        fontSize: "12px",
-                        verticalAlign: "middle",
-                        wordBreak: "break-word",
-                      }}>
-                        <button
-                          onClick={() => handleDeleteView(v.id, v.fileName)}
-                          style={{
-                            padding: "6px 10px",
-                            background: "#d32f2f",
-                            color: "#fff",
-                            border: "none",
-                            borderRadius: 4,
-                            cursor: "pointer",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                            fontSize: "12px",
-                            whiteSpace: "nowrap"
-                          }}
-                        >
-                          <MdDelete size={14} />
-                          <span>Delete</span>
+                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                        <button onClick={() => handleDeleteView(v.id, v.fileName)}
+                          style={{ padding: "6px 10px", background: "#d32f2f", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }}>
+                          <MdDelete size={14} /> Delete
                         </button>
                       </td>
                     </tr>
                   ))}
-                  {paginatedViews.length === 0 && (
-                    <tr>
-                      <td colSpan={5} style={{ textAlign: "center", padding: 30 }}>
-                        No views found
-                      </td>
-                    </tr>
-                  )}
+                  {paginatedViews.length === 0 && <tr><td colSpan={5} style={{ textAlign: "center", padding: 30 }}>No views found</td></tr>}
                 </tbody>
               </table>
             </div>
