@@ -9,6 +9,7 @@ import {
   serverTimestamp,  
   updateDoc,
   doc,
+  getDoc
 } from "firebase/firestore";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -30,6 +31,8 @@ export default function ProposalDetail() {
   const [fileName, setFileName] = useState("");
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [userRole, setUserRole] = useState(null);
 
   const sessionId = useRef(null);
   const startTime = useRef(Date.now());
@@ -40,15 +43,50 @@ export default function ProposalDetail() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
-        setError("Login required");
-        setLoading(false);
+        // Not logged in, redirect to client login
+        const returnUrl = encodeURIComponent(`/p/${path}`);
+        navigate(`/client-login/${path}?returnTo=${returnUrl}`);
         return;
       }
-      await loadProposal(currentUser);
+
+      // User is logged in - check role but allow both admin and client
+      try {
+        const userDoc = await getDoc(doc(db, "users", currentUser.uid));
+        
+        let role = "unknown";
+        if (userDoc.exists()) {
+          role = userDoc.data().role || "client";
+        } else {
+          // If no user document, assume it's an admin from older system
+          role = "admin";
+        }
+        
+        setUserRole(role);
+        
+        // Allow both admins and clients to view proposals
+        if (role === 'admin' || role === 'client') {
+          console.log(`User authenticated as ${role}, loading proposal...`);
+          setCheckingAuth(false);
+          await loadProposal(currentUser);
+        } else {
+          // Unknown role, redirect to client login
+          console.log("Unknown user role, redirecting to login");
+          await auth.signOut();
+          const returnUrl = encodeURIComponent(`/p/${path}`);
+          navigate(`/client-login/${path}?returnTo=${returnUrl}`);
+        }
+      } catch (error) {
+        console.error("Error checking user role:", error);
+        // If there's an error checking role, still allow access (fail open)
+        // This ensures admins can always view proposals even if there's a DB issue
+        console.log("Role check failed, but allowing access");
+        setCheckingAuth(false);
+        await loadProposal(currentUser);
+      }
     });
 
     return () => unsubscribe();
-  }, [path]);
+  }, [path, navigate]);
 
   const loadProposal = async (user) => {
     try {
@@ -162,42 +200,72 @@ export default function ProposalDetail() {
     }
   };
 
-  if (loading) return <div style={{ padding: 40 }}>Loading proposal...</div>;
+  // Logout handler - redirect based on role
+  const handleLogout = async () => {
+    const currentUser = auth.currentUser;
+    await auth.signOut();
+    
+    if (userRole === 'admin') {
+      // Admin goes to admin login
+      navigate("/login");
+    } else {
+      // Client goes to client login
+      navigate(`/client-login/${path}`);
+    }
+  };
+
+  if (checkingAuth || loading) {
+    return (
+      <div style={loadingContainerStyle}>
+        <div className="spinner"></div>
+        <p>Loading proposal...</p>
+      </div>
+    );
+  }
 
   if (error) {
     return (
-      <div style={{ padding: 40 }}>
+      <div style={errorContainerStyle}>
         <h2>Error: {error}</h2>
-        <button onClick={() => navigate("/view")}>Back</button>
+        <button onClick={() => navigate("/view")} style={buttonStyle}>Back</button>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: 40 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
-        <h2>{fileName}</h2>
-        <button
-          onClick={handleDownload}
-          style={{
-            padding: "8px 16px",
-            background: "#4CAF50",
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            cursor: "pointer",
-          }}
-        >
-          Download
-        </button>
+    <div style={containerStyle}>
+      {/* Header with user info and logout */}
+      <div style={headerStyle}>
+        <div style={headerLeftStyle}>
+          <h2 style={titleStyle}>{fileName}</h2>
+          <p style={userInfoStyle}>
+            Logged in as: {auth.currentUser?.email} 
+            {userRole && <span style={roleBadgeStyle(userRole)}> ({userRole})</span>}
+          </p>
+        </div>
+        <div style={headerRightStyle}>
+          <button
+            onClick={handleDownload}
+            style={downloadButtonStyle}
+          >
+            Download
+          </button>
+          <button
+            onClick={handleLogout}
+            style={logoutButtonStyle}
+          >
+            Logout
+          </button>
+        </div>
       </div>
 
-      <div style={{ border: "1px solid #ccc", overflow: "auto", height: "85vh" }}>
+      {/* PDF Viewer */}
+      <div style={viewerContainerStyle}>
         <Document
           file={fileUrl}
           onLoadSuccess={onDocumentLoadSuccess}
-          loading={<div>Loading PDF...</div>}
-          error={<div>Failed to load PDF.</div>}
+          loading={<div style={pdfLoadingStyle}>Loading PDF...</div>}
+          error={<div style={pdfErrorStyle}>Failed to load PDF.</div>}
         >
           <Page
             pageNumber={pageNumber}
@@ -208,24 +276,17 @@ export default function ProposalDetail() {
         </Document>
       </div>
 
-      {/* ---------- PAGINATION CONTROLS (ADDED) ---------- */}
-      <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+      {/* Pagination Controls */}
+      <div style={paginationContainerStyle}>
         <button
           onClick={() => setPageNumber(prev => Math.max(prev - 1, 1))}
           disabled={pageNumber <= 1}
-          style={{
-            padding: '6px 16px',
-            background: pageNumber <= 1 ? '#ccc' : '#2196F3',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 4,
-            cursor: pageNumber <= 1 ? 'not-allowed' : 'pointer'
-          }}
+          style={paginationButtonStyle(pageNumber <= 1)}
         >
           Previous
         </button>
 
-        <span>
+        <span style={pageInfoStyle}>
           Page <input
             type="number"
             min={1}
@@ -237,26 +298,214 @@ export default function ProposalDetail() {
                 setPageNumber(val);
               }
             }}
-            style={{ width: 60, textAlign: 'center' }}
+            style={pageInputStyle}
           /> of {numPages}
         </span>
 
         <button
           onClick={() => setPageNumber(prev => Math.min(prev + 1, numPages || 1))}
           disabled={pageNumber >= (numPages || 1)}
-          style={{
-            padding: '6px 16px',
-            background: pageNumber >= (numPages || 1) ? '#ccc' : '#2196F3',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 4,
-            cursor: pageNumber >= (numPages || 1) ? 'not-allowed' : 'pointer'
-          }}
+          style={paginationButtonStyle(pageNumber >= (numPages || 1))}
         >
           Next
         </button>
       </div>
-      {/* ------------------------------------------------ */}
+
+      {/* Add spinner animation */}
+      <style>{`
+        .spinner {
+          width: 40px;
+          height: 40px;
+          border: 3px solid #f3f3f3;
+          border-top: 3px solid #00D4FF;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }
+
+// Styles
+const containerStyle = {
+  padding: "20px",
+  maxWidth: "1200px",
+  margin: "0 auto",
+  fontFamily: "'Inter', sans-serif",
+};
+
+const headerStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginBottom: "20px",
+  padding: "16px",
+  background: "#fff",
+  borderRadius: "12px",
+  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+  border: "1px solid #eee",
+};
+
+const headerLeftStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "4px",
+};
+
+const titleStyle = {
+  margin: 0,
+  fontSize: "18px",
+  fontWeight: "600",
+  color: "#1a1a2e",
+};
+
+const userInfoStyle = {
+  margin: 0,
+  fontSize: "13px",
+  color: "#666",
+  display: "flex",
+  alignItems: "center",
+  gap: "4px",
+};
+
+const roleBadgeStyle = (role) => ({
+  display: "inline-block",
+  padding: "2px 8px",
+  borderRadius: "12px",
+  fontSize: "11px",
+  fontWeight: "600",
+  background: role === 'admin' ? '#e3f2fd' : '#f0fdf4',
+  color: role === 'admin' ? '#1976D2' : '#10B981',
+  marginLeft: "4px",
+});
+
+const headerRightStyle = {
+  display: "flex",
+  gap: "10px",
+};
+
+const downloadButtonStyle = {
+  padding: "8px 16px",
+  background: "#4CAF50",
+  color: "#fff",
+  border: "none",
+  borderRadius: "8px",
+  fontSize: "14px",
+  fontWeight: "500",
+  cursor: "pointer",
+  transition: "all 0.2s",
+};
+
+const logoutButtonStyle = {
+  padding: "8px 16px",
+  background: "#f1f5f9",
+  color: "#64748b",
+  border: "1px solid #e2e8f0",
+  borderRadius: "8px",
+  fontSize: "14px",
+  fontWeight: "500",
+  cursor: "pointer",
+  transition: "all 0.2s",
+};
+
+const viewerContainerStyle = {
+  border: "1px solid #e2e8f0",
+  borderRadius: "12px",
+  overflow: "auto",
+  height: "70vh",
+  background: "#fff",
+  boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
+  padding: "20px",
+};
+
+const pdfLoadingStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  height: "100%",
+  color: "#666",
+};
+
+const pdfErrorStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  height: "100%",
+  color: "#c33",
+};
+
+const paginationContainerStyle = {
+  marginTop: "20px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "16px",
+  padding: "16px",
+  background: "#fff",
+  borderRadius: "12px",
+  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+  border: "1px solid #eee",
+};
+
+const paginationButtonStyle = (disabled) => ({
+  padding: "8px 20px",
+  background: disabled ? "#e2e8f0" : "#2196F3",
+  color: disabled ? "#94a3b8" : "#fff",
+  border: "none",
+  borderRadius: "8px",
+  fontSize: "14px",
+  fontWeight: "500",
+  cursor: disabled ? "not-allowed" : "pointer",
+  transition: "all 0.2s",
+});
+
+const pageInfoStyle = {
+  fontSize: "14px",
+  color: "#1a1a2e",
+};
+
+const pageInputStyle = {
+  width: "60px",
+  padding: "6px",
+  textAlign: "center",
+  border: "1px solid #e2e8f0",
+  borderRadius: "6px",
+  margin: "0 8px",
+  fontSize: "14px",
+};
+
+const loadingContainerStyle = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  height: "100vh",
+  gap: "20px",
+  background: "#fff",
+};
+
+const errorContainerStyle = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  height: "100vh",
+  gap: "20px",
+  background: "#fff",
+  textAlign: "center",
+  padding: "0 20px",
+};
+
+const buttonStyle = {
+  padding: "10px 24px",
+  background: "#2196F3",
+  color: "#fff",
+  border: "none",
+  borderRadius: "8px",
+  fontSize: "14px",
+  cursor: "pointer",
+};

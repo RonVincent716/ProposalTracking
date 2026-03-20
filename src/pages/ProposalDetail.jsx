@@ -9,11 +9,15 @@ import {
   serverTimestamp,  
   updateDoc,
   doc,
-  getDoc
+  getDoc,
+  query,
+  where,
+  getDocs
 } from "firebase/firestore";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
+import { MdEdit, MdFileUpload, MdLogout, MdDescription, MdArrowBack, MdCheckCircle } from "react-icons/md";
 
 // Use Vite's import.meta.url to load the worker from node_modules
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -33,6 +37,8 @@ export default function ProposalDetail() {
   const [pageNumber, setPageNumber] = useState(1);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [userRole, setUserRole] = useState(null);
+  const [userEmail, setUserEmail] = useState("");
+  const [isSigned, setIsSigned] = useState(false);
 
   const sessionId = useRef(null);
   const startTime = useRef(Date.now());
@@ -45,11 +51,12 @@ export default function ProposalDetail() {
       if (!currentUser) {
         // Not logged in, redirect to client login
         const returnUrl = encodeURIComponent(`/p/${path}`);
-        navigate(`/client-login/${path}?returnTo=${returnUrl}`);
+        navigate(`/client-login?returnTo=${returnUrl}`);
         return;
       }
 
-      // User is logged in - check role but allow both admin and client
+      setUserEmail(currentUser.email);
+
       try {
         const userDoc = await getDoc(doc(db, "users", currentUser.uid));
         
@@ -57,29 +64,15 @@ export default function ProposalDetail() {
         if (userDoc.exists()) {
           role = userDoc.data().role || "client";
         } else {
-          // If no user document, assume it's an admin from older system
           role = "admin";
         }
         
         setUserRole(role);
         
-        // Allow both admins and clients to view proposals
-        if (role === 'admin' || role === 'client') {
-          console.log(`User authenticated as ${role}, loading proposal...`);
-          setCheckingAuth(false);
-          await loadProposal(currentUser);
-        } else {
-          // Unknown role, redirect to client login
-          console.log("Unknown user role, redirecting to login");
-          await auth.signOut();
-          const returnUrl = encodeURIComponent(`/p/${path}`);
-          navigate(`/client-login/${path}?returnTo=${returnUrl}`);
-        }
+        setCheckingAuth(false);
+        await loadProposal(currentUser);
       } catch (error) {
         console.error("Error checking user role:", error);
-        // If there's an error checking role, still allow access (fail open)
-        // This ensures admins can always view proposals even if there's a DB issue
-        console.log("Role check failed, but allowing access");
         setCheckingAuth(false);
         await loadProposal(currentUser);
       }
@@ -88,15 +81,63 @@ export default function ProposalDetail() {
     return () => unsubscribe();
   }, [path, navigate]);
 
+  const decodePath = (encodedPath) => {
+    try {
+      // First decode
+      let decoded = atob(encodedPath);
+      console.log("First decode:", decoded);
+      
+      // Check if it's still base64 (contains only base64 chars)
+      const base64Regex = /^[A-Za-z0-9+/=]+$/;
+      
+      // If it looks like base64 and contains 'proposals/' after decoding, we're good
+      if (decoded.includes('proposals/')) {
+        return decoded;
+      }
+      
+      // If it still looks like base64, decode again
+      if (base64Regex.test(decoded)) {
+        try {
+          const secondDecode = atob(decoded);
+          console.log("Second decode:", secondDecode);
+          if (secondDecode.includes('proposals/')) {
+            return secondDecode;
+          }
+        } catch (e) {
+          console.log("Second decode failed, using first decode");
+        }
+      }
+      
+      return decoded;
+    } catch (e) {
+      console.error("Error decoding path:", e);
+      return encodedPath;
+    }
+  };
+
   const loadProposal = async (user) => {
     try {
-      const decodedPath = atob(path);
+      console.log("Original path from URL:", path);
+      
+      // Decode the path (handles both single and double encoding)
+      const decodedPath = decodePath(path);
+      console.log("Final decoded path:", decodedPath);
+      
       const fileRef = ref(storage, decodedPath);
       const url = await getDownloadURL(fileRef);
       setFileUrl(url);
 
       const extractedFileName = decodedPath.split("/").pop();
       setFileName(extractedFileName);
+
+      // Check if already signed
+      const signedQuery = query(
+        collection(db, "signedProposals"),
+        where("proposalPath", "==", decodedPath),
+        where("signerEmail", "==", user.email)
+      );
+      const signedSnapshot = await getDocs(signedQuery);
+      setIsSigned(!signedSnapshot.empty);
 
       // Log view
       await addDoc(collection(db, "proposalViews"), {
@@ -120,7 +161,8 @@ export default function ProposalDetail() {
 
       sessionId.current = session.id;
     } catch (err) {
-      setError(err.message);
+      console.error("Error loading proposal:", err);
+      setError(`Failed to load proposal: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -181,16 +223,8 @@ export default function ProposalDetail() {
     };
   }, []);
 
-  // Download tracking (optional)
   const handleDownload = async () => {
     try {
-      await addDoc(collection(db, "proposalDownloads"), {
-        fileName,
-        viewerId: auth.currentUser?.uid,
-        viewerEmail: auth.currentUser?.email,
-        downloadedAt: serverTimestamp(),
-      });
-
       const link = document.createElement("a");
       link.href = fileUrl;
       link.download = fileName;
@@ -200,18 +234,18 @@ export default function ProposalDetail() {
     }
   };
 
-  // Logout handler - redirect based on role
+  const handleSignProposal = () => {
+    // Use the original path from URL - don't re-encode
+    window.open(`/sign/${path}`, '_blank');
+  };
+
   const handleLogout = async () => {
-    const currentUser = auth.currentUser;
     await auth.signOut();
-    
-    if (userRole === 'admin') {
-      // Admin goes to admin login
-      navigate("/login");
-    } else {
-      // Client goes to client login
-      navigate(`/client-login/${path}`);
-    }
+    navigate("/login");
+  };
+
+  const handleGoBack = () => {
+    navigate(-1);
   };
 
   if (checkingAuth || loading) {
@@ -226,40 +260,96 @@ export default function ProposalDetail() {
   if (error) {
     return (
       <div style={errorContainerStyle}>
-        <h2>Error: {error}</h2>
-        <button onClick={() => navigate("/view")} style={buttonStyle}>Back</button>
+        <MdDescription size={64} color="#ef4444" />
+        <h2>Error Loading Proposal</h2>
+        <p>{error}</p>
+        <div style={{ 
+          background: "#f1f5f9", 
+          padding: "15px", 
+          borderRadius: "8px",
+          marginTop: "20px",
+          fontSize: "13px",
+          maxWidth: "500px",
+          wordBreak: "break-all"
+        }}>
+          <strong>Debug Info:</strong><br />
+          Link Path: {path}<br />
+        </div>
+        <button onClick={handleGoBack} style={backButtonStyle}>
+          <MdArrowBack size={18} />
+          Go Back
+        </button>
       </div>
     );
   }
 
   return (
     <div style={containerStyle}>
-      {/* Header with user info and logout */}
       <div style={headerStyle}>
         <div style={headerLeftStyle}>
-          <h2 style={titleStyle}>{fileName}</h2>
-          <p style={userInfoStyle}>
-            Logged in as: {auth.currentUser?.email} 
-            {userRole && <span style={roleBadgeStyle(userRole)}> ({userRole})</span>}
-          </p>
+          <button onClick={handleGoBack} style={backNavButtonStyle}>
+            <MdArrowBack size={18} />
+            Back
+          </button>
+          <div style={titleContainerStyle}>
+            <MdDescription size={24} color="#1976D2" />
+            <h2 style={titleStyle}>{fileName}</h2>
+          </div>
         </div>
+        
+        <div style={userInfoStyle}>
+          <span style={userEmailStyle}>{userEmail}</span>
+          {userRole && (
+            <span style={roleBadgeStyle(userRole)}>
+              {userRole === 'admin' ? 'Admin' : 'Client'}
+            </span>
+          )}
+          {isSigned && (
+            <span style={signedBadgeStyle}>
+              <MdCheckCircle size={14} />
+              Signed
+            </span>
+          )}
+        </div>
+
         <div style={headerRightStyle}>
+          {/* SIGN BUTTON - Only show for clients who haven't signed */}
+          {userRole === 'client' && !isSigned && (
+            <button
+              onClick={handleSignProposal}
+              style={signButtonStyle}
+            >
+              <MdEdit size={18} />
+              Sign This Proposal
+            </button>
+          )}
+          
+          {/* Already signed message */}
+          {userRole === 'client' && isSigned && (
+            <div style={alreadySignedStyle}>
+              <MdCheckCircle size={18} color="#10B981" />
+              <span>Already Signed</span>
+            </div>
+          )}
+          
           <button
             onClick={handleDownload}
             style={downloadButtonStyle}
           >
+            <MdFileUpload size={16} />
             Download
           </button>
+          
           <button
             onClick={handleLogout}
             style={logoutButtonStyle}
           >
+            <MdLogout size={16} />
             Logout
           </button>
         </div>
       </div>
 
-      {/* PDF Viewer */}
       <div style={viewerContainerStyle}>
         <Document
           file={fileUrl}
@@ -276,7 +366,6 @@ export default function ProposalDetail() {
         </Document>
       </div>
 
-      {/* Pagination Controls */}
       <div style={paginationContainerStyle}>
         <button
           onClick={() => setPageNumber(prev => Math.max(prev - 1, 1))}
@@ -299,7 +388,7 @@ export default function ProposalDetail() {
               }
             }}
             style={pageInputStyle}
-          /> of {numPages}
+          /> of {numPages || '?'}
         </span>
 
         <button
@@ -311,7 +400,19 @@ export default function ProposalDetail() {
         </button>
       </div>
 
-      {/* Add spinner animation */}
+      {/* Sticky Sign Button for Mobile */}
+      {userRole === 'client' && !isSigned && (
+        <div style={stickySignButtonStyle}>
+          <button
+            onClick={handleSignProposal}
+            style={stickySignButtonInnerStyle}
+          >
+            <MdEdit size={20} />
+            <span>Sign This Proposal</span>
+          </button>
+        </div>
+      )}
+
       <style>{`
         .spinner {
           width: 40px;
@@ -325,6 +426,11 @@ export default function ProposalDetail() {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
+        @keyframes pulse {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.05); }
+          100% { transform: scale(1); }
+        }
       `}</style>
     </div>
   );
@@ -336,6 +442,9 @@ const containerStyle = {
   maxWidth: "1200px",
   margin: "0 auto",
   fontFamily: "'Inter', sans-serif",
+  minHeight: "100vh",
+  background: "#f8fafc",
+  paddingBottom: "80px",
 };
 
 const headerStyle = {
@@ -343,17 +452,40 @@ const headerStyle = {
   justifyContent: "space-between",
   alignItems: "center",
   marginBottom: "20px",
-  padding: "16px",
+  padding: "16px 20px",
   background: "#fff",
   borderRadius: "12px",
   boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
   border: "1px solid #eee",
+  flexWrap: "wrap",
+  gap: "15px",
 };
 
 const headerLeftStyle = {
   display: "flex",
-  flexDirection: "column",
-  gap: "4px",
+  alignItems: "center",
+  gap: "15px",
+  flexWrap: "wrap",
+};
+
+const backNavButtonStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  padding: "8px 16px",
+  background: "#f1f5f9",
+  border: "1px solid #e2e8f0",
+  borderRadius: "8px",
+  color: "#64748b",
+  fontSize: "14px",
+  cursor: "pointer",
+  transition: "all 0.2s",
+};
+
+const titleContainerStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "10px",
 };
 
 const titleStyle = {
@@ -361,35 +493,94 @@ const titleStyle = {
   fontSize: "18px",
   fontWeight: "600",
   color: "#1a1a2e",
+  maxWidth: "400px",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 };
 
 const userInfoStyle = {
-  margin: 0,
-  fontSize: "13px",
-  color: "#666",
   display: "flex",
   alignItems: "center",
-  gap: "4px",
+  gap: "10px",
+  padding: "8px 16px",
+  background: "#f8fafc",
+  borderRadius: "8px",
+  border: "1px solid #e2e8f0",
+  flexWrap: "wrap",
+};
+
+const userEmailStyle = {
+  fontSize: "14px",
+  color: "#1a1a2e",
+  fontWeight: "500",
 };
 
 const roleBadgeStyle = (role) => ({
   display: "inline-block",
-  padding: "2px 8px",
-  borderRadius: "12px",
-  fontSize: "11px",
+  padding: "4px 10px",
+  borderRadius: "20px",
+  fontSize: "12px",
   fontWeight: "600",
   background: role === 'admin' ? '#e3f2fd' : '#f0fdf4',
   color: role === 'admin' ? '#1976D2' : '#10B981',
-  marginLeft: "4px",
+  border: `1px solid ${role === 'admin' ? '#90caf9' : '#86efac'}`,
 });
+
+const signedBadgeStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "4px",
+  padding: "4px 10px",
+  borderRadius: "20px",
+  fontSize: "12px",
+  fontWeight: "600",
+  background: "#f0fdf4",
+  color: "#10B981",
+  border: "1px solid #86efac",
+};
 
 const headerRightStyle = {
   display: "flex",
   gap: "10px",
+  flexWrap: "wrap",
+};
+
+const signButtonStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "10px 20px",
+  background: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+  border: "none",
+  borderRadius: "8px",
+  color: "#fff",
+  fontSize: "14px",
+  fontWeight: "600",
+  cursor: "pointer",
+  boxShadow: "0 4px 12px rgba(16, 185, 129, 0.3)",
+  transition: "all 0.2s",
+  animation: "pulse 2s infinite",
+};
+
+const alreadySignedStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "10px 20px",
+  background: "#f0fdf4",
+  border: "1px solid #86efac",
+  borderRadius: "8px",
+  color: "#10B981",
+  fontSize: "14px",
+  fontWeight: "500",
 };
 
 const downloadButtonStyle = {
-  padding: "8px 16px",
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "10px 20px",
   background: "#4CAF50",
   color: "#fff",
   border: "none",
@@ -401,7 +592,10 @@ const downloadButtonStyle = {
 };
 
 const logoutButtonStyle = {
-  padding: "8px 16px",
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "10px 20px",
   background: "#f1f5f9",
   color: "#64748b",
   border: "1px solid #e2e8f0",
@@ -416,7 +610,8 @@ const viewerContainerStyle = {
   border: "1px solid #e2e8f0",
   borderRadius: "12px",
   overflow: "auto",
-  height: "70vh",
+  height: "calc(100vh - 300px)",
+  minHeight: "500px",
   background: "#fff",
   boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
   padding: "20px",
@@ -428,6 +623,7 @@ const pdfLoadingStyle = {
   justifyContent: "center",
   height: "100%",
   color: "#666",
+  fontSize: "14px",
 };
 
 const pdfErrorStyle = {
@@ -436,6 +632,7 @@ const pdfErrorStyle = {
   justifyContent: "center",
   height: "100%",
   color: "#c33",
+  fontSize: "14px",
 };
 
 const paginationContainerStyle = {
@@ -449,6 +646,7 @@ const paginationContainerStyle = {
   borderRadius: "12px",
   boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
   border: "1px solid #eee",
+  flexWrap: "wrap",
 };
 
 const paginationButtonStyle = (disabled) => ({
@@ -464,18 +662,53 @@ const paginationButtonStyle = (disabled) => ({
 });
 
 const pageInfoStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
   fontSize: "14px",
   color: "#1a1a2e",
 };
 
 const pageInputStyle = {
   width: "60px",
-  padding: "6px",
+  padding: "8px",
   textAlign: "center",
   border: "1px solid #e2e8f0",
   borderRadius: "6px",
-  margin: "0 8px",
   fontSize: "14px",
+  outline: "none",
+};
+
+const stickySignButtonStyle = {
+  position: "fixed",
+  bottom: 0,
+  left: 0,
+  right: 0,
+  background: "white",
+  padding: "15px 20px",
+  boxShadow: "0 -4px 12px rgba(0,0,0,0.1)",
+  zIndex: 1000,
+  display: "block",
+  '@media (min-width: 768px)': {
+    display: "none",
+  },
+};
+
+const stickySignButtonInnerStyle = {
+  width: "100%",
+  padding: "16px",
+  background: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+  border: "none",
+  borderRadius: "12px",
+  color: "#fff",
+  fontSize: "16px",
+  fontWeight: "600",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "10px",
+  boxShadow: "0 4px 20px rgba(16, 185, 129, 0.4)",
 };
 
 const loadingContainerStyle = {
@@ -500,12 +733,16 @@ const errorContainerStyle = {
   padding: "0 20px",
 };
 
-const buttonStyle = {
-  padding: "10px 24px",
+const backButtonStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "12px 24px",
   background: "#2196F3",
   color: "#fff",
   border: "none",
   borderRadius: "8px",
   fontSize: "14px",
   cursor: "pointer",
+  marginTop: "20px",
 };

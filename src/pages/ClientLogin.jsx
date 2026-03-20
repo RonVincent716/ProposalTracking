@@ -18,7 +18,7 @@ import {
   MdPerson,
   MdDescription
 } from "react-icons/md";
-import { FcGoogle } from "react-icons/fc"; // Replace MdGoogle with FcGoogle
+import { FcGoogle } from "react-icons/fc"; 
 
 export default function ClientLogin() {
   const { path } = useParams();
