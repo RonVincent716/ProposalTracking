@@ -17,9 +17,8 @@ import {
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
-import { MdEdit, MdFileUpload, MdLogout, MdDescription, MdArrowBack, MdCheckCircle } from "react-icons/md";
+import { MdEdit, MdFileUpload, MdLogout, MdDescription, MdArrowBack, MdCheckCircle, MdDashboard } from "react-icons/md";
 
-// Use Vite's import.meta.url to load the worker from node_modules
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url
@@ -49,7 +48,6 @@ export default function ProposalDetail() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
-        // Not logged in, redirect to client login
         const returnUrl = encodeURIComponent(`/p/${path}`);
         navigate(`/client-login?returnTo=${returnUrl}`);
         return;
@@ -83,43 +81,27 @@ export default function ProposalDetail() {
 
   const decodePath = (encodedPath) => {
     try {
-      // First decode
       let decoded = atob(encodedPath);
-      console.log("First decode:", decoded);
-      
-      // Check if it's still base64 (contains only base64 chars)
       const base64Regex = /^[A-Za-z0-9+/=]+$/;
-      
-      // If it looks like base64 and contains 'proposals/' after decoding, we're good
-      if (decoded.includes('proposals/')) {
+      if (base64Regex.test(decoded) && decoded.includes('proposals/')) {
         return decoded;
       }
-      
-      // If it still looks like base64, decode again
       if (base64Regex.test(decoded)) {
         try {
           const secondDecode = atob(decoded);
-          console.log("Second decode:", secondDecode);
           if (secondDecode.includes('proposals/')) {
             return secondDecode;
           }
-        } catch (e) {
-          console.log("Second decode failed, using first decode");
-        }
+        } catch (e) {}
       }
-      
       return decoded;
     } catch (e) {
-      console.error("Error decoding path:", e);
       return encodedPath;
     }
   };
 
   const loadProposal = async (user) => {
     try {
-      console.log("Original path from URL:", path);
-      
-      // Decode the path (handles both single and double encoding)
       const decodedPath = decodePath(path);
       console.log("Final decoded path:", decodedPath);
       
@@ -162,7 +144,7 @@ export default function ProposalDetail() {
       sessionId.current = session.id;
     } catch (err) {
       console.error("Error loading proposal:", err);
-      setError(`Failed to load proposal: ${err.message}`);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -235,8 +217,11 @@ export default function ProposalDetail() {
   };
 
   const handleSignProposal = () => {
-    // Use the original path from URL - don't re-encode
-    window.open(`/sign/${path}`, '_blank');
+    navigate(`/sign/${path}`);
+  };
+
+  const handleGoToDashboard = () => {
+    navigate("/client-dashboard");
   };
 
   const handleLogout = async () => {
@@ -263,18 +248,6 @@ export default function ProposalDetail() {
         <MdDescription size={64} color="#ef4444" />
         <h2>Error Loading Proposal</h2>
         <p>{error}</p>
-        <div style={{ 
-          background: "#f1f5f9", 
-          padding: "15px", 
-          borderRadius: "8px",
-          marginTop: "20px",
-          fontSize: "13px",
-          maxWidth: "500px",
-          wordBreak: "break-all"
-        }}>
-          <strong>Debug Info:</strong><br />
-          Link Path: {path}<br />
-        </div>
         <button onClick={handleGoBack} style={backButtonStyle}>
           <MdArrowBack size={18} />
           Go Back
@@ -293,12 +266,14 @@ export default function ProposalDetail() {
           </button>
           <div style={titleContainerStyle}>
             <MdDescription size={24} color="#1976D2" />
-            <h2 style={titleStyle}>{fileName}</h2>
+            <div>
+              <h2 style={titleStyle}>{fileName}</h2>
+              <p style={userInfoStyle}>{userEmail}</p>
+            </div>
           </div>
         </div>
-        
-        <div style={userInfoStyle}>
-          <span style={userEmailStyle}>{userEmail}</span>
+
+        <div style={userRoleContainerStyle}>
           {userRole && (
             <span style={roleBadgeStyle(userRole)}>
               {userRole === 'admin' ? 'Admin' : 'Client'}
@@ -315,35 +290,26 @@ export default function ProposalDetail() {
         <div style={headerRightStyle}>
           {/* SIGN BUTTON - Only show for clients who haven't signed */}
           {userRole === 'client' && !isSigned && (
-            <button
-              onClick={handleSignProposal}
-              style={signButtonStyle}
-            >
+            <button onClick={handleSignProposal} style={signButtonStyle}>
               <MdEdit size={18} />
               Sign This Proposal
             </button>
           )}
           
-          {/* Already signed message */}
-          {userRole === 'client' && isSigned && (
-            <div style={alreadySignedStyle}>
-              <MdCheckCircle size={18} color="#10B981" />
-              <span>Already Signed</span>
-            </div>
+          {/* GO TO DASHBOARD BUTTON */}
+          {userRole === 'client' && (
+            <button onClick={handleGoToDashboard} style={dashboardButtonStyle}>
+              <MdDashboard size={16} />
+              My Dashboard
+            </button>
           )}
           
-          <button
-            onClick={handleDownload}
-            style={downloadButtonStyle}
-          >
+          <button onClick={handleDownload} style={downloadButtonStyle}>
             <MdFileUpload size={16} />
             Download
           </button>
           
-          <button
-            onClick={handleLogout}
-            style={logoutButtonStyle}
-          >
+          <button onClick={handleLogout} style={logoutButtonStyle}>
             <MdLogout size={16} />
             Logout
           </button>
@@ -400,19 +366,6 @@ export default function ProposalDetail() {
         </button>
       </div>
 
-      {/* Sticky Sign Button for Mobile */}
-      {userRole === 'client' && !isSigned && (
-        <div style={stickySignButtonStyle}>
-          <button
-            onClick={handleSignProposal}
-            style={stickySignButtonInnerStyle}
-          >
-            <MdEdit size={20} />
-            <span>Sign This Proposal</span>
-          </button>
-        </div>
-      )}
-
       <style>{`
         .spinner {
           width: 40px;
@@ -425,11 +378,6 @@ export default function ProposalDetail() {
         @keyframes spin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
-        }
-        @keyframes pulse {
-          0% { transform: scale(1); }
-          50% { transform: scale(1.05); }
-          100% { transform: scale(1); }
         }
       `}</style>
     </div>
@@ -444,7 +392,6 @@ const containerStyle = {
   fontFamily: "'Inter', sans-serif",
   minHeight: "100vh",
   background: "#f8fafc",
-  paddingBottom: "80px",
 };
 
 const headerStyle = {
@@ -479,7 +426,6 @@ const backNavButtonStyle = {
   color: "#64748b",
   fontSize: "14px",
   cursor: "pointer",
-  transition: "all 0.2s",
 };
 
 const titleContainerStyle = {
@@ -493,13 +439,15 @@ const titleStyle = {
   fontSize: "18px",
   fontWeight: "600",
   color: "#1a1a2e",
-  maxWidth: "400px",
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
 };
 
 const userInfoStyle = {
+  margin: "4px 0 0 0",
+  fontSize: "12px",
+  color: "#64748b",
+};
+
+const userRoleContainerStyle = {
   display: "flex",
   alignItems: "center",
   gap: "10px",
@@ -507,13 +455,6 @@ const userInfoStyle = {
   background: "#f8fafc",
   borderRadius: "8px",
   border: "1px solid #e2e8f0",
-  flexWrap: "wrap",
-};
-
-const userEmailStyle = {
-  fontSize: "14px",
-  color: "#1a1a2e",
-  fontWeight: "500",
 };
 
 const roleBadgeStyle = (role) => ({
@@ -550,7 +491,7 @@ const signButtonStyle = {
   display: "flex",
   alignItems: "center",
   gap: "8px",
-  padding: "10px 20px",
+  padding: "8px 16px",
   background: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
   border: "none",
   borderRadius: "8px",
@@ -558,29 +499,28 @@ const signButtonStyle = {
   fontSize: "14px",
   fontWeight: "600",
   cursor: "pointer",
-  boxShadow: "0 4px 12px rgba(16, 185, 129, 0.3)",
-  transition: "all 0.2s",
-  animation: "pulse 2s infinite",
+  boxShadow: "0 2px 8px rgba(16, 185, 129, 0.3)",
 };
 
-const alreadySignedStyle = {
+const dashboardButtonStyle = {
   display: "flex",
   alignItems: "center",
   gap: "8px",
-  padding: "10px 20px",
-  background: "#f0fdf4",
-  border: "1px solid #86efac",
+  padding: "8px 16px",
+  background: "#f1f5f9",
+  border: "1px solid #e2e8f0",
   borderRadius: "8px",
-  color: "#10B981",
+  color: "#64748b",
   fontSize: "14px",
   fontWeight: "500",
+  cursor: "pointer",
 };
 
 const downloadButtonStyle = {
   display: "flex",
   alignItems: "center",
   gap: "8px",
-  padding: "10px 20px",
+  padding: "8px 16px",
   background: "#4CAF50",
   color: "#fff",
   border: "none",
@@ -588,14 +528,13 @@ const downloadButtonStyle = {
   fontSize: "14px",
   fontWeight: "500",
   cursor: "pointer",
-  transition: "all 0.2s",
 };
 
 const logoutButtonStyle = {
   display: "flex",
   alignItems: "center",
   gap: "8px",
-  padding: "10px 20px",
+  padding: "8px 16px",
   background: "#f1f5f9",
   color: "#64748b",
   border: "1px solid #e2e8f0",
@@ -603,14 +542,13 @@ const logoutButtonStyle = {
   fontSize: "14px",
   fontWeight: "500",
   cursor: "pointer",
-  transition: "all 0.2s",
 };
 
 const viewerContainerStyle = {
   border: "1px solid #e2e8f0",
   borderRadius: "12px",
   overflow: "auto",
-  height: "calc(100vh - 300px)",
+  height: "calc(100vh - 280px)",
   minHeight: "500px",
   background: "#fff",
   boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
@@ -658,7 +596,6 @@ const paginationButtonStyle = (disabled) => ({
   fontSize: "14px",
   fontWeight: "500",
   cursor: disabled ? "not-allowed" : "pointer",
-  transition: "all 0.2s",
 });
 
 const pageInfoStyle = {
@@ -677,38 +614,6 @@ const pageInputStyle = {
   borderRadius: "6px",
   fontSize: "14px",
   outline: "none",
-};
-
-const stickySignButtonStyle = {
-  position: "fixed",
-  bottom: 0,
-  left: 0,
-  right: 0,
-  background: "white",
-  padding: "15px 20px",
-  boxShadow: "0 -4px 12px rgba(0,0,0,0.1)",
-  zIndex: 1000,
-  display: "block",
-  '@media (min-width: 768px)': {
-    display: "none",
-  },
-};
-
-const stickySignButtonInnerStyle = {
-  width: "100%",
-  padding: "16px",
-  background: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
-  border: "none",
-  borderRadius: "12px",
-  color: "#fff",
-  fontSize: "16px",
-  fontWeight: "600",
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "10px",
-  boxShadow: "0 4px 20px rgba(16, 185, 129, 0.4)",
 };
 
 const loadingContainerStyle = {
@@ -734,10 +639,7 @@ const errorContainerStyle = {
 };
 
 const backButtonStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  padding: "12px 24px",
+  padding: "10px 24px",
   background: "#2196F3",
   color: "#fff",
   border: "none",

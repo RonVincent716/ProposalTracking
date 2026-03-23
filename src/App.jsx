@@ -10,10 +10,10 @@ import Signup from "./pages/Signup";
 import ProposalSigning from "./pages/ProposalSigning";
 import ThankYou from "./pages/ThankYou";
 import ClientLogin from "./pages/ClientLogin"; // Add this import
-
-
+import ClientDashboard from "./Components/ClientDashboard"; // Add this import
+import SmartProposalViewer from "./Components/SmartProposalViewer"; // Add this import
 import ProtectedRoute from "./Components/ProtectedRoute";
-
+import SignedProposalDetail from "./Components/SignedProposalDetail"; // Add this import
 function App() {
   return (
     <BrowserRouter>
@@ -61,10 +61,13 @@ function App() {
        
         <Route path="/client-login/:path" element={<ClientLogin />} />
         <Route path="/client-login" element={<ClientLogin />} />
+          <Route path="/client-dashboard" element={<ClientDashboard />} />
         
         {/* Signing Routes */}
+         <Route path="/p/:encodedPath" element={<SmartProposalViewer />} />
         <Route path="/sign/:proposalId" element={<ProposalSigning />} />
         <Route path="/thank-you" element={<ThankYou />} />
+        <Route path="/signed/:signingId" element={<SignedProposalDetail />} />
 
         {/* 404 */}
         <Route path="*" element={<div>404 - Page Not Found</div>} />

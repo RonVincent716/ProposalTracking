@@ -6,10 +6,9 @@ import {
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
   GoogleAuthProvider,
-  signInWithPopup,
-  updateProfile
+  signInWithPopup
 } from "firebase/auth";
-import { doc, setDoc, getDoc, serverTimestamp, updateDoc, query, collection, where, getDocs } from "firebase/firestore";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 import { 
   MdEmail, 
   MdLock, 
@@ -17,12 +16,9 @@ import {
   MdVisibilityOff,
   MdArrowBack,
   MdPerson,
-  MdDescription,
-  MdCheckCircle,
-  MdWarning,
-  MdDashboard
+  MdDescription
 } from "react-icons/md";
-import { FcGoogle } from "react-icons/fc";
+import { FcGoogle } from "react-icons/fc"; 
 
 export default function ClientLogin() {
   const { path } = useParams();
@@ -41,29 +37,17 @@ export default function ClientLogin() {
   const [showReset, setShowReset] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   const [proposalInfo, setProposalInfo] = useState(null);
-  const [redirectTo, setRedirectTo] = useState("/client-dashboard");
 
+  // Get the return URL from query params or use the encoded path
   const params = new URLSearchParams(location.search);
-  const returnTo = params.get("returnTo");
+  const returnTo = params.get("returnTo") || (path ? `/p/${path}` : "/");
 
   useEffect(() => {
-    // Determine redirect destination
-    if (returnTo) {
-      setRedirectTo(returnTo);
-    } else if (path) {
-      setRedirectTo(`/p/${path}`);
-    } else {
-      setRedirectTo("/client-dashboard");
-    }
-
     // Check if user is already logged in
-    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+    const unsubscribe = auth.onAuthStateChanged((user) => {
       if (user) {
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        if (userDoc.exists() && userDoc.data().role === "client") {
-          // User is a client, redirect to the intended destination
-          navigate(redirectTo);
-        }
+        // User is logged in, redirect to proposal
+        navigate(returnTo);
       }
     });
 
@@ -82,7 +66,7 @@ export default function ClientLogin() {
     }
 
     return () => unsubscribe();
-  }, [path, navigate, returnTo, redirectTo]);
+  }, [path, navigate, returnTo]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -92,38 +76,15 @@ export default function ClientLogin() {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       
+      // Check if this is a client account
       const userDoc = await getDoc(doc(db, "users", userCredential.user.uid));
-      
-      if (userDoc.exists()) {
-        const userRole = userDoc.data().role;
-        
-        if (userRole === "client") {
-          await updateDoc(doc(db, "users", userCredential.user.uid), {
-            lastLogin: serverTimestamp()
-          });
-          
-          // After login, redirect to the intended destination (proposal or dashboard)
-          navigate(redirectTo);
-        } else if (userRole === "admin") {
-          await auth.signOut();
-          setError("This is an admin account. Please use the admin login page.");
-        } else {
-          await updateDoc(doc(db, "users", userCredential.user.uid), {
-            role: "client",
-            lastLogin: serverTimestamp()
-          });
-          navigate(redirectTo);
-        }
+      if (userDoc.exists() && userDoc.data().role === "client") {
+        // Valid client, redirect to proposal
+        navigate(returnTo);
       } else {
-        // Create user document for existing auth user
-        await setDoc(doc(db, "users", userCredential.user.uid), {
-          email: userCredential.user.email,
-          name: userCredential.user.displayName || email.split('@')[0],
-          role: "client",
-          createdAt: serverTimestamp(),
-          lastLogin: serverTimestamp()
-        });
-        navigate(redirectTo);
+        // This is an admin account, show error
+        await auth.signOut();
+        setError("This account is not authorized to view proposals. Please use a client account or sign up as a client.");
       }
     } catch (error) {
       console.error("Login error:", error);
@@ -153,50 +114,35 @@ export default function ClientLogin() {
     setError("");
     setLoading(true);
 
-    if (!name.trim()) {
-      setError("Please enter your full name");
-      setLoading(false);
-      return;
-    }
-
+    // Validate passwords match
     if (password !== confirmPassword) {
       setError("Passwords do not match");
       setLoading(false);
       return;
     }
 
+    // Validate password strength
     if (password.length < 6) {
       setError("Password must be at least 6 characters");
       setLoading(false);
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      setError("Please enter a valid email address");
-      setLoading(false);
-      return;
-    }
-
     try {
+      // Create user account
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       
-      await updateProfile(userCredential.user, {
-        displayName: name
-      });
-      
-      // Create user document with client role
+      // Store additional user info in Firestore with role = "client"
       await setDoc(doc(db, "users", userCredential.user.uid), {
         name: name,
         email: email,
         role: "client",
-        createdAt: serverTimestamp(),
-        lastLogin: serverTimestamp(),
-        emailVerified: userCredential.user.emailVerified
+        createdAt: new Date().toISOString(),
+        lastLogin: new Date().toISOString()
       });
 
-      // After signup, redirect to the intended destination
-      navigate(redirectTo);
+      // Redirect to proposal
+      navigate(returnTo);
     } catch (error) {
       console.error("Signup error:", error);
       switch (error.code) {
@@ -223,44 +169,33 @@ export default function ClientLogin() {
 
     try {
       const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({
-        prompt: 'select_account'
-      });
-      
       const result = await signInWithPopup(auth, provider);
       
+      // Check if user exists in Firestore, if not create with client role
       const userDoc = await getDoc(doc(db, "users", result.user.uid));
       
       if (!userDoc.exists()) {
+        // New user - create with client role
         await setDoc(doc(db, "users", result.user.uid), {
-          name: result.user.displayName || result.user.email.split('@')[0],
+          name: result.user.displayName || "Client",
           email: result.user.email,
           role: "client",
-          createdAt: serverTimestamp(),
-          lastLogin: serverTimestamp(),
-          photoURL: result.user.photoURL
+          createdAt: new Date().toISOString(),
+          lastLogin: new Date().toISOString()
         });
-      } else if (userDoc.data().role === "admin") {
+      } else if (userDoc.data().role !== "client") {
+        // Existing user but not a client
         await auth.signOut();
-        setError("This Google account is linked to an admin account. Please use the admin login.");
+        setError("This account is not authorized to view proposals.");
         setLoading(false);
         return;
-      } else {
-        await updateDoc(doc(db, "users", result.user.uid), {
-          lastLogin: serverTimestamp()
-        });
       }
 
-      navigate(redirectTo);
+      // Redirect to proposal
+      navigate(returnTo);
     } catch (error) {
       console.error("Google sign-in error:", error);
-      if (error.code === 'auth/popup-closed-by-user') {
-        setError("Sign-in cancelled. Please try again.");
-      } else if (error.code === 'auth/popup-blocked') {
-        setError("Pop-up was blocked. Please allow pop-ups for this site.");
-      } else {
-        setError("Failed to sign in with Google. Please try again.");
-      }
+      setError("Failed to sign in with Google. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -271,17 +206,8 @@ export default function ClientLogin() {
     setError("");
     setLoading(true);
 
-    if (!resetEmail) {
-      setError("Please enter your email address");
-      setLoading(false);
-      return;
-    }
-
     try {
-      await sendPasswordResetEmail(auth, resetEmail, {
-        url: `${window.location.origin}/client-login`,
-        handleCodeInApp: false
-      });
+      await sendPasswordResetEmail(auth, resetEmail);
       setResetSent(true);
       setTimeout(() => {
         setShowReset(false);
@@ -290,11 +216,7 @@ export default function ClientLogin() {
       }, 3000);
     } catch (error) {
       console.error("Password reset error:", error);
-      if (error.code === 'auth/user-not-found') {
-        setError("No account found with this email address.");
-      } else {
-        setError("Failed to send reset email. Please try again.");
-      }
+      setError("Failed to send reset email. Please check the email address.");
     } finally {
       setLoading(false);
     }
@@ -302,54 +224,56 @@ export default function ClientLogin() {
 
   return (
     <div style={containerStyle}>
+      {/* Background Decoration */}
       <div style={backgroundStyle}></div>
-      <div style={backgroundOverlayStyle}></div>
       
+      {/* Main Card */}
       <div style={cardStyle}>
+        {/* Header with Back Button */}
         <div style={headerStyle}>
           <button onClick={() => navigate(-1)} style={backButtonStyle}>
             <MdArrowBack size={20} />
             Back
           </button>
           <div style={logoStyle}>
-            <MdDashboard size={28} color="#00D4FF" />
-            <span style={logoTextStyle}>Client Portal</span>
+            <MdDescription size={28} color="#00D4FF" />
+            <span style={logoTextStyle}>Proposal Access</span>
           </div>
         </div>
 
+        {/* Proposal Info */}
         {proposalInfo && (
           <div style={proposalInfoStyle}>
-            <MdDescription size={20} color="#00D4FF" />
-            <div style={proposalInfoContentStyle}>
-              <span style={proposalInfoLabel}>Accessing Proposal:</span>
-              <span style={proposalNameStyle}>{proposalInfo.name}</span>
-            </div>
+            <MdDescription size={16} color="#00D4FF" />
+            <span style={proposalNameStyle}>{proposalInfo.name}</span>
           </div>
         )}
 
+        {/* Title */}
         <h2 style={titleStyle}>
           {isLogin ? "Welcome Back" : "Create Account"}
         </h2>
         <p style={subtitleStyle}>
           {isLogin 
-            ? "Sign in to access your proposals" 
-            : "Sign up to start reviewing proposals"}
+            ? "Sign in to view the proposal" 
+            : "Sign up to access the proposal"}
         </p>
 
+        {/* Error Message */}
         {error && (
           <div style={errorStyle}>
-            <MdWarning size={18} />
-            <span>{error}</span>
+            {error}
           </div>
         )}
 
+        {/* Reset Success Message */}
         {resetSent && (
           <div style={successStyle}>
-            <MdCheckCircle size={18} />
-            <span>Password reset email sent! Check your inbox.</span>
+            Password reset email sent! Check your inbox.
           </div>
         )}
 
+        {/* Reset Password Form */}
         {showReset ? (
           <form onSubmit={handlePasswordReset} style={formStyle}>
             <div style={inputGroupStyle}>
@@ -361,7 +285,6 @@ export default function ClientLogin() {
                 onChange={(e) => setResetEmail(e.target.value)}
                 style={inputStyle}
                 required
-                autoFocus
               />
             </div>
 
@@ -383,6 +306,7 @@ export default function ClientLogin() {
             </div>
           </form>
         ) : (
+          /* Login/Signup Form */
           <form onSubmit={isLogin ? handleLogin : handleSignUp} style={formStyle}>
             {!isLogin && (
               <div style={inputGroupStyle}>
@@ -393,7 +317,7 @@ export default function ClientLogin() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   style={inputStyle}
-                  required
+                  required={!isLogin}
                 />
               </div>
             )}
@@ -407,7 +331,6 @@ export default function ClientLogin() {
                 onChange={(e) => setEmail(e.target.value)}
                 style={inputStyle}
                 required
-                autoFocus={isLogin}
               />
             </div>
 
@@ -439,7 +362,7 @@ export default function ClientLogin() {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   style={inputStyle}
-                  required
+                  required={!isLogin}
                 />
               </div>
             )}
@@ -464,10 +387,11 @@ export default function ClientLogin() {
           </form>
         )}
 
+        {/* Google Sign In Button */}
         {!showReset && (
           <>
             <div style={dividerStyle}>
-              <span style={dividerTextStyle}>or continue with</span>
+              <span style={dividerTextStyle}>or</span>
             </div>
 
             <button
@@ -475,12 +399,13 @@ export default function ClientLogin() {
               disabled={loading}
               style={googleButtonStyle(loading)}
             >
-              <FcGoogle size={22} />
+              <FcGoogle size={20} /> {/* Changed from MdGoogle to FcGoogle */}
               Continue with Google
             </button>
           </>
         )}
 
+        {/* Toggle Login/Signup */}
         {!showReset && (
           <div style={toggleContainerStyle}>
             <span style={toggleTextStyle}>
@@ -494,7 +419,6 @@ export default function ClientLogin() {
                 setPassword("");
                 setConfirmPassword("");
                 setName("");
-                setShowReset(false);
               }}
               style={toggleButtonStyle}
             >
@@ -503,23 +427,7 @@ export default function ClientLogin() {
           </div>
         )}
 
-        {!showReset && (
-          <div style={featuresStyle}>
-            <div style={featureItemStyle}>
-              <MdCheckCircle size={14} color="#10B981" />
-              <span>Access all your proposals in one place</span>
-            </div>
-            <div style={featureItemStyle}>
-              <MdCheckCircle size={14} color="#10B981" />
-              <span>Review and sign documents electronically</span>
-            </div>
-            <div style={featureItemStyle}>
-              <MdCheckCircle size={14} color="#10B981" />
-              <span>Track proposal status in real-time</span>
-            </div>
-          </div>
-        )}
-
+        {/* Terms and Privacy */}
         <p style={termsStyle}>
           By continuing, you agree to our{" "}
           <a href="/terms" style={linkStyle}>Terms of Service</a>{" "}
@@ -527,24 +435,6 @@ export default function ClientLogin() {
           <a href="/privacy" style={linkStyle}>Privacy Policy</a>
         </p>
       </div>
-
-      <style>{`
-        @keyframes float {
-          0% { transform: translate(0, 0); }
-          50% { transform: translate(20px, 20px); }
-          100% { transform: translate(0, 0); }
-        }
-        @keyframes slideUp {
-          from {
-            opacity: 0;
-            transform: translateY(30px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-      `}</style>
     </div>
   );
 }
@@ -557,7 +447,7 @@ const containerStyle = {
   justifyContent: "center",
   background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
   padding: "20px",
-  fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+  fontFamily: "'Inter', sans-serif",
   position: "relative",
   overflow: "hidden",
 };
@@ -568,33 +458,22 @@ const backgroundStyle = {
   right: "-50%",
   bottom: "-50%",
   left: "-50%",
-  background: "radial-gradient(circle at center, rgba(255,255,255,0.1) 0%, transparent 70%)",
-  animation: "float 20s ease-in-out infinite",
-  pointerEvents: "none",
-};
-
-const backgroundOverlayStyle = {
-  position: "absolute",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  background: "radial-gradient(circle at 20% 80%, rgba(102, 126, 234, 0.3) 0%, transparent 50%)",
-  pointerEvents: "none",
+  background: "radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%)",
+  animation: "rotate 20s linear infinite",
 };
 
 const cardStyle = {
-  background: "rgba(255, 255, 255, 0.98)",
+  background: "rgba(255, 255, 255, 0.95)",
   backdropFilter: "blur(10px)",
-  borderRadius: "32px",
+  borderRadius: "24px",
   padding: "40px",
-  maxWidth: "480px",
+  maxWidth: "450px",
   width: "100%",
-  boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-  border: "1px solid rgba(255, 255, 255, 0.2)",
+  boxShadow: "0 25px 50px rgba(0,0,0,0.3)",
+  border: "1px solid rgba(255,255,255,0.2)",
   position: "relative",
   zIndex: 10,
-  animation: "slideUp 0.6s cubic-bezier(0.4, 0, 0.2, 1)",
+  animation: "slideUp 0.5s ease",
 };
 
 const headerStyle = {
@@ -609,12 +488,11 @@ const backButtonStyle = {
   alignItems: "center",
   gap: "8px",
   padding: "8px 16px",
-  background: "rgba(0, 0, 0, 0.05)",
-  border: "1px solid rgba(0, 0, 0, 0.08)",
-  borderRadius: "10px",
-  color: "#475569",
+  background: "rgba(0,0,0,0.05)",
+  border: "1px solid rgba(0,0,0,0.1)",
+  borderRadius: "8px",
+  color: "#666",
   fontSize: "14px",
-  fontWeight: "500",
   cursor: "pointer",
   transition: "all 0.2s",
 };
@@ -636,98 +514,78 @@ const logoTextStyle = {
 const proposalInfoStyle = {
   display: "flex",
   alignItems: "center",
-  gap: "12px",
+  gap: "10px",
   padding: "12px 16px",
-  background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)",
+  background: "#f8fafc",
   borderRadius: "12px",
-  marginBottom: "25px",
+  marginBottom: "20px",
   border: "1px solid #e2e8f0",
-};
-
-const proposalInfoContentStyle = {
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
-  gap: "2px",
-};
-
-const proposalInfoLabel = {
-  fontSize: "11px",
-  color: "#64748b",
-  textTransform: "uppercase",
-  letterSpacing: "0.5px",
 };
 
 const proposalNameStyle = {
   fontSize: "14px",
-  fontWeight: "500",
   color: "#1a1a2e",
-  wordBreak: "break-all",
+  fontWeight: "500",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 };
 
 const titleStyle = {
-  fontSize: "32px",
+  fontSize: "28px",
   fontWeight: "700",
   color: "#1a1a2e",
-  margin: "0 0 8px 0",
-  letterSpacing: "-0.5px",
+  margin: "0 0 10px 0",
 };
 
 const subtitleStyle = {
   fontSize: "15px",
-  color: "#64748b",
+  color: "#666",
   margin: "0 0 30px 0",
-  lineHeight: "1.5",
 };
 
 const errorStyle = {
-  background: "#FEF2F2",
-  color: "#DC2626",
+  background: "#fee",
+  color: "#c33",
   padding: "12px 16px",
-  borderRadius: "12px",
+  borderRadius: "8px",
   fontSize: "14px",
   marginBottom: "20px",
-  border: "1px solid #FECACA",
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
+  border: "1px solid #fcc",
 };
 
 const successStyle = {
-  background: "#F0FDF4",
-  color: "#10B981",
+  background: "#e8f5e9",
+  color: "#2e7d32",
   padding: "12px 16px",
-  borderRadius: "12px",
+  borderRadius: "8px",
   fontSize: "14px",
   marginBottom: "20px",
-  border: "1px solid #86EFAC",
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
+  border: "1px solid #a5d6a7",
 };
 
 const formStyle = {
-  marginBottom: "24px",
+  marginBottom: "20px",
 };
 
 const inputGroupStyle = {
   position: "relative",
-  marginBottom: "16px",
+  marginBottom: "15px",
   display: "flex",
   alignItems: "center",
 };
 
 const inputIconStyle = {
   position: "absolute",
-  left: "14px",
+  left: "12px",
   zIndex: 1,
 };
 
 const inputStyle = {
   width: "100%",
-  padding: "14px 14px 14px 46px",
+  padding: "14px 14px 14px 42px",
   border: "1px solid #e2e8f0",
-  borderRadius: "12px",
+  borderRadius: "10px",
   fontSize: "15px",
   outline: "none",
   transition: "all 0.2s",
@@ -736,11 +594,11 @@ const inputStyle = {
 
 const passwordToggleStyle = {
   position: "absolute",
-  right: "14px",
+  right: "12px",
   background: "none",
   border: "none",
   cursor: "pointer",
-  color: "#94a3b8",
+  color: "#666",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -751,7 +609,7 @@ const forgotPasswordStyle = {
   background: "none",
   border: "none",
   color: "#667eea",
-  fontSize: "13px",
+  fontSize: "14px",
   cursor: "pointer",
   textAlign: "right",
   width: "100%",
@@ -761,9 +619,9 @@ const forgotPasswordStyle = {
 const submitButtonStyle = (disabled) => ({
   width: "100%",
   padding: "14px",
-  background: disabled ? "#cbd5e1" : "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+  background: disabled ? "#a0aec0" : "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
   border: "none",
-  borderRadius: "12px",
+  borderRadius: "10px",
   color: "#fff",
   fontSize: "16px",
   fontWeight: "600",
@@ -781,14 +639,13 @@ const buttonGroupStyle = {
 const primaryButtonStyle = (disabled) => ({
   flex: 2,
   padding: "12px",
-  background: disabled ? "#cbd5e1" : "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+  background: disabled ? "#a0aec0" : "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
   border: "none",
-  borderRadius: "10px",
+  borderRadius: "8px",
   color: "#fff",
   fontSize: "14px",
   fontWeight: "600",
   cursor: disabled ? "not-allowed" : "pointer",
-  transition: "all 0.2s",
 });
 
 const secondaryButtonStyle = {
@@ -796,25 +653,24 @@ const secondaryButtonStyle = {
   padding: "12px",
   background: "#f1f5f9",
   border: "1px solid #e2e8f0",
-  borderRadius: "10px",
+  borderRadius: "8px",
   color: "#64748b",
   fontSize: "14px",
   fontWeight: "600",
   cursor: "pointer",
-  transition: "all 0.2s",
 };
 
 const dividerStyle = {
   position: "relative",
   textAlign: "center",
-  margin: "24px 0 20px",
+  margin: "20px 0",
 };
 
 const dividerTextStyle = {
   background: "#fff",
-  padding: "0 12px",
-  color: "#94a3b8",
-  fontSize: "13px",
+  padding: "0 10px",
+  color: "#999",
+  fontSize: "14px",
   position: "relative",
   zIndex: 1,
 };
@@ -824,7 +680,7 @@ const googleButtonStyle = (disabled) => ({
   padding: "12px",
   background: "#fff",
   border: "1px solid #e2e8f0",
-  borderRadius: "12px",
+  borderRadius: "10px",
   color: "#1a1a2e",
   fontSize: "15px",
   fontWeight: "500",
@@ -832,18 +688,18 @@ const googleButtonStyle = (disabled) => ({
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  gap: "12px",
+  gap: "10px",
   transition: "all 0.2s",
   opacity: disabled ? 0.6 : 1,
 });
 
 const toggleContainerStyle = {
-  marginTop: "24px",
+  marginTop: "20px",
   textAlign: "center",
 };
 
 const toggleTextStyle = {
-  color: "#64748b",
+  color: "#666",
   fontSize: "14px",
 };
 
@@ -857,29 +713,11 @@ const toggleButtonStyle = {
   marginLeft: "5px",
 };
 
-const featuresStyle = {
-  marginTop: "24px",
-  padding: "20px",
-  background: "#f8fafc",
-  borderRadius: "16px",
-  border: "1px solid #e2e8f0",
-};
-
-const featureItemStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "10px",
-  marginBottom: "12px",
-  fontSize: "13px",
-  color: "#475569",
-};
-
 const termsStyle = {
-  marginTop: "24px",
+  marginTop: "30px",
   fontSize: "12px",
-  color: "#94a3b8",
+  color: "#999",
   textAlign: "center",
-  lineHeight: "1.5",
 };
 
 const linkStyle = {
