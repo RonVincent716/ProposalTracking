@@ -10,7 +10,6 @@ import {
   doc,
   getDoc,
   updateDoc,
-  serverTimestamp,
   orderBy,
   limit
 } from "firebase/firestore";
@@ -23,15 +22,6 @@ import {
   MdCheckCircle,
   MdSchedule,
   MdPerson,
-  MdEmail,
-  MdPictureAsPdf,
-  MdEdit,
-  MdDashboard,
-  MdSearch,
-  MdFilterList,
-  MdHistory,
-  MdOpenInNew,
-  MdRefresh,
   MdInsertDriveFile,
   MdAccessTime,
   MdVerified,
@@ -40,7 +30,17 @@ import {
   MdFolder,
   MdMenu,
   MdChevronLeft,
-  MdChevronRight
+  MdChevronRight,
+  MdClose,
+  MdWarning,
+  MdRefresh,
+  MdHistory,
+  MdOpenInNew,
+  MdPictureAsPdf,
+  MdEdit,
+  MdExitToApp,
+  MdSearch,
+  MdFilterList
 } from "react-icons/md";
 import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
 
@@ -56,6 +56,9 @@ export default function ClientDashboard() {
   const [viewMode, setViewMode] = useState("grid");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [signedProposalsData, setSignedProposalsData] = useState({});
   const [stats, setStats] = useState({
     total: 0,
     viewed: 0,
@@ -80,11 +83,16 @@ export default function ClientDashboard() {
         }
 
         setCurrentUser(user);
-        await loadClientProposals(user);
-        await loadRecentlyViewed(user);
+        await Promise.all([
+          loadClientProposals(user),
+          loadRecentlyViewed(user),
+          loadSignedProposalsData(user)
+        ]);
       } catch (error) {
         console.error("Error checking user:", error);
         navigate("/client-login");
+      } finally {
+        setLoading(false);
       }
     });
 
@@ -95,8 +103,11 @@ export default function ClientDashboard() {
     if (!currentUser) return;
     setRefreshing(true);
     try {
-      await loadClientProposals(currentUser);
-      await loadRecentlyViewed(currentUser);
+      await Promise.all([
+        loadClientProposals(currentUser),
+        loadRecentlyViewed(currentUser),
+        loadSignedProposalsData(currentUser)
+      ]);
     } catch (error) {
       console.error("Error refreshing dashboard:", error);
     } finally {
@@ -104,12 +115,31 @@ export default function ClientDashboard() {
     }
   };
 
+  const loadSignedProposalsData = async (user) => {
+    try {
+      const signedQuery = query(
+        collection(db, "signedProposals"),
+        where("signerEmail", "==", user.email)
+      );
+      const signedSnapshot = await getDocs(signedQuery);
+      const signedData = {};
+      signedSnapshot.forEach(doc => {
+        const data = doc.data();
+        signedData[data.proposalPath] = {
+          id: doc.id,
+          signedAt: data.signedAt,
+          signedBy: data.signedBy,
+          signature: data.signature
+        };
+      });
+      setSignedProposalsData(signedData);
+    } catch (error) {
+      console.error("Error loading signed proposals data:", error);
+    }
+  };
+
   const loadClientProposals = async (user) => {
     try {
-      setLoading(true);
-      
-      console.log("Loading proposals for:", user.email);
-      
       const proposalsQuery = query(
         collection(db, "sharedProposals"),
         where("clientEmail", "==", user.email)
@@ -124,12 +154,9 @@ export default function ClientDashboard() {
 
       for (const documentSnapshot of querySnapshot.docs) {
         const data = documentSnapshot.data();
-        
-        // Read status directly from sharedProposals
         const proposalStatus = data.status || "pending";
         const isSigned = proposalStatus === "signed";
         
-        // Check if viewed
         let hasViewed = false;
         try {
           const viewsQuery = query(
@@ -143,7 +170,6 @@ export default function ClientDashboard() {
           console.error("Error checking views:", error);
         }
         
-        // Update counts
         if (isSigned) {
           signedCount++;
         } else if (hasViewed) {
@@ -187,8 +213,6 @@ export default function ClientDashboard() {
       
     } catch (error) {
       console.error("Error loading proposals:", error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -239,7 +263,17 @@ export default function ClientDashboard() {
 
   const handleViewProposal = (proposal) => {
     const encodedPath = btoa(proposal.filePath);
-    window.open(`/p/${encodedPath}`, '_blank');
+    
+    if (proposal.status === "signed") {
+      const signedData = signedProposalsData[proposal.filePath];
+      if (signedData && signedData.id) {
+        navigate(`/signed/${signedData.id}`);
+      } else {
+        window.open(`/p/${encodedPath}`, '_blank');
+      }
+    } else {
+      window.open(`/p/${encodedPath}`, '_blank');
+    }
   };
 
   const handleSignProposal = (proposal) => {
@@ -258,9 +292,26 @@ export default function ClientDashboard() {
     }
   };
 
+  const openLogoutModal = () => {
+    setShowLogoutModal(true);
+  };
+
+  const closeLogoutModal = () => {
+    setShowLogoutModal(false);
+  };
+
   const handleLogout = async () => {
-    await auth.signOut();
-    navigate("/client-login");
+    setIsLoggingOut(true);
+    try {
+      await signOut(auth);
+      navigate("/client-login");
+    } catch (error) {
+      console.error("Logout error:", error);
+      alert("Failed to logout. Please try again.");
+    } finally {
+      setIsLoggingOut(false);
+      setShowLogoutModal(false);
+    }
   };
 
   const filteredProposals = proposals.filter(proposal => {
@@ -318,7 +369,7 @@ export default function ClientDashboard() {
                   </div>
                   <ProposalStatusBadge status={proposal.status} size="small" />
                   <button onClick={() => handleViewProposal(proposal)} style={recentProposalButtonStyle}>
-                    View
+                    {proposal.status === "signed" ? "View Signed" : "View"}
                   </button>
                 </div>
               ))}
@@ -428,7 +479,7 @@ export default function ClientDashboard() {
                 style={viewModeButtonStyle(viewMode === "grid")}
                 title="Grid View"
               >
-                <MdDashboard size={18} />
+                <MdSpaceDashboard size={18} />
               </button>
               <button
                 onClick={() => setViewMode("list")}
@@ -471,17 +522,19 @@ export default function ClientDashboard() {
         ) : viewMode === "grid" ? (
           <ProposalsGrid 
             proposals={filteredProposals} 
-            handleViewProposal={handleViewProposal} 
-            handleSignProposal={handleSignProposal} 
+            handleViewProposal={handleViewProposal}
+            handleSignProposal={handleSignProposal}
             handleDownload={handleDownload} 
-            getDaysLeft={getDaysLeft} 
+            getDaysLeft={getDaysLeft}
+            signedProposalsData={signedProposalsData}
           />
         ) : (
           <ProposalsList 
             proposals={filteredProposals} 
-            handleViewProposal={handleViewProposal} 
-            handleSignProposal={handleSignProposal} 
-            handleDownload={handleDownload} 
+            handleViewProposal={handleViewProposal}
+            handleSignProposal={handleSignProposal}
+            handleDownload={handleDownload}
+            signedProposalsData={signedProposalsData}
           />
         )}
       </>
@@ -499,6 +552,42 @@ export default function ClientDashboard() {
 
   return (
     <div style={containerStyle}>
+      {/* Logout Confirmation Modal */}
+      {showLogoutModal && (
+        <div style={modalOverlayStyle} onClick={closeLogoutModal}>
+          <div style={modalContainerStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={modalHeaderStyle}>
+              <div style={modalIconStyle}>
+                <MdExitToApp size={32} color="#ef4444" />
+              </div>
+              <button onClick={closeLogoutModal} style={modalCloseButtonStyle}>
+                <MdClose size={20} />
+              </button>
+            </div>
+            <h3 style={modalTitleStyle}>Confirm Logout</h3>
+            <p style={modalMessageStyle}>
+              Are you sure you want to logout? You will need to sign in again to access your proposals.
+            </p>
+            <div style={modalButtonGroupStyle}>
+              <button 
+                onClick={closeLogoutModal} 
+                style={modalCancelButtonStyle}
+                disabled={isLoggingOut}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleLogout} 
+                style={modalConfirmButtonStyle(isLoggingOut)}
+                disabled={isLoggingOut}
+              >
+                {isLoggingOut ? "Logging out..." : "Yes, Logout"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {mobileMenuOpen && (
         <div style={mobileOverlayStyle} onClick={() => setMobileMenuOpen(false)} />
       )}
@@ -557,7 +646,7 @@ export default function ClientDashboard() {
           </nav>
 
           <div style={bottomActionsStyle}>
-            <button onClick={handleLogout} style={logoutNavStyle}>
+            <button onClick={openLogoutModal} style={logoutNavStyle}>
               <MdLogout size={20} />
               {!sidebarCollapsed && <span>Logout</span>}
             </button>
@@ -637,12 +726,127 @@ export default function ClientDashboard() {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes slideUp {
+          from {
+            transform: translateY(20px);
+            opacity: 0;
+          }
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
       `}</style>
     </div>
   );
 }
 
-// Sub-components (keep all the same as before)
+// Modal Styles
+const modalOverlayStyle = {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  backgroundColor: "rgba(0, 0, 0, 0.6)",
+  backdropFilter: "blur(4px)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 1000,
+  animation: "fadeIn 0.2s ease",
+};
+
+const modalContainerStyle = {
+  backgroundColor: "#fff",
+  borderRadius: "20px",
+  width: "90%",
+  maxWidth: "420px",
+  padding: "28px",
+  boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+  animation: "slideUp 0.3s ease",
+};
+
+const modalHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  marginBottom: "20px",
+};
+
+const modalIconStyle = {
+  width: "56px",
+  height: "56px",
+  borderRadius: "28px",
+  background: "#fee2e2",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const modalCloseButtonStyle = {
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  color: "#94a3b8",
+  padding: "8px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: "8px",
+  transition: "all 0.2s",
+};
+
+const modalTitleStyle = {
+  fontSize: "22px",
+  fontWeight: "600",
+  color: "#1e293b",
+  marginBottom: "12px",
+};
+
+const modalMessageStyle = {
+  fontSize: "15px",
+  color: "#64748b",
+  marginBottom: "28px",
+  lineHeight: "1.5",
+};
+
+const modalButtonGroupStyle = {
+  display: "flex",
+  gap: "12px",
+};
+
+const modalCancelButtonStyle = {
+  flex: 1,
+  padding: "12px 16px",
+  background: "#f1f5f9",
+  border: "1px solid #e2e8f0",
+  borderRadius: "12px",
+  color: "#64748b",
+  fontSize: "14px",
+  fontWeight: "500",
+  cursor: "pointer",
+  transition: "all 0.2s",
+};
+
+const modalConfirmButtonStyle = (disabled) => ({
+  flex: 1,
+  padding: "12px 16px",
+  background: disabled ? "#cbd5e1" : "#ef4444",
+  border: "none",
+  borderRadius: "12px",
+  color: "#fff",
+  fontSize: "14px",
+  fontWeight: "500",
+  cursor: disabled ? "not-allowed" : "pointer",
+  transition: "all 0.2s",
+});
+
+// StatCard Component
 const StatCard = ({ icon, color, value, label, trend }) => (
   <div style={statCardStyle}>
     <div style={statIconContainerStyle(color)}>{icon}</div>
@@ -654,6 +858,7 @@ const StatCard = ({ icon, color, value, label, trend }) => (
   </div>
 );
 
+// EmptyState Component
 const EmptyState = ({ icon, title, message }) => (
   <div style={emptyStateStyle}>
     <div style={emptyStateIconStyle}>{icon}</div>
@@ -662,11 +867,13 @@ const EmptyState = ({ icon, title, message }) => (
   </div>
 );
 
-const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, handleDownload, getDaysLeft }) => (
+// ProposalsGrid Component
+const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, handleDownload, getDaysLeft, signedProposalsData }) => (
   <div style={proposalsGridStyle}>
     {proposals.map((proposal, index) => {
       const daysLeft = getDaysLeft(proposal.expiresAt);
       const isExpiring = daysLeft !== null && daysLeft <= 3 && daysLeft > 0;
+      const isSigned = proposal.status === "signed";
       
       return (
         <div key={proposal.id || index} style={proposalCardStyle}>
@@ -675,7 +882,11 @@ const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, hand
           </div>
           
           <div style={cardIconStyle}>
-            <MdInsertDriveFile size={40} color={proposal.status === "signed" ? "#10b981" : "#6366f1"} />
+            {isSigned ? (
+              <MdVerified size={40} color="#10b981" />
+            ) : (
+              <MdInsertDriveFile size={40} color="#6366f1" />
+            )}
           </div>
           
           <h3 style={proposalTitleStyle}>{proposal.fileName}</h3>
@@ -689,7 +900,15 @@ const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, hand
               <MdAccessTime size={14} color="#94a3b8" />
               <span>{proposal.sharedAt.toLocaleDateString()}</span>
             </div>
-            {proposal.expiresAt && (
+            {isSigned && proposal.signedAt && (
+              <div style={metaItemStyle}>
+                <MdVerified size={14} color="#10b981" />
+                <span style={{ color: "#10b981" }}>
+                  Signed {new Date(proposal.signedAt).toLocaleDateString()}
+                </span>
+              </div>
+            )}
+            {proposal.expiresAt && !isSigned && (
               <div style={metaItemStyle}>
                 <MdSchedule size={14} color={isExpiring ? "#f59e0b" : "#94a3b8"} />
                 <span style={isExpiring ? { color: "#f59e0b", fontWeight: "500" } : {}}>
@@ -699,7 +918,7 @@ const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, hand
             )}
           </div>
 
-          {isExpiring && (
+          {isExpiring && !isSigned && (
             <div style={expiringWarningStyle}>
               <MdSchedule size={12} />
               <span>Expiring soon!</span>
@@ -707,12 +926,15 @@ const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, hand
           )}
 
           <div style={cardActionsStyle}>
-            <button onClick={() => handleViewProposal(proposal)} style={actionButtonStyle("#3b82f6")}>
-              <MdVisibility size={16} />
-              View
+            <button 
+              onClick={() => handleViewProposal(proposal)} 
+              style={actionButtonStyle(isSigned ? "#10b981" : "#3b82f6")}
+            >
+              {isSigned ? <MdVerified size={16} /> : <MdVisibility size={16} />}
+              {isSigned ? "View Signed" : "View"}
             </button>
             
-            {proposal.status !== "signed" && (
+            {!isSigned && (
               <button onClick={() => handleSignProposal(proposal)} style={actionButtonStyle("#10b981")}>
                 <MdEdit size={16} />
                 Sign
@@ -724,20 +946,14 @@ const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, hand
               Download
             </button>
           </div>
-
-          {proposal.status === "signed" && proposal.signedAt && (
-            <div style={signedInfoStyle}>
-              <MdCheckCircle size={12} color="#10b981" />
-              <span>Signed {new Date(proposal.signedAt).toLocaleDateString()}</span>
-            </div>
-          )}
         </div>
       );
     })}
   </div>
 );
 
-const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, handleDownload }) => (
+// ProposalsList Component
+const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, handleDownload, signedProposalsData }) => (
   <div style={proposalsListStyle}>
     <table style={listTableStyle}>
       <thead>
@@ -745,46 +961,68 @@ const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, hand
           <th style={listHeaderCellStyle}>Proposal</th>
           <th style={listHeaderCellStyle}>From</th>
           <th style={listHeaderCellStyle}>Shared</th>
+          <th style={listHeaderCellStyle}>Signed Date</th>
           <th style={listHeaderCellStyle}>Status</th>
           <th style={listHeaderCellStyle}>Actions</th>
-        </tr>
+         </tr>
       </thead>
       <tbody>
-        {proposals.map((proposal, index) => (
-          <tr key={proposal.id || index} style={listRowStyle}>
-            <td style={listCellStyle}>
-              <div style={listFileInfoStyle}>
-                <MdInsertDriveFile size={20} color="#6366f1" />
-                <span>{proposal.fileName}</span>
-              </div>
-            </td>
-            <td style={listCellStyle}>{proposal.sharedBy || "Admin"}</td>
-            <td style={listCellStyle}>{proposal.sharedAt.toLocaleDateString()}</td>
-            <td style={listCellStyle}>
-              <ProposalStatusBadge status={proposal.status} size="small" />
-            </td>
-            <td style={listCellStyle}>
-              <div style={listActionsStyle}>
-                <button onClick={() => handleViewProposal(proposal)} style={listActionButtonStyle("#3b82f6")} title="View">
-                  <MdVisibility size={14} />
-                </button>
-                {proposal.status !== "signed" && (
-                  <button onClick={() => handleSignProposal(proposal)} style={listActionButtonStyle("#10b981")} title="Sign">
-                    <MdEdit size={14} />
-                  </button>
+        {proposals.map((proposal, index) => {
+          const isSigned = proposal.status === "signed";
+          return (
+            <tr key={proposal.id || index} style={listRowStyle}>
+              <td style={listCellStyle}>
+                <div style={listFileInfoStyle}>
+                  {isSigned ? (
+                    <MdVerified size={20} color="#10b981" />
+                  ) : (
+                    <MdInsertDriveFile size={20} color="#6366f1" />
+                  )}
+                  <span>{proposal.fileName}</span>
+                </div>
+              </td>
+              <td style={listCellStyle}>{proposal.sharedBy || "Admin"}</td>
+              <td style={listCellStyle}>{proposal.sharedAt.toLocaleDateString()}</td>
+              <td style={listCellStyle}>
+                {isSigned && proposal.signedAt ? (
+                  <span style={{ color: "#10b981" }}>
+                    {new Date(proposal.signedAt).toLocaleDateString()}
+                  </span>
+                ) : (
+                  "-"
                 )}
-                <button onClick={() => handleDownload(proposal)} style={listActionButtonStyle("#64748b")} title="Download">
-                  <MdDownload size={14} />
-                </button>
-              </div>
-            </td>
-          </tr>
-        ))}
+              </td>
+              <td style={listCellStyle}>
+                <ProposalStatusBadge status={proposal.status} size="small" />
+              </td>
+              <td style={listCellStyle}>
+                <div style={listActionsStyle}>
+                  <button 
+                    onClick={() => handleViewProposal(proposal)} 
+                    style={listActionButtonStyle(isSigned ? "#10b981" : "#3b82f6")} 
+                    title={isSigned ? "View Signed Document" : "View Proposal"}
+                  >
+                    {isSigned ? <MdVerified size={14} /> : <MdVisibility size={14} />}
+                  </button>
+                  {!isSigned && (
+                    <button onClick={() => handleSignProposal(proposal)} style={listActionButtonStyle("#10b981")} title="Sign">
+                      <MdEdit size={14} />
+                    </button>
+                  )}
+                  <button onClick={() => handleDownload(proposal)} style={listActionButtonStyle("#64748b")} title="Download">
+                    <MdDownload size={14} />
+                  </button>
+                </div>
+               </td>
+             </tr>
+          );
+        })}
       </tbody>
     </table>
   </div>
 );
 
+// RecentlyViewedGrid Component
 const RecentlyViewedGrid = ({ items }) => (
   <div style={recentlyViewedGridStyle}>
     {items.map((item, index) => (
@@ -813,7 +1051,7 @@ const RecentlyViewedGrid = ({ items }) => (
   </div>
 );
 
-// Keep all the styles from your original file (they remain exactly the same)
+// Keep all styles from your original file (they remain the same)
 const containerStyle = {
   display: "flex",
   minHeight: "100vh",
@@ -829,10 +1067,6 @@ const sidebarContainerStyle = (collapsed, mobileOpen) => ({
   top: 0,
   bottom: 0,
   zIndex: 100,
-  '@media (max-width: 768px)': {
-    left: mobileOpen ? 0 : -280,
-    width: 280,
-  },
 });
 
 const sidebarStyle = (collapsed) => ({
@@ -1009,9 +1243,6 @@ const mainContentStyle = (collapsed) => ({
   transition: "margin-left 0.3s ease",
   minHeight: "100vh",
   background: "#f8fafc",
-  '@media (max-width: 768px)': {
-    marginLeft: 0,
-  },
 });
 
 const mobileHeaderStyle = {
@@ -1021,9 +1252,6 @@ const mobileHeaderStyle = {
   borderBottom: "1px solid #e2e8f0",
   alignItems: "center",
   justifyContent: "space-between",
-  '@media (max-width: 768px)': {
-    display: "flex",
-  },
 };
 
 const menuButtonStyle = {
@@ -1065,9 +1293,6 @@ const mobileOverlayStyle = {
   background: "rgba(0,0,0,0.5)",
   zIndex: 99,
   display: "none",
-  '@media (max-width: 768px)': {
-    display: "block",
-  },
 };
 
 const welcomeBannerStyle = {
@@ -1394,17 +1619,6 @@ const actionButtonStyle = (color) => ({
   cursor: "pointer",
   transition: "all 0.2s",
 });
-
-const signedInfoStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "6px",
-  padding: "8px 12px",
-  background: "#f0fdf4",
-  borderRadius: "8px",
-  fontSize: "12px",
-  color: "#10b981",
-};
 
 const proposalsListStyle = {
   background: "#fff",

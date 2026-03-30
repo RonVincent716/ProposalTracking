@@ -17,12 +17,21 @@ import {
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
-import { MdEdit, MdFileUpload, MdLogout, MdDescription, MdArrowBack, MdCheckCircle, MdDashboard } from "react-icons/md";
+import { MdEdit, MdFileUpload, MdLogout, MdDescription, MdArrowBack, MdCheckCircle, MdDashboard, MdVisibility } from "react-icons/md";
+import emailjs from '@emailjs/browser';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url
 ).toString();
+
+// EmailJS Configuration
+const EMAILJS_CONFIG = {
+  SERVICE_ID: 'service_q6k7l9r',
+  TEMPLATE_ID: 'template_z3glhb1',
+  PUBLIC_KEY: 'UF-7_4AU7Jw9Sdo5P',
+  ADMIN_EMAIL: 'ronvincentb@hyacinthindustriesllc.com'
+};
 
 export default function ProposalDetail() {
   const { path } = useParams();
@@ -38,14 +47,97 @@ export default function ProposalDetail() {
   const [userRole, setUserRole] = useState(null);
   const [userEmail, setUserEmail] = useState("");
   const [isSigned, setIsSigned] = useState(false);
+  const [viewerName, setViewerName] = useState("");
+  const [deviceInfo, setDeviceInfo] = useState({});
+  const [location, setLocation] = useState(null);
+  const [scrollDepth, setScrollDepth] = useState(0);
+  const [userDisplayName, setUserDisplayName] = useState("");
 
+  // Refs for tracking
   const sessionId = useRef(null);
   const startTime = useRef(Date.now());
   const pagesViewed = useRef(new Set([1]));
   const heartbeatInterval = useRef(null);
   const isTabActive = useRef(true);
+  
+  // Store viewer data for notification
+  const viewerDataRef = useRef({
+    name: "",
+    email: "",
+    device: "",
+    location: ""
+  });
+
+  // Initialize EmailJS and get device info
+  useEffect(() => {
+    emailjs.init(EMAILJS_CONFIG.PUBLIC_KEY);
+    
+    // Get detailed device info
+    const getDeviceInfo = () => {
+      const userAgent = navigator.userAgent;
+      let device = "Unknown";
+      let os = "Unknown";
+      let browser = "Unknown";
+      
+      // Detect OS
+      if (userAgent.indexOf("Win") !== -1) os = "Windows";
+      else if (userAgent.indexOf("Mac") !== -1) os = "macOS";
+      else if (userAgent.indexOf("Linux") !== -1) os = "Linux";
+      else if (userAgent.indexOf("Android") !== -1) os = "Android";
+      else if (userAgent.indexOf("iOS") !== -1 || userAgent.indexOf("iPhone") !== -1 || userAgent.indexOf("iPad") !== -1) os = "iOS";
+      
+      // Detect Browser
+      if (userAgent.indexOf("Chrome") !== -1 && userAgent.indexOf("Edg") === -1) browser = "Chrome";
+      else if (userAgent.indexOf("Firefox") !== -1) browser = "Firefox";
+      else if (userAgent.indexOf("Safari") !== -1 && userAgent.indexOf("Chrome") === -1) browser = "Safari";
+      else if (userAgent.indexOf("Edg") !== -1) browser = "Edge";
+      else if (userAgent.indexOf("Opera") !== -1) browser = "Opera";
+      
+      // Detect Device Type
+      if (/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i.test(userAgent)) device = "Tablet";
+      else if (/Mobile|iP(hone|od)|Android|BlackBerry|IEMobile|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/.test(userAgent)) device = "Mobile";
+      else device = "Desktop";
+      
+      return {
+        userAgent: userAgent,
+        platform: os,
+        browser: browser,
+        device: device,
+        language: navigator.language,
+        screenSize: `${window.screen.width}x${window.screen.height}`,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      };
+    };
+    
+    const device = getDeviceInfo();
+    setDeviceInfo(device);
+    viewerDataRef.current.device = `${device.device} - ${device.platform} (${device.browser})`;
+    
+    // Get location
+    const getLocation = async () => {
+      try {
+        const response = await fetch('https://ipapi.co/json/');
+        const data = await response.json();
+        const locationData = {
+          city: data.city || 'Unknown',
+          country: data.country_name || 'Unknown',
+          region: data.region || 'Unknown',
+          ip: data.ip || 'Unknown',
+        };
+        setLocation(locationData);
+        viewerDataRef.current.location = `${locationData.city}, ${locationData.country}`;
+      } catch (e) {
+        console.log('Geolocation not available');
+        viewerDataRef.current.location = 'Unknown';
+      }
+    };
+    getLocation();
+  }, []);
 
   useEffect(() => {
+    let isMounted = true;
+    let loadAttempted = false;
+
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
         const returnUrl = encodeURIComponent(`/p/${path}`);
@@ -53,30 +145,66 @@ export default function ProposalDetail() {
         return;
       }
 
-      setUserEmail(currentUser.email);
+      if (!isMounted) return;
 
+      // Get user information FIRST
+      const email = currentUser.email || 'Unknown';
+      let name = currentUser.displayName || email.split('@')[0] || "User";
+      
+      // Try to get name from Firestore
       try {
         const userDoc = await getDoc(doc(db, "users", currentUser.uid));
-        
+        if (userDoc.exists() && userDoc.data().name) {
+          name = userDoc.data().name;
+        }
+      } catch (error) {
+        console.error("Error getting user name:", error);
+      }
+      
+      // Store viewer data in ref BEFORE any async operations
+      viewerDataRef.current.name = name;
+      viewerDataRef.current.email = email;
+      
+      // Update state
+      setUserDisplayName(name);
+      setViewerName(name);
+      setUserEmail(email);
+
+      try {
         let role = "unknown";
+        const userDoc = await getDoc(doc(db, "users", currentUser.uid));
         if (userDoc.exists()) {
           role = userDoc.data().role || "client";
         } else {
           role = "admin";
         }
         
-        setUserRole(role);
+        if (isMounted) {
+          setUserRole(role);
+          setCheckingAuth(false);
+        }
         
-        setCheckingAuth(false);
-        await loadProposal(currentUser);
+        // Load proposal AFTER we have viewer data
+        if (!loadAttempted && isMounted) {
+          loadAttempted = true;
+          await loadProposal(currentUser);
+        }
       } catch (error) {
         console.error("Error checking user role:", error);
-        setCheckingAuth(false);
-        await loadProposal(currentUser);
+        if (isMounted) {
+          setCheckingAuth(false);
+        }
+        if (!loadAttempted && isMounted) {
+          loadAttempted = true;
+          await loadProposal(currentUser);
+        }
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, [path, navigate]);
 
   const decodePath = (encodedPath) => {
@@ -100,64 +228,152 @@ export default function ProposalDetail() {
     }
   };
 
-  const loadProposal = async (user) => {
+  // Send view notification with complete viewer information
+  const sendViewNotification = async (proposalName, proposalPath) => {
+    // Prevent duplicate notifications
+    if (window._notificationSent) {
+      console.log("⏭️ Skipping - notification already sent");
+      return false;
+    }
+    
+    console.log("📧 Preparing to send notification with data:", {
+      viewerName: viewerDataRef.current.name,
+      viewerEmail: viewerDataRef.current.email,
+      device: viewerDataRef.current.device,
+      location: viewerDataRef.current.location,
+      proposal: proposalName
+    });
+    
     try {
-      const decodedPath = decodePath(path);
-      console.log("Final decoded path:", decodedPath);
+      const templateParams = {
+        to_email: EMAILJS_CONFIG.ADMIN_EMAIL,
+        to_name: "Admin",
+        proposal_name: proposalName,
+        viewer_name: viewerDataRef.current.name,
+        viewer_email: viewerDataRef.current.email,
+        viewer_id: auth.currentUser?.uid || 'Unknown',
+        viewed_at: new Date().toLocaleString(),
+        device: viewerDataRef.current.device,
+        browser: deviceInfo.browser || 'Unknown',
+        platform: deviceInfo.platform || 'Unknown',
+        location: viewerDataRef.current.location,
+        city: location?.city || 'Unknown',
+        country: location?.country || 'Unknown',
+        ip_address: location?.ip || 'Unknown',
+        screen_size: deviceInfo.screenSize || 'Unknown',
+        language: deviceInfo.language || 'Unknown',
+        timezone: deviceInfo.timezone || 'Unknown',
+        referrer: document.referrer || 'Direct',
+        view_link: window.location.href,
+        status: "View Started",
+        timestamp: new Date().toISOString()
+      };
+
+      console.log("📧 Sending email with params:", templateParams);
       
-      const fileRef = ref(storage, decodedPath);
-      const url = await getDownloadURL(fileRef);
-      setFileUrl(url);
-
-      const extractedFileName = decodedPath.split("/").pop();
-      setFileName(extractedFileName);
-
-      // Check if already signed
-      const signedQuery = query(
-        collection(db, "signedProposals"),
-        where("proposalPath", "==", decodedPath),
-        where("signerEmail", "==", user.email)
+      const response = await emailjs.send(
+        EMAILJS_CONFIG.SERVICE_ID,
+        EMAILJS_CONFIG.TEMPLATE_ID,
+        templateParams
       );
-      const signedSnapshot = await getDocs(signedQuery);
-      setIsSigned(!signedSnapshot.empty);
 
-      // Log view
-      await addDoc(collection(db, "proposalViews"), {
-        fileName: extractedFileName,
-        filePath: decodedPath,
-        viewerId: user.uid,
-        viewerEmail: user.email,
-        viewedAt: serverTimestamp(),
-      });
-
-      // Create session
-      const session = await addDoc(collection(db, "proposalSessions"), {
-        fileName: extractedFileName,
-        filePath: decodedPath,
-        viewerId: user.uid,
-        viewerEmail: user.email,
-        pagesViewed: [1],
-        duration: 0,
-        startedAt: serverTimestamp(),
-      });
-
-      sessionId.current = session.id;
-    } catch (err) {
-      console.error("Error loading proposal:", err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      console.log("✅ Notification sent successfully!", response);
+      window._notificationSent = true;
+      return true;
+      
+    } catch (error) {
+      console.error("❌ Error sending notification:", error);
+      console.error("Error details:", error.text || error.message);
+      return false;
     }
   };
+
+ const loadProposal = async (user) => {
+  try {
+    const decodedPath = decodePath(path);
+    console.log("Final decoded path:", decodedPath);
+    
+    const fileRef = ref(storage, decodedPath);
+    const url = await getDownloadURL(fileRef);
+    setFileUrl(url);
+
+    const extractedFileName = decodedPath.split("/").pop();
+    setFileName(extractedFileName);
+
+    // Check if already signed
+    const signedQuery = query(
+      collection(db, "signedProposals"),
+      where("proposalPath", "==", decodedPath),
+      where("signerEmail", "==", user.email)
+    );
+    const signedSnapshot = await getDocs(signedQuery);
+    setIsSigned(!signedSnapshot.empty);
+
+    // Log view to Firestore with BOTH name and email
+    const viewData = {
+      fileName: extractedFileName,
+      filePath: decodedPath,
+      viewerId: user.uid,
+      viewerEmail: user.email,  // Store email
+      viewerName: viewerName,    // Store name separately
+      viewedAt: serverTimestamp(),
+      deviceInfo: deviceInfo,
+      location: location,
+      referrer: document.referrer || 'direct',
+      status: 'active'
+    };
+    
+    await addDoc(collection(db, "proposalViews"), viewData);
+
+    // Create session with BOTH name and email
+    const session = await addDoc(collection(db, "proposalSessions"), {
+      fileName: extractedFileName,
+      filePath: decodedPath,
+      viewerId: user.uid,
+      viewerEmail: user.email,    // Store email here
+      viewerName: viewerName,      // Store name here
+      pagesViewed: [1],
+      duration: 0,
+      startedAt: serverTimestamp(),
+      deviceInfo: deviceInfo,
+      location: location,
+    });
+
+    sessionId.current = session.id;
+
+    // Send view notification with all viewer info
+    await sendViewNotification(extractedFileName, decodedPath);
+    
+  } catch (err) {
+    console.error("Error loading proposal:", err);
+    setError(err.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const onDocumentLoadSuccess = ({ numPages }) => {
     setNumPages(numPages);
   };
 
-  const onPageChange = ({ pageNumber }) => {
-    setPageNumber(pageNumber);
-    pagesViewed.current.add(pageNumber);
+  const onPageChange = ({ pageNumber: newPageNumber }) => {
+    setPageNumber(newPageNumber);
+    
+    if (!pagesViewed.current.has(newPageNumber)) {
+      pagesViewed.current.add(newPageNumber);
+    }
   };
+
+  // Track scroll depth
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollPercentage = (window.scrollY + window.innerHeight) / document.documentElement.scrollHeight * 100;
+      setScrollDepth(Math.min(100, scrollPercentage));
+    };
+    
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // Tab visibility
   useEffect(() => {
@@ -179,21 +395,25 @@ export default function ProposalDetail() {
       await updateDoc(doc(db, "proposalSessions", sessionId.current), {
         pagesViewed: Array.from(pagesViewed.current),
         duration,
+        scrollDepth: Math.round(scrollDepth),
         lastHeartbeat: serverTimestamp(),
       });
     }, 30000);
 
     return () => clearInterval(heartbeatInterval.current);
-  }, [sessionId.current]);
+  }, [sessionId.current, scrollDepth]);
 
   // Final save when user leaves
   useEffect(() => {
     const saveSession = async () => {
       if (!sessionId.current) return;
       const duration = Date.now() - startTime.current;
+      const totalPages = pagesViewed.current.size;
+      
       await updateDoc(doc(db, "proposalSessions", sessionId.current), {
         pagesViewed: Array.from(pagesViewed.current),
         duration,
+        scrollDepth: Math.round(scrollDepth),
         endedAt: serverTimestamp(),
       });
     };
@@ -203,7 +423,7 @@ export default function ProposalDetail() {
       saveSession();
       window.removeEventListener("beforeunload", saveSession);
     };
-  }, []);
+  }, [scrollDepth]);
 
   const handleDownload = async () => {
     try {
@@ -211,6 +431,13 @@ export default function ProposalDetail() {
       link.href = fileUrl;
       link.download = fileName;
       link.click();
+      
+      await addDoc(collection(db, "downloadEvents"), {
+        fileName: fileName,
+        viewerEmail: userEmail,
+        viewerName: viewerName,
+        downloadedAt: serverTimestamp(),
+      });
     } catch (error) {
       console.error("Download error:", error);
     }
@@ -288,7 +515,6 @@ export default function ProposalDetail() {
         </div>
 
         <div style={headerRightStyle}>
-          {/* SIGN BUTTON - Only show for clients who haven't signed */}
           {userRole === 'client' && !isSigned && (
             <button onClick={handleSignProposal} style={signButtonStyle}>
               <MdEdit size={18} />
@@ -296,7 +522,6 @@ export default function ProposalDetail() {
             </button>
           )}
           
-          {/* GO TO DASHBOARD BUTTON */}
           {userRole === 'client' && (
             <button onClick={handleGoToDashboard} style={dashboardButtonStyle}>
               <MdDashboard size={16} />
@@ -316,6 +541,36 @@ export default function ProposalDetail() {
         </div>
       </div>
 
+      {/* Live Stats Bar - Shows viewer info */}
+      <div style={liveStatsStyle}>
+        <div style={statItemStyle}>
+          <MdVisibility size={16} color="#2196F3" />
+          <span>Viewing as: <strong>{viewerName || "Loading..."}</strong></span>
+        </div>
+        <div style={statItemStyle}>
+          <span>📧 {userEmail || "Loading..."}</span>
+        </div>
+        <div style={statItemStyle}>
+          <span>📄 Pages: {pagesViewed.current.size}</span>
+        </div>
+        <div style={statItemStyle}>
+          <span>⏱️ Time: {Math.floor((Date.now() - startTime.current) / 1000)}s</span>
+        </div>
+        <div style={statItemStyle}>
+          <span>📊 Scroll: {Math.round(scrollDepth)}%</span>
+        </div>
+        {deviceInfo.device && deviceInfo.device !== 'Unknown' && (
+          <div style={statItemStyle}>
+            <span>💻 {deviceInfo.device} - {deviceInfo.platform}</span>
+          </div>
+        )}
+        {location?.city && location?.city !== 'Unknown' && (
+          <div style={statItemStyle}>
+            <span>📍 {location.city}, {location.country}</span>
+          </div>
+        )}
+      </div>
+
       <div style={viewerContainerStyle}>
         <Document
           file={fileUrl}
@@ -328,6 +583,7 @@ export default function ProposalDetail() {
             renderTextLayer={true}
             renderAnnotationLayer={true}
             onRenderSuccess={() => onPageChange({ pageNumber })}
+            width={Math.min(window.innerWidth - 100, 800)}
           />
         </Document>
       </div>
@@ -384,7 +640,7 @@ export default function ProposalDetail() {
   );
 }
 
-// Styles
+// Styles (keep all your existing styles)
 const containerStyle = {
   padding: "20px",
   maxWidth: "1200px",
@@ -544,15 +800,37 @@ const logoutButtonStyle = {
   cursor: "pointer",
 };
 
+const liveStatsStyle = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "20px",
+  padding: "12px 20px",
+  background: "#fff",
+  borderRadius: "12px",
+  marginBottom: "20px",
+  border: "1px solid #e2e8f0",
+  alignItems: "center",
+};
+
+const statItemStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  fontSize: "13px",
+  color: "#1a1a2e",
+};
+
 const viewerContainerStyle = {
   border: "1px solid #e2e8f0",
   borderRadius: "12px",
   overflow: "auto",
-  height: "calc(100vh - 280px)",
+  height: "calc(100vh - 420px)",
   minHeight: "500px",
   background: "#fff",
   boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
   padding: "20px",
+  display: "flex",
+  justifyContent: "center",
 };
 
 const pdfLoadingStyle = {

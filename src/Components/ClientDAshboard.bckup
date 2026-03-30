@@ -10,7 +10,9 @@ import {
   doc,
   getDoc,
   updateDoc,
-  serverTimestamp
+  serverTimestamp,
+  orderBy,
+  limit
 } from "firebase/firestore";
 import { ref, getDownloadURL } from "firebase/storage";
 import { 
@@ -36,16 +38,11 @@ import {
   MdPending,
   MdSpaceDashboard,
   MdFolder,
-  MdStar,
-  MdSettings,
-  MdHelp,
   MdMenu,
-  MdClose,
   MdChevronLeft,
   MdChevronRight,
-  MdNotifications,
-  MdAssessment,
-  MdDocumentScanner
+  MdReceipt,
+  MdFileCopy
 } from "react-icons/md";
 import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
 
@@ -56,11 +53,12 @@ export default function ClientDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [activeTab, setActiveTab] = useState("all");
+  const [activeTab, setActiveTab] = useState("dashboard");
   const [refreshing, setRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState("grid");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [signedProposalsData, setSignedProposalsData] = useState({});
   const [stats, setStats] = useState({
     total: 0,
     viewed: 0,
@@ -87,6 +85,7 @@ export default function ClientDashboard() {
         setCurrentUser(user);
         await loadClientProposals(user);
         await loadRecentlyViewed(user);
+        await loadSignedProposalsData(user);
       } catch (error) {
         console.error("Error checking user:", error);
         navigate("/client-login");
@@ -96,9 +95,49 @@ export default function ClientDashboard() {
     return () => unsubscribe();
   }, [navigate]);
 
+  const refreshDashboard = async () => {
+    if (!currentUser) return;
+    setRefreshing(true);
+    try {
+      await loadClientProposals(currentUser);
+      await loadRecentlyViewed(currentUser);
+      await loadSignedProposalsData(currentUser);
+    } catch (error) {
+      console.error("Error refreshing dashboard:", error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Load signed proposals data for viewing
+  const loadSignedProposalsData = async (user) => {
+    try {
+      const signedQuery = query(
+        collection(db, "signedProposals"),
+        where("signerEmail", "==", user.email)
+      );
+      const signedSnapshot = await getDocs(signedQuery);
+      const signedData = {};
+      signedSnapshot.forEach(doc => {
+        const data = doc.data();
+        signedData[data.proposalPath] = {
+          id: doc.id,
+          signedAt: data.signedAt,
+          signedBy: data.signedBy,
+          signature: data.signature
+        };
+      });
+      setSignedProposalsData(signedData);
+    } catch (error) {
+      console.error("Error loading signed proposals data:", error);
+    }
+  };
+
   const loadClientProposals = async (user) => {
     try {
       setLoading(true);
+      
+      console.log("Loading proposals for:", user.email);
       
       const proposalsQuery = query(
         collection(db, "sharedProposals"),
@@ -115,6 +154,33 @@ export default function ClientDashboard() {
       for (const documentSnapshot of querySnapshot.docs) {
         const data = documentSnapshot.data();
         
+        // Read status directly from sharedProposals
+        const proposalStatus = data.status || "pending";
+        const isSigned = proposalStatus === "signed";
+        
+        // Check if viewed
+        let hasViewed = false;
+        try {
+          const viewsQuery = query(
+            collection(db, "proposalViews"),
+            where("filePath", "==", data.filePath),
+            where("viewerEmail", "==", user.email)
+          );
+          const viewsSnapshot = await getDocs(viewsQuery);
+          hasViewed = !viewsSnapshot.empty || (data.viewCount > 0);
+        } catch (error) {
+          console.error("Error checking views:", error);
+        }
+        
+        // Update counts
+        if (isSigned) {
+          signedCount++;
+        } else if (hasViewed) {
+          viewedCount++;
+        } else {
+          pendingCount++;
+        }
+        
         let fileUrl = null;
         try {
           const fileRef = ref(storage, data.filePath);
@@ -123,39 +189,16 @@ export default function ClientDashboard() {
           console.error("Error getting file URL:", error);
         }
 
-        const fileName = data.filePath.split('/').pop();
-
-        const viewsQuery = query(
-          collection(db, "proposalViews"),
-          where("filePath", "==", data.filePath),
-          where("viewerEmail", "==", user.email)
-        );
-        const viewsSnapshot = await getDocs(viewsQuery);
-        const hasViewed = !viewsSnapshot.empty;
-
-        const signedQuery = query(
-          collection(db, "signedProposals"),
-          where("proposalPath", "==", data.filePath),
-          where("signerEmail", "==", user.email)
-        );
-        const signedSnapshot = await getDocs(signedQuery);
-        const isSigned = !signedSnapshot.empty;
-
-        if (isSigned) signedCount++;
-        else if (hasViewed) viewedCount++;
-        else pendingCount++;
-
         proposalsData.push({
           id: documentSnapshot.id,
-          fileName: fileName,
+          fileName: data.fileName,
           filePath: data.filePath,
           fileUrl: fileUrl,
           sharedAt: data.sharedAt?.toDate?.() || new Date(data.sharedAt),
           sharedBy: data.sharedBy,
           sharedByEmail: data.sharedByEmail,
           status: isSigned ? "signed" : (hasViewed ? "viewed" : "pending"),
-          viewedAt: hasViewed ? viewsSnapshot.docs[0]?.data().viewedAt : null,
-          signedAt: isSigned ? signedSnapshot.docs[0]?.data().signedAt : null,
+          signedAt: data.signedAt,
           expiresAt: data.expiresAt?.toDate?.() || null,
           viewCount: data.viewCount || 0
         });
@@ -180,11 +223,11 @@ export default function ClientDashboard() {
 
   const loadRecentlyViewed = async (user) => {
     try {
-      setRefreshing(true);
-      
       const viewsQuery = query(
         collection(db, "proposalViews"),
-        where("viewerEmail", "==", user.email)
+        where("viewerEmail", "==", user.email),
+        orderBy("viewedAt", "desc"),
+        limit(10)
       );
       
       const viewsSnapshot = await getDocs(viewsQuery);
@@ -220,19 +263,45 @@ export default function ClientDashboard() {
       setRecentlyViewed(viewsData);
     } catch (error) {
       console.error("Error loading recently viewed:", error);
-    } finally {
-      setRefreshing(false);
     }
   };
 
+  // Updated handleViewProposal - routes to appropriate page based on status
   const handleViewProposal = (proposal) => {
     const encodedPath = btoa(proposal.filePath);
-    window.open(`/p/${encodedPath}`, '_blank');
+    
+    // If the proposal is signed, navigate to the signed view page
+    if (proposal.status === "signed") {
+      // Find the signed proposal ID for this document
+      const signedData = signedProposalsData[proposal.filePath];
+      if (signedData && signedData.id) {
+        navigate(`/signed/${signedData.id}`);
+      } else {
+        // Fallback to view mode if no signed data found
+        window.open(`/p/${encodedPath}`, '_blank');
+      }
+    } else {
+      // For unsigned proposals, open the proposal viewer
+      window.open(`/p/${encodedPath}`, '_blank');
+    }
   };
 
+  // Handle sign proposal - opens the signing page
   const handleSignProposal = (proposal) => {
     const encodedPath = btoa(proposal.filePath);
     window.open(`/sign/${encodedPath}`, '_blank');
+  };
+
+  // Handle view signed document directly
+  const handleViewSignedDocument = (proposal) => {
+    const signedData = signedProposalsData[proposal.filePath];
+    if (signedData && signedData.id) {
+      navigate(`/signed/${signedData.id}`);
+    } else {
+      // Fallback to proposal viewer if no signed data
+      const encodedPath = btoa(proposal.filePath);
+      window.open(`/p/${encodedPath}`, '_blank');
+    }
   };
 
   const handleDownload = async (proposal) => {
@@ -268,7 +337,7 @@ export default function ClientDashboard() {
 
   const sidebarItems = [
     { id: "dashboard", icon: <MdSpaceDashboard size={20} />, label: "Dashboard", action: () => setActiveTab("dashboard") },
-    { id: "all", icon: <MdFolder size={20} />, label: "All Proposals", action: () => setActiveTab("all"), count: proposals.length },
+    { id: "all", icon: <MdFolder size={20} />, label: "All Proposals", action: () => { setActiveTab("all"); setStatusFilter("all"); }, count: proposals.length },
     { id: "recent", icon: <MdHistory size={20} />, label: "Recently Viewed", action: () => setActiveTab("recent"), count: recentlyViewed.length },
     { id: "pending", icon: <MdPending size={20} />, label: "Pending", action: () => { setActiveTab("all"); setStatusFilter("pending"); }, count: stats.pending },
     { id: "signed", icon: <MdVerified size={20} />, label: "Signed", action: () => { setActiveTab("all"); setStatusFilter("signed"); }, count: stats.signed },
@@ -276,12 +345,106 @@ export default function ClientDashboard() {
 
   const renderContent = () => {
     if (activeTab === "dashboard") {
-      return <DashboardOverview proposals={proposals} stats={stats} recentlyViewed={recentlyViewed} handleViewProposal={handleViewProposal} />;
+      return (
+        <div>
+          <div style={overviewSectionStyle}>
+            <div style={overviewHeaderStyle}>
+              <h3 style={overviewTitleStyle}>Recent Proposals</h3>
+              <button 
+                onClick={refreshDashboard} 
+                style={refreshButtonStyle}
+                disabled={refreshing}
+              >
+                <MdRefresh size={16} />
+                {refreshing ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
+            <div style={recentProposalsListStyle}>
+              {proposals.slice(0, 5).map((proposal, index) => (
+                <div key={proposal.id || index} style={recentProposalItemStyle}>
+                  <div style={recentProposalIconStyle}>
+                    <MdInsertDriveFile size={20} color={proposal.status === "signed" ? "#10b981" : "#6366f1"} />
+                  </div>
+                  <div style={recentProposalInfoStyle}>
+                    <div style={recentProposalNameStyle}>{proposal.fileName}</div>
+                    <div style={recentProposalMetaStyle}>
+                      <span>From {proposal.sharedBy || "Admin"}</span>
+                      <span>•</span>
+                      <span>{proposal.sharedAt.toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                  <ProposalStatusBadge status={proposal.status} size="small" />
+                  <button onClick={() => handleViewProposal(proposal)} style={recentProposalButtonStyle}>
+                    {proposal.status === "signed" ? "View Signed" : "View"}
+                  </button>
+                </div>
+              ))}
+              {proposals.length === 0 && (
+                <div style={emptyRecentStyle}>No proposals yet</div>
+              )}
+            </div>
+          </div>
+
+          <div style={overviewSectionStyle}>
+            <h3 style={overviewTitleStyle}>Recently Viewed</h3>
+            <div style={recentProposalsListStyle}>
+              {recentlyViewed.slice(0, 5).map((item, index) => (
+                <div key={item.id || index} style={recentProposalItemStyle}>
+                  <div style={recentProposalIconStyle}>
+                    <MdHistory size={20} color="#3b82f6" />
+                  </div>
+                  <div style={recentProposalInfoStyle}>
+                    <div style={recentProposalNameStyle}>{item.fileName}</div>
+                    <div style={recentProposalMetaStyle}>
+                      <span>Viewed {item.viewedAt?.toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      const encodedPath = btoa(item.filePath);
+                      window.open(`/p/${encodedPath}`, '_blank');
+                    }}
+                    style={recentProposalButtonStyle}
+                  >
+                    Open
+                  </button>
+                </div>
+              ))}
+              {recentlyViewed.length === 0 && (
+                <div style={emptyRecentStyle}>No recently viewed proposals</div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
+    if (activeTab === "recent") {
+      return (
+        <>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>Recently Viewed</h2>
+            <button 
+              onClick={refreshDashboard}
+              style={refreshButtonStyle}
+              disabled={refreshing}
+            >
+              <MdRefresh size={16} />
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+          
+          {recentlyViewed.length === 0 ? (
+            <EmptyState icon={<MdHistory size={64} color="#cbd5e1" />} title="No recently viewed proposals" message="When you view a proposal, it will appear here." />
+          ) : (
+            <RecentlyViewedGrid items={recentlyViewed} />
+          )}
+        </>
+      );
     }
     
     return (
       <>
-        {/* Search and Filter Bar */}
         <div style={searchContainerStyle}>
           <div style={searchInputWrapper}>
             <MdSearch size={20} color="#94a3b8" />
@@ -335,46 +498,52 @@ export default function ClientDashboard() {
           )}
         </div>
 
-        {/* Content */}
-        {activeTab === "all" && (
-          <>
-            <div style={sectionHeaderStyle}>
-              <h2 style={sectionTitleStyle}>All Proposals</h2>
-              <div style={resultCountStyle}>
-                {filteredProposals.length} {filteredProposals.length === 1 ? 'proposal' : 'proposals'} found
-              </div>
-            </div>
-            
-            {filteredProposals.length === 0 ? (
-              <EmptyState icon={<MdPictureAsPdf size={64} color="#cbd5e1" />} title="No proposals found" message="When someone shares a proposal with you, it will appear here." />
-            ) : viewMode === "grid" ? (
-              <ProposalsGrid proposals={filteredProposals} handleViewProposal={handleViewProposal} handleSignProposal={handleSignProposal} handleDownload={handleDownload} getDaysLeft={getDaysLeft} />
-            ) : (
-              <ProposalsList proposals={filteredProposals} handleViewProposal={handleViewProposal} handleSignProposal={handleSignProposal} handleDownload={handleDownload} />
-            )}
-          </>
-        )}
-
-        {activeTab === "recent" && (
-          <>
-            <div style={sectionHeaderStyle}>
-              <h2 style={sectionTitleStyle}>Recently Viewed</h2>
-              <button 
-                onClick={() => currentUser && loadRecentlyViewed(currentUser)}
-                style={refreshButtonStyle}
-                disabled={refreshing}
-              >
-                <MdRefresh size={16} />
-                {refreshing ? "Refreshing..." : "Refresh"}
-              </button>
-            </div>
-            
-            {recentlyViewed.length === 0 ? (
-              <EmptyState icon={<MdHistory size={64} color="#cbd5e1" />} title="No recently viewed proposals" message="When you view a proposal, it will appear here." />
-            ) : (
-              <RecentlyViewedGrid items={recentlyViewed} />
-            )}
-          </>
+        <div style={sectionHeaderStyle}>
+          <h2 style={sectionTitleStyle}>
+            {statusFilter === "signed" ? "Signed Proposals" : 
+             statusFilter === "viewed" ? "Viewed Proposals" : 
+             statusFilter === "pending" ? "Pending Proposals" : "All Proposals"}
+          </h2>
+          <div style={resultCountStyle}>
+            {filteredProposals.length} {filteredProposals.length === 1 ? 'proposal' : 'proposals'} found
+          </div>
+        </div>
+        
+        {filteredProposals.length === 0 ? (
+          <EmptyState 
+            icon={<MdPictureAsPdf size={64} color="#cbd5e1" />} 
+            title={
+              statusFilter === "signed" ? "No signed proposals yet" :
+              statusFilter === "viewed" ? "No viewed proposals" :
+              statusFilter === "pending" ? "No pending proposals" :
+              "No proposals found"
+            } 
+            message={
+              statusFilter === "signed" ? "When you sign a proposal, it will appear here." :
+              statusFilter === "viewed" ? "When you view a proposal, it will appear here." :
+              statusFilter === "pending" ? "Proposals that need your attention will appear here." :
+              "When someone shares a proposal with you, it will appear here."
+            } 
+          />
+        ) : viewMode === "grid" ? (
+          <ProposalsGrid 
+            proposals={filteredProposals} 
+            handleViewProposal={handleViewProposal}
+            handleSignProposal={handleSignProposal}
+            handleViewSignedDocument={handleViewSignedDocument}
+            handleDownload={handleDownload} 
+            getDaysLeft={getDaysLeft}
+            signedProposalsData={signedProposalsData}
+          />
+        ) : (
+          <ProposalsList 
+            proposals={filteredProposals} 
+            handleViewProposal={handleViewProposal}
+            handleSignProposal={handleSignProposal}
+            handleViewSignedDocument={handleViewSignedDocument}
+            handleDownload={handleDownload}
+            signedProposalsData={signedProposalsData}
+          />
         )}
       </>
     );
@@ -391,18 +560,15 @@ export default function ClientDashboard() {
 
   return (
     <div style={containerStyle}>
-      {/* Mobile Menu Overlay */}
       {mobileMenuOpen && (
         <div style={mobileOverlayStyle} onClick={() => setMobileMenuOpen(false)} />
       )}
 
-      {/* Sidebar */}
       <div style={sidebarContainerStyle(sidebarCollapsed, mobileMenuOpen)}>
         <div style={sidebarStyle(sidebarCollapsed)}>
-          {/* Logo Area */}
           <div style={logoAreaStyle}>
             <div style={logoIconStyle}>
-              <MdDocumentScanner size={28} color="#fff" />
+              <MdDescription size={28} color="#fff" />
             </div>
             {!sidebarCollapsed && (
               <div style={logoTextAreaStyle}>
@@ -415,7 +581,6 @@ export default function ClientDashboard() {
             </button>
           </div>
 
-          {/* User Profile */}
           {!sidebarCollapsed && (
             <div style={userProfileStyle}>
               <div style={userAvatarStyle}>
@@ -428,13 +593,16 @@ export default function ClientDashboard() {
             </div>
           )}
 
-          {/* Navigation */}
           <nav style={navStyle}>
             {sidebarItems.map((item) => (
               <button
                 key={item.id}
                 onClick={item.action}
-                style={navItemStyle(activeTab === item.id || (activeTab === "all" && item.id === "pending" && statusFilter === "pending") || (activeTab === "all" && item.id === "signed" && statusFilter === "signed"))}
+                style={navItemStyle(
+                  activeTab === item.id || 
+                  (activeTab === "all" && item.id === "pending" && statusFilter === "pending") || 
+                  (activeTab === "all" && item.id === "signed" && statusFilter === "signed")
+                )}
               >
                 <span style={navIconStyle}>{item.icon}</span>
                 {!sidebarCollapsed && (
@@ -449,7 +617,6 @@ export default function ClientDashboard() {
             ))}
           </nav>
 
-          {/* Bottom Actions */}
           <div style={bottomActionsStyle}>
             <button onClick={handleLogout} style={logoutNavStyle}>
               <MdLogout size={20} />
@@ -459,15 +626,13 @@ export default function ClientDashboard() {
         </div>
       </div>
 
-      {/* Main Content */}
       <div style={mainContentStyle(sidebarCollapsed)}>
-        {/* Mobile Header */}
         <div style={mobileHeaderStyle}>
           <button onClick={() => setMobileMenuOpen(true)} style={menuButtonStyle}>
             <MdMenu size={24} />
           </button>
           <div style={mobileLogoStyle}>
-            <MdDocumentScanner size={24} color="#6366f1" />
+            <MdDescription size={24} color="#6366f1" />
             <span>ProposalHub</span>
           </div>
           <div style={mobileUserAvatarStyle}>
@@ -475,20 +640,39 @@ export default function ClientDashboard() {
           </div>
         </div>
 
-        {/* Welcome Banner */}
         <div style={welcomeBannerStyle}>
           <div style={welcomeBannerContentStyle}>
             <div>
               <h2 style={welcomeTitleStyle}>Welcome back, {currentUser?.displayName || currentUser?.email?.split('@')[0]}!</h2>
               <p style={welcomeSubtitleStyle}>Here's what's happening with your proposals today.</p>
             </div>
-            <div style={welcomeDateStyle}>
-              {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+              <div style={welcomeDateStyle}>
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+              </div>
+              <button
+                onClick={refreshDashboard}
+                style={{
+                  padding: "8px 16px",
+                  background: "rgba(255,255,255,0.2)",
+                  border: "none",
+                  borderRadius: "8px",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px"
+                }}
+                disabled={refreshing}
+              >
+                <MdRefresh size={16} />
+                {refreshing ? "Refreshing..." : "Refresh"}
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Stats Cards */}
         <div style={statsContainerStyle}>
           <StatCard icon={<MdFolder size={24} />} color="#6366f1" value={stats.total} label="Total Proposals" trend="All time" />
           <StatCard icon={<MdPending size={24} />} color="#f59e0b" value={stats.pending} label="Pending Review" trend="Awaiting action" />
@@ -496,7 +680,6 @@ export default function ClientDashboard() {
           <StatCard icon={<MdVerified size={24} />} color="#10b981" value={stats.signed} label="Signed" trend="Completed" />
         </div>
 
-        {/* Main Content Area */}
         <div style={contentAreaStyle}>
           {renderContent()}
         </div>
@@ -515,17 +698,168 @@ export default function ClientDashboard() {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
-        @media (max-width: 768px) {
-          .desktop-only {
-            display: none;
-          }
-        }
       `}</style>
     </div>
   );
 }
 
-// Sub-components
+// Updated ProposalsGrid component with different button text for signed proposals
+const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, handleDownload, getDaysLeft, signedProposalsData }) => (
+  <div style={proposalsGridStyle}>
+    {proposals.map((proposal, index) => {
+      const daysLeft = getDaysLeft(proposal.expiresAt);
+      const isExpiring = daysLeft !== null && daysLeft <= 3 && daysLeft > 0;
+      const isSigned = proposal.status === "signed";
+      const signedData = signedProposalsData[proposal.filePath];
+      
+      return (
+        <div key={proposal.id || index} style={proposalCardStyle}>
+          <div style={cardBadgeStyle}>
+            <ProposalStatusBadge status={proposal.status} size="small" />
+          </div>
+          
+          <div style={cardIconStyle}>
+            {isSigned ? (
+              <MdVerified size={40} color="#10b981" />
+            ) : (
+              <MdInsertDriveFile size={40} color="#6366f1" />
+            )}
+          </div>
+          
+          <h3 style={proposalTitleStyle}>{proposal.fileName}</h3>
+          
+          <div style={proposalMetaStyle}>
+            <div style={metaItemStyle}>
+              <MdPerson size={14} color="#94a3b8" />
+              <span>{proposal.sharedBy || "Admin"}</span>
+            </div>
+            <div style={metaItemStyle}>
+              <MdAccessTime size={14} color="#94a3b8" />
+              <span>{proposal.sharedAt.toLocaleDateString()}</span>
+            </div>
+            {isSigned && proposal.signedAt && (
+              <div style={metaItemStyle}>
+                <MdVerified size={14} color="#10b981" />
+                <span style={{ color: "#10b981" }}>
+                  Signed {new Date(proposal.signedAt).toLocaleDateString()}
+                </span>
+              </div>
+            )}
+            {proposal.expiresAt && !isSigned && (
+              <div style={metaItemStyle}>
+                <MdSchedule size={14} color={isExpiring ? "#f59e0b" : "#94a3b8"} />
+                <span style={isExpiring ? { color: "#f59e0b", fontWeight: "500" } : {}}>
+                  {daysLeft > 0 ? `${daysLeft} day${daysLeft !== 1 ? 's' : ''} left` : 'Expired'}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {isExpiring && !isSigned && (
+            <div style={expiringWarningStyle}>
+              <MdSchedule size={12} />
+              <span>Expiring soon!</span>
+            </div>
+          )}
+
+          <div style={cardActionsStyle}>
+            <button 
+              onClick={() => handleViewProposal(proposal)} 
+              style={actionButtonStyle(isSigned ? "#10b981" : "#3b82f6")}
+            >
+              {isSigned ? <MdVerified size={16} /> : <MdVisibility size={16} />}
+              {isSigned ? "View Signed Document" : "View"}
+            </button>
+            
+            {!isSigned && (
+              <button onClick={() => handleSignProposal(proposal)} style={actionButtonStyle("#10b981")}>
+                <MdEdit size={16} />
+                Sign
+              </button>
+            )}
+            
+            <button onClick={() => handleDownload(proposal)} style={actionButtonStyle("#64748b")}>
+              <MdDownload size={16} />
+              Download
+            </button>
+          </div>
+        </div>
+      );
+    })}
+  </div>
+);
+
+// Updated ProposalsList component
+const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, handleDownload, signedProposalsData }) => (
+  <div style={proposalsListStyle}>
+    <table style={listTableStyle}>
+      <thead>
+        <tr style={listHeaderStyle}>
+          <th style={listHeaderCellStyle}>Proposal</th>
+          <th style={listHeaderCellStyle}>From</th>
+          <th style={listHeaderCellStyle}>Shared</th>
+          <th style={listHeaderCellStyle}>Signed Date</th>
+          <th style={listHeaderCellStyle}>Status</th>
+          <th style={listHeaderCellStyle}>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {proposals.map((proposal, index) => {
+          const isSigned = proposal.status === "signed";
+          return (
+            <tr key={proposal.id || index} style={listRowStyle}>
+              <td style={listCellStyle}>
+                <div style={listFileInfoStyle}>
+                  {isSigned ? (
+                    <MdVerified size={20} color="#10b981" />
+                  ) : (
+                    <MdInsertDriveFile size={20} color="#6366f1" />
+                  )}
+                  <span>{proposal.fileName}</span>
+                </div>
+              </td>
+              <td style={listCellStyle}>{proposal.sharedBy || "Admin"}</td>
+              <td style={listCellStyle}>{proposal.sharedAt.toLocaleDateString()}</td>
+              <td style={listCellStyle}>
+                {isSigned && proposal.signedAt ? (
+                  <span style={{ color: "#10b981" }}>
+                    {new Date(proposal.signedAt).toLocaleDateString()}
+                  </span>
+                ) : (
+                  "-"
+                )}
+              </td>
+              <td style={listCellStyle}>
+                <ProposalStatusBadge status={proposal.status} size="small" />
+              </td>
+              <td style={listCellStyle}>
+                <div style={listActionsStyle}>
+                  <button 
+                    onClick={() => handleViewProposal(proposal)} 
+                    style={listActionButtonStyle(isSigned ? "#10b981" : "#3b82f6")} 
+                    title={isSigned ? "View Signed Document" : "View Proposal"}
+                  >
+                    {isSigned ? <MdVerified size={14} /> : <MdVisibility size={14} />}
+                  </button>
+                  {!isSigned && (
+                    <button onClick={() => handleSignProposal(proposal)} style={listActionButtonStyle("#10b981")} title="Sign">
+                      <MdEdit size={14} />
+                    </button>
+                  )}
+                  <button onClick={() => handleDownload(proposal)} style={listActionButtonStyle("#64748b")} title="Download">
+                    <MdDownload size={14} />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+);
+
+// Keep all other components (StatCard, EmptyState, RecentlyViewedGrid) and styles exactly the same as before
 const StatCard = ({ icon, color, value, label, trend }) => (
   <div style={statCardStyle}>
     <div style={statIconContainerStyle(color)}>{icon}</div>
@@ -542,129 +876,6 @@ const EmptyState = ({ icon, title, message }) => (
     <div style={emptyStateIconStyle}>{icon}</div>
     <h3 style={emptyStateTitleStyle}>{title}</h3>
     <p style={emptyStateMessageStyle}>{message}</p>
-  </div>
-);
-
-const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, handleDownload, getDaysLeft }) => (
-  <div style={proposalsGridStyle}>
-    {proposals.map((proposal, index) => {
-      const daysLeft = getDaysLeft(proposal.expiresAt);
-      const isExpiring = daysLeft !== null && daysLeft <= 3 && daysLeft > 0;
-      
-      return (
-        <div key={proposal.id || index} style={proposalCardStyle}>
-          <div style={cardBadgeStyle}>
-            <ProposalStatusBadge status={proposal.status} size="small" />
-          </div>
-          
-          <div style={cardIconStyle}>
-            <MdInsertDriveFile size={40} color={proposal.status === "signed" ? "#10b981" : "#6366f1"} />
-          </div>
-          
-          <h3 style={proposalTitleStyle}>{proposal.fileName}</h3>
-          
-          <div style={proposalMetaStyle}>
-            <div style={metaItemStyle}>
-              <MdPerson size={14} color="#94a3b8" />
-              <span>{proposal.sharedBy || "Admin"}</span>
-            </div>
-            <div style={metaItemStyle}>
-              <MdAccessTime size={14} color="#94a3b8" />
-              <span>{proposal.sharedAt.toLocaleDateString()}</span>
-            </div>
-            {proposal.expiresAt && (
-              <div style={metaItemStyle}>
-                <MdSchedule size={14} color={isExpiring ? "#f59e0b" : "#94a3b8"} />
-                <span style={isExpiring ? { color: "#f59e0b", fontWeight: "500" } : {}}>
-                  {daysLeft > 0 ? `${daysLeft} day${daysLeft !== 1 ? 's' : ''} left` : 'Expired'}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {isExpiring && (
-            <div style={expiringWarningStyle}>
-              <MdSchedule size={12} />
-              <span>Expiring soon!</span>
-            </div>
-          )}
-
-          <div style={cardActionsStyle}>
-            <button onClick={() => handleViewProposal(proposal)} style={actionButtonStyle("#3b82f6")}>
-              <MdVisibility size={16} />
-              View
-            </button>
-            
-            {proposal.status !== "signed" && (
-              <button onClick={() => handleSignProposal(proposal)} style={actionButtonStyle("#10b981")}>
-                <MdEdit size={16} />
-                Sign
-              </button>
-            )}
-            
-            <button onClick={() => handleDownload(proposal)} style={actionButtonStyle("#64748b")}>
-              <MdDownload size={16} />
-              Download
-            </button>
-          </div>
-
-          {proposal.status === "signed" && proposal.signedAt && (
-            <div style={signedInfoStyle}>
-              <MdCheckCircle size={12} color="#10b981" />
-              <span>Signed {new Date(proposal.signedAt).toLocaleDateString()}</span>
-            </div>
-          )}
-        </div>
-      );
-    })}
-  </div>
-);
-
-const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, handleDownload }) => (
-  <div style={proposalsListStyle}>
-    <table style={listTableStyle}>
-      <thead>
-        <tr style={listHeaderStyle}>
-          <th style={listHeaderCellStyle}>Proposal</th>
-          <th style={listHeaderCellStyle}>From</th>
-          <th style={listHeaderCellStyle}>Shared</th>
-          <th style={listHeaderCellStyle}>Status</th>
-          <th style={listHeaderCellStyle}>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {proposals.map((proposal, index) => (
-          <tr key={proposal.id || index} style={listRowStyle}>
-            <td style={listCellStyle}>
-              <div style={listFileInfoStyle}>
-                <MdInsertDriveFile size={20} color="#6366f1" />
-                <span>{proposal.fileName}</span>
-              </div>
-            </td>
-            <td style={listCellStyle}>{proposal.sharedBy || "Admin"}</td>
-            <td style={listCellStyle}>{proposal.sharedAt.toLocaleDateString()}</td>
-            <td style={listCellStyle}>
-              <ProposalStatusBadge status={proposal.status} size="small" />
-            </td>
-            <td style={listCellStyle}>
-              <div style={listActionsStyle}>
-                <button onClick={() => handleViewProposal(proposal)} style={listActionButtonStyle("#3b82f6")} title="View">
-                  <MdVisibility size={14} />
-                </button>
-                {proposal.status !== "signed" && (
-                  <button onClick={() => handleSignProposal(proposal)} style={listActionButtonStyle("#10b981")} title="Sign">
-                    <MdEdit size={14} />
-                  </button>
-                )}
-                <button onClick={() => handleDownload(proposal)} style={listActionButtonStyle("#64748b")} title="Download">
-                  <MdDownload size={14} />
-                </button>
-              </div>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
   </div>
 );
 
@@ -696,70 +907,7 @@ const RecentlyViewedGrid = ({ items }) => (
   </div>
 );
 
-const DashboardOverview = ({ proposals, stats, recentlyViewed, handleViewProposal }) => (
-  <div>
-    <div style={overviewSectionStyle}>
-      <h3 style={overviewTitleStyle}>Recent Proposals</h3>
-      <div style={recentProposalsListStyle}>
-        {proposals.slice(0, 5).map((proposal, index) => (
-          <div key={proposal.id || index} style={recentProposalItemStyle}>
-            <div style={recentProposalIconStyle}>
-              <MdInsertDriveFile size={20} color={proposal.status === "signed" ? "#10b981" : "#6366f1"} />
-            </div>
-            <div style={recentProposalInfoStyle}>
-              <div style={recentProposalNameStyle}>{proposal.fileName}</div>
-              <div style={recentProposalMetaStyle}>
-                <span>From {proposal.sharedBy || "Admin"}</span>
-                <span>•</span>
-                <span>{proposal.sharedAt.toLocaleDateString()}</span>
-              </div>
-            </div>
-            <ProposalStatusBadge status={proposal.status} size="small" />
-            <button onClick={() => handleViewProposal(proposal)} style={recentProposalButtonStyle}>
-              View
-            </button>
-          </div>
-        ))}
-        {proposals.length === 0 && (
-          <div style={emptyRecentStyle}>No proposals yet</div>
-        )}
-      </div>
-    </div>
-
-    <div style={overviewSectionStyle}>
-      <h3 style={overviewTitleStyle}>Recently Viewed</h3>
-      <div style={recentProposalsListStyle}>
-        {recentlyViewed.slice(0, 5).map((item, index) => (
-          <div key={item.id || index} style={recentProposalItemStyle}>
-            <div style={recentProposalIconStyle}>
-              <MdHistory size={20} color="#3b82f6" />
-            </div>
-            <div style={recentProposalInfoStyle}>
-              <div style={recentProposalNameStyle}>{item.fileName}</div>
-              <div style={recentProposalMetaStyle}>
-                <span>Viewed {item.viewedAt?.toLocaleDateString()}</span>
-              </div>
-            </div>
-            <button 
-              onClick={() => {
-                const encodedPath = btoa(item.filePath);
-                window.open(`/p/${encodedPath}`, '_blank');
-              }}
-              style={recentProposalButtonStyle}
-            >
-              Open
-            </button>
-          </div>
-        ))}
-        {recentlyViewed.length === 0 && (
-          <div style={emptyRecentStyle}>No recently viewed proposals</div>
-        )}
-      </div>
-    </div>
-  </div>
-);
-
-// Styles
+// Keep all styles exactly the same as your original file
 const containerStyle = {
   display: "flex",
   minHeight: "100vh",
@@ -767,7 +915,6 @@ const containerStyle = {
   fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
 };
 
-// Sidebar Styles
 const sidebarContainerStyle = (collapsed, mobileOpen) => ({
   width: collapsed ? 80 : 280,
   transition: "width 0.3s ease",
@@ -950,7 +1097,6 @@ const logoutNavStyle = {
   color: "#ef4444",
 };
 
-// Main Content Styles
 const mainContentStyle = (collapsed) => ({
   flex: 1,
   marginLeft: collapsed ? 80 : 280,
@@ -1194,6 +1340,13 @@ const sectionHeaderStyle = {
   marginBottom: "24px",
   flexWrap: "wrap",
   gap: "16px",
+};
+
+const overviewHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginBottom: "20px",
 };
 
 const sectionTitleStyle = {
@@ -1474,7 +1627,7 @@ const overviewTitleStyle = {
   fontSize: "16px",
   fontWeight: "600",
   color: "#1e293b",
-  margin: "0 0 20px 0",
+  margin: 0,
 };
 
 const recentProposalsListStyle = {

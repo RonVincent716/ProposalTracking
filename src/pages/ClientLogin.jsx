@@ -7,7 +7,9 @@ import {
   sendPasswordResetEmail,
   GoogleAuthProvider,
   signInWithPopup,
-  updateProfile
+  updateProfile,
+  updatePassword,
+  fetchSignInMethodsForEmail
 } from "firebase/auth";
 import { doc, setDoc, getDoc, serverTimestamp, updateDoc, query, collection, where, getDocs } from "firebase/firestore";
 import { 
@@ -20,7 +22,10 @@ import {
   MdDescription,
   MdCheckCircle,
   MdWarning,
-  MdDashboard
+  MdDashboard,
+  MdHistory,
+  MdDelete,
+  MdVerified
 } from "react-icons/md";
 import { FcGoogle } from "react-icons/fc";
 
@@ -42,9 +47,97 @@ export default function ClientLogin() {
   const [resetSent, setResetSent] = useState(false);
   const [proposalInfo, setProposalInfo] = useState(null);
   const [redirectTo, setRedirectTo] = useState("/client-dashboard");
+  const [rememberEmail, setRememberEmail] = useState(true);
+  const [savedEmails, setSavedEmails] = useState([]);
+  const [passwordSetupSent, setPasswordSetupSent] = useState(false);
+  const [googleUserEmail, setGoogleUserEmail] = useState("");
 
   const params = new URLSearchParams(location.search);
   const returnTo = params.get("returnTo");
+
+  // Load saved emails from localStorage on component mount
+  useEffect(() => {
+    const loadSavedEmails = () => {
+      try {
+        const saved = localStorage.getItem("savedClientEmails");
+        if (saved) {
+          const emails = JSON.parse(saved);
+          setSavedEmails(emails);
+          // If there's a last used email, set it
+          const lastUsed = localStorage.getItem("lastUsedClientEmail");
+          if (lastUsed && emails.includes(lastUsed)) {
+            setEmail(lastUsed);
+            // Focus password field when email is auto-filled
+            setTimeout(() => {
+              const passwordInput = document.getElementById("password-input");
+              if (passwordInput) passwordInput.focus();
+            }, 100);
+          }
+        }
+      } catch (error) {
+        console.error("Error loading saved emails:", error);
+      }
+    };
+    loadSavedEmails();
+  }, []);
+
+  // Save email to localStorage when remembered
+  const saveEmailToStorage = (emailToSave) => {
+    if (!rememberEmail) return;
+    
+    try {
+      let emails = [...savedEmails];
+      // Remove if exists
+      emails = emails.filter(e => e !== emailToSave);
+      // Add to beginning
+      emails.unshift(emailToSave);
+      // Keep only last 5
+      emails = emails.slice(0, 5);
+      setSavedEmails(emails);
+      localStorage.setItem("savedClientEmails", JSON.stringify(emails));
+      localStorage.setItem("lastUsedClientEmail", emailToSave);
+    } catch (error) {
+      console.error("Error saving email:", error);
+    }
+  };
+
+  // Remove saved email
+  const removeSavedEmail = (emailToRemove) => {
+    const emails = savedEmails.filter(e => e !== emailToRemove);
+    setSavedEmails(emails);
+    localStorage.setItem("savedClientEmails", JSON.stringify(emails));
+    if (email === emailToRemove) {
+      setEmail(emails[0] || "");
+      if (emails[0]) {
+        localStorage.setItem("lastUsedClientEmail", emails[0]);
+        // Focus password field when email changes
+        setTimeout(() => {
+          const passwordInput = document.getElementById("password-input");
+          if (passwordInput) passwordInput.focus();
+        }, 100);
+      } else {
+        localStorage.removeItem("lastUsedClientEmail");
+      }
+    }
+  };
+
+  // Clear all saved emails
+  const clearAllSavedEmails = () => {
+    setSavedEmails([]);
+    setEmail("");
+    localStorage.removeItem("savedClientEmails");
+    localStorage.removeItem("lastUsedClientEmail");
+  };
+
+  // Generate a random temporary password
+  const generateTemporaryPassword = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+    let password = '';
+    for (let i = 0; i < 12; i++) {
+      password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return password;
+  };
 
   useEffect(() => {
     // Determine redirect destination
@@ -61,7 +154,6 @@ export default function ClientLogin() {
       if (user) {
         const userDoc = await getDoc(doc(db, "users", user.uid));
         if (userDoc.exists() && userDoc.data().role === "client") {
-          // User is a client, redirect to the intended destination
           navigate(redirectTo);
         }
       }
@@ -89,7 +181,18 @@ export default function ClientLogin() {
     setError("");
     setLoading(true);
 
+    if (!email || !password) {
+      setError("Please enter both email and password");
+      setLoading(false);
+      return;
+    }
+
     try {
+      // Save the email if remember me is checked
+      if (rememberEmail) {
+        saveEmailToStorage(email);
+      }
+
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       
       const userDoc = await getDoc(doc(db, "users", userCredential.user.uid));
@@ -101,8 +204,6 @@ export default function ClientLogin() {
           await updateDoc(doc(db, "users", userCredential.user.uid), {
             lastLogin: serverTimestamp()
           });
-          
-          // After login, redirect to the intended destination (proposal or dashboard)
           navigate(redirectTo);
         } else if (userRole === "admin") {
           await auth.signOut();
@@ -115,7 +216,6 @@ export default function ClientLogin() {
           navigate(redirectTo);
         }
       } else {
-        // Create user document for existing auth user
         await setDoc(doc(db, "users", userCredential.user.uid), {
           email: userCredential.user.email,
           name: userCredential.user.displayName || email.split('@')[0],
@@ -179,23 +279,27 @@ export default function ClientLogin() {
     }
 
     try {
+      // Save the email if remember me is checked
+      if (rememberEmail) {
+        saveEmailToStorage(email);
+      }
+
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       
       await updateProfile(userCredential.user, {
         displayName: name
       });
       
-      // Create user document with client role
       await setDoc(doc(db, "users", userCredential.user.uid), {
         name: name,
         email: email,
         role: "client",
         createdAt: serverTimestamp(),
         lastLogin: serverTimestamp(),
-        emailVerified: userCredential.user.emailVerified
+        emailVerified: userCredential.user.emailVerified,
+        hasPassword: true
       });
 
-      // After signup, redirect to the intended destination
       navigate(redirectTo);
     } catch (error) {
       console.error("Signup error:", error);
@@ -228,30 +332,93 @@ export default function ClientLogin() {
       });
       
       const result = await signInWithPopup(auth, provider);
+      const user = result.user;
       
-      const userDoc = await getDoc(doc(db, "users", result.user.uid));
+      // Save the email for auto-fill
+      saveEmailToStorage(user.email);
+      setGoogleUserEmail(user.email);
+      
+      const userDoc = await getDoc(doc(db, "users", user.uid));
       
       if (!userDoc.exists()) {
-        await setDoc(doc(db, "users", result.user.uid), {
-          name: result.user.displayName || result.user.email.split('@')[0],
-          email: result.user.email,
-          role: "client",
-          createdAt: serverTimestamp(),
-          lastLogin: serverTimestamp(),
-          photoURL: result.user.photoURL
-        });
+        // Generate a temporary password for the Google account
+        const tempPassword = generateTemporaryPassword();
+        
+        try {
+          // Set a temporary password to enable email/password login
+          await updatePassword(user, tempPassword);
+          console.log("Temporary password set for Google account");
+          
+          // Send password reset email so user can set their own password
+          await sendPasswordResetEmail(auth, user.email);
+          setPasswordSetupSent(true);
+          
+          await setDoc(doc(db, "users", user.uid), {
+            name: user.displayName || user.email.split('@')[0],
+            email: user.email,
+            role: "client",
+            createdAt: serverTimestamp(),
+            lastLogin: serverTimestamp(),
+            photoURL: user.photoURL,
+            authProvider: "both",
+            hasPassword: true,
+            tempPasswordSet: true
+          });
+          
+          // Auto-fill the email and show success message
+          setEmail(user.email);
+          
+          setTimeout(() => {
+            setPasswordSetupSent(false);
+          }, 5000);
+          
+        } catch (passwordError) {
+          console.error("Error setting temporary password:", passwordError);
+          await setDoc(doc(db, "users", user.uid), {
+            name: user.displayName || user.email.split('@')[0],
+            email: user.email,
+            role: "client",
+            createdAt: serverTimestamp(),
+            lastLogin: serverTimestamp(),
+            photoURL: user.photoURL,
+            authProvider: "google",
+            hasPassword: false
+          });
+          setEmail(user.email);
+        }
       } else if (userDoc.data().role === "admin") {
         await auth.signOut();
         setError("This Google account is linked to an admin account. Please use the admin login.");
         setLoading(false);
         return;
       } else {
-        await updateDoc(doc(db, "users", result.user.uid), {
+        await updateDoc(doc(db, "users", user.uid), {
           lastLogin: serverTimestamp()
         });
+        
+        // If user has no password set, automatically send password setup email
+        if (!userDoc.data().hasPassword) {
+          const tempPassword = generateTemporaryPassword();
+          await updatePassword(user, tempPassword);
+          await sendPasswordResetEmail(auth, user.email);
+          setPasswordSetupSent(true);
+          await updateDoc(doc(db, "users", user.uid), {
+            hasPassword: true,
+            tempPasswordSet: true
+          });
+          
+          setTimeout(() => {
+            setPasswordSetupSent(false);
+          }, 5000);
+        }
+        
+        setEmail(user.email);
       }
-
-      navigate(redirectTo);
+      
+      // Don't redirect immediately - let user see the password setup message
+      // They can now login with email/password after setting their password
+      setLoading(false);
+      
     } catch (error) {
       console.error("Google sign-in error:", error);
       if (error.code === 'auth/popup-closed-by-user') {
@@ -261,7 +428,6 @@ export default function ClientLogin() {
       } else {
         setError("Failed to sign in with Google. Please try again.");
       }
-    } finally {
       setLoading(false);
     }
   };
@@ -350,6 +516,53 @@ export default function ClientLogin() {
           </div>
         )}
 
+        {passwordSetupSent && (
+          <div style={successStyle}>
+            <MdVerified size={18} />
+            <span>Password setup email sent! Check your inbox to set your password. You can now login with email and password after setting it up.</span>
+          </div>
+        )}
+
+        {/* Saved Emails Section - Shows recent logins for quick selection */}
+        {savedEmails.length > 0 && isLogin && !showReset && (
+          <div style={savedEmailsContainerStyle}>
+            <div style={savedEmailsHeaderStyle}>
+              <MdHistory size={16} />
+              <span>Recent logins</span>
+              <button onClick={clearAllSavedEmails} style={clearAllButtonStyle} title="Clear all">
+                <MdDelete size={14} />
+              </button>
+            </div>
+            <div style={savedEmailsListStyle}>
+              {savedEmails.map((savedEmail, index) => (
+                <div key={index} style={savedEmailItemStyle}>
+                  <button
+                    onClick={() => {
+                      setEmail(savedEmail);
+                      // Focus password field after selecting email
+                      setTimeout(() => {
+                        const passwordInput = document.getElementById("password-input");
+                        if (passwordInput) passwordInput.focus();
+                      }, 100);
+                    }}
+                    style={savedEmailButtonStyle}
+                  >
+                    <MdEmail size={14} />
+                    {savedEmail}
+                  </button>
+                  <button
+                    onClick={() => removeSavedEmail(savedEmail)}
+                    style={removeEmailButtonStyle}
+                    title="Remove"
+                  >
+                    <MdDelete size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {showReset ? (
           <form onSubmit={handlePasswordReset} style={formStyle}>
             <div style={inputGroupStyle}>
@@ -407,13 +620,14 @@ export default function ClientLogin() {
                 onChange={(e) => setEmail(e.target.value)}
                 style={inputStyle}
                 required
-                autoFocus={isLogin}
+                autoFocus={isLogin && !email}
               />
             </div>
 
             <div style={inputGroupStyle}>
               <MdLock size={20} color="#666" style={inputIconStyle} />
               <input
+                id="password-input"
                 type={showPassword ? "text" : "password"}
                 placeholder="Password"
                 value={password}
@@ -441,6 +655,20 @@ export default function ClientLogin() {
                   style={inputStyle}
                   required
                 />
+              </div>
+            )}
+
+            {isLogin && (
+              <div style={checkboxContainerStyle}>
+                <label style={checkboxLabelStyle}>
+                  <input
+                    type="checkbox"
+                    checked={rememberEmail}
+                    onChange={(e) => setRememberEmail(e.target.checked)}
+                    style={checkboxStyle}
+                  />
+                  <span style={checkboxTextStyle}>Remember my email</span>
+                </label>
               </div>
             )}
 
@@ -490,11 +718,11 @@ export default function ClientLogin() {
               onClick={() => {
                 setIsLogin(!isLogin);
                 setError("");
-                setEmail("");
                 setPassword("");
                 setConfirmPassword("");
                 setName("");
                 setShowReset(false);
+                setPasswordSetupSent(false);
               }}
               style={toggleButtonStyle}
             >
@@ -549,7 +777,109 @@ export default function ClientLogin() {
   );
 }
 
-// Styles
+// Additional Styles
+const savedEmailsContainerStyle = {
+  marginBottom: "20px",
+  padding: "12px",
+  background: "#f8fafc",
+  borderRadius: "12px",
+  border: "1px solid #e2e8f0",
+};
+
+const savedEmailsHeaderStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  fontSize: "12px",
+  color: "#64748b",
+  marginBottom: "8px",
+  paddingBottom: "8px",
+  borderBottom: "1px solid #e2e8f0",
+};
+
+const savedEmailsListStyle = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "8px",
+};
+
+const savedEmailItemStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "4px",
+  background: "#fff",
+  borderRadius: "8px",
+  border: "1px solid #e2e8f0",
+  overflow: "hidden",
+};
+
+const savedEmailButtonStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  padding: "6px 10px",
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  color: "#1e293b",
+  fontSize: "13px",
+  transition: "all 0.2s",
+};
+
+const removeEmailButtonStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "6px 8px",
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  color: "#94a3b8",
+  transition: "all 0.2s",
+  borderLeft: "1px solid #e2e8f0",
+};
+
+const clearAllButtonStyle = {
+  marginLeft: "auto",
+  display: "flex",
+  alignItems: "center",
+  gap: "4px",
+  padding: "4px 8px",
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  color: "#94a3b8",
+  fontSize: "11px",
+  borderRadius: "6px",
+  transition: "all 0.2s",
+};
+
+const checkboxContainerStyle = {
+  marginBottom: "16px",
+  display: "flex",
+  alignItems: "center",
+};
+
+const checkboxLabelStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  cursor: "pointer",
+  fontSize: "13px",
+  color: "#64748b",
+};
+
+const checkboxStyle = {
+  width: "16px",
+  height: "16px",
+  cursor: "pointer",
+};
+
+const checkboxTextStyle = {
+  userSelect: "none",
+};
+
+// Keep all existing styles from your original file
 const containerStyle = {
   minHeight: "100vh",
   display: "flex",

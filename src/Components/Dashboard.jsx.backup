@@ -29,7 +29,7 @@ import {
   MdContentCopy,
   MdCheckCircleOutline
 } from "react-icons/md";
-import { collection, onSnapshot, orderBy, query, deleteDoc, doc, writeBatch } from "firebase/firestore";
+import { collection, onSnapshot, orderBy, query, deleteDoc, doc, writeBatch, addDoc, serverTimestamp } from "firebase/firestore";
 import { ref, listAll, getDownloadURL } from "firebase/storage";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 
@@ -157,6 +157,21 @@ export default function Dashboard() {
       
       setShareLink(link);
       setShowShareSuccess(true);
+
+      // IMPORTANT: Add to sharedProposals collection for client dashboard
+    await addDoc(collection(db, "sharedProposals"), {
+      fileName: sharingProposal.name,
+      filePath: fullPath,
+      clientEmail: clientEmail,
+      clientName: clientName || clientEmail.split('@')[0],
+      sharedBy: user.email,
+      sharedByEmail: user.email,
+      sharedAt: serverTimestamp(),
+      status: "pending",
+      viewCount: 0
+    });
+    
+    console.log("✅ Added to sharedProposals for:", clientEmail);
       
       // Auto hide success message after 3 seconds
       setTimeout(() => {
@@ -2176,74 +2191,84 @@ export default function Dashboard() {
           </>
         )}
 
-        {/* SIGNED PROPOSALS TAB */}
-        {activeTab === "signed" && (
-          <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
-              <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <MdCheckCircleOutline size={28} color="#10B981" />
-                Signed Proposals
-              </h2>
-              <div style={{ display: "flex", gap: "10px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 16px", background: "#f0fdf4", borderRadius: "100px", border: "1px solid #86efac" }}>
-                  <span style={{ fontSize: "13px", color: "#166534" }}>Total Signed</span>
-                  <span style={{ fontSize: "16px", fontWeight: "700", color: "#059669" }}>{signedProposals.length}</span>
+       {/* SIGNED PROPOSALS TAB */}
+{activeTab === "signed" && (
+  <>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+      <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <MdCheckCircleOutline size={28} color="#10B981" />
+        Signed Proposals
+      </h2>
+      <div style={{ display: "flex", gap: "10px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 16px", background: "#f0fdf4", borderRadius: "100px", border: "1px solid #86efac" }}>
+          <span style={{ fontSize: "13px", color: "#166534" }}>Total Signed</span>
+          <span style={{ fontSize: "16px", fontWeight: "700", color: "#059669" }}>{signedProposals.length}</span>
+        </div>
+      </div>
+    </div>
+
+    <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 20, marginTop: 10, flexWrap: "wrap" }}>
+      <input type="text" placeholder="Search signed proposals..." value={viewsSearch}
+        onChange={(e) => { setViewsSearch(e.target.value); setViewsPage(1); }}
+        style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.1)", background: "#fff", minWidth: "200px" }} />
+      <span style={{ fontSize: 13, color: "#666", fontWeight: 500, whiteSpace: "nowrap" }}>{signedProposals.length} found</span>
+    </div>
+
+    <div style={{ width: "100%", overflowX: "auto", borderRadius: "8px", border: "1px solid #eee", marginBottom: "10px" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", tableLayout: "fixed" }}>
+        <thead>
+          <tr style={{ background: "linear-gradient(90deg, #10B981 0%, #059669 100%)", color: "#fff" }}>
+            <th style={{ padding: "12px 6px", width: "30%" }}>Proposal</th>
+            <th style={{ padding: "12px 6px", width: "20%" }}>Signed By</th>
+            <th style={{ padding: "12px 6px", width: "25%" }}>Email</th>
+            <th style={{ padding: "12px 6px", width: "15%" }}>Date Signed</th>
+            <th style={{ padding: "12px 6px", width: "10%" }}>Actions</th>
+           </tr>
+        </thead>
+        <tbody>
+          {signedProposals.map((proposal, i) => (
+            <tr key={proposal.id || i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
+              <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "left" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <MdDescription color="#10B981" />
+                  <span>{proposal.proposalName || proposal.fileName || 'Unknown'}</span>
                 </div>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 20, marginTop: 10, flexWrap: "wrap" }}>
-              <input type="text" placeholder="Search signed proposals..." value={viewsSearch}
-                onChange={(e) => { setViewsSearch(e.target.value); setViewsPage(1); }}
-                style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.1)", background: "#fff", minWidth: "200px" }} />
-              <span style={{ fontSize: 13, color: "#666", fontWeight: 500, whiteSpace: "nowrap" }}>{signedProposals.length} found</span>
-            </div>
-
-            <div style={{ width: "100%", overflowX: "auto", borderRadius: "8px", border: "1px solid #eee", marginBottom: "10px" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", tableLayout: "fixed" }}>
-                <thead>
-                  <tr style={{ background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)", color: "#fff" }}>
-                    <th style={{ padding: "12px 6px", width: "25%" }}>Proposal</th>
-                    <th style={{ padding: "12px 6px", width: "20%" }}>Signed By</th>
-                    <th style={{ padding: "12px 6px", width: "20%" }}>Email</th>
-                    <th style={{ padding: "12px 6px", width: "15%" }}>Date Signed</th>
-                    <th style={{ padding: "12px 6px", width: "10%" }}>Signature</th>
-                    <th style={{ padding: "12px 6px", width: "10%" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {signedProposals.map((proposal, i) => (
-                    <tr key={proposal.id || i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
-                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "left" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <MdDescription color="#10B981" />
-                          <span>{proposal.proposalName || proposal.fileName || 'Unknown'}</span>
-                        </div>
-                      </td>
-                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>{proposal.signedBy || 'Unknown'}</td>
-                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>{proposal.signerEmail || 'N/A'}</td>
-                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                        {proposal.signedAt ? new Date(proposal.signedAt).toLocaleDateString() : 'N/A'}
-                      </td>
-                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                        {proposal.signatureType === 'draw' ? '🖊️ Drawn' : '📝 Typed'}
-                      </td>
-                      <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                        <button onClick={() => { if (proposal.proposalPath) { const encoded = btoa(proposal.proposalPath); window.open(`/sign/${encoded}`, '_blank'); } }}
-                          style={{ padding: "6px 10px", background: "#2196F3", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }}>
-                          <MdVisibility size={14} /> View
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {signedProposals.length === 0 && (
-                    <tr><td colSpan={6} style={{ textAlign: "center", padding: 50 }}>No signed proposals yet</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
+              </td>
+              <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                {proposal.signedBy || 'Unknown'}
+              </td>
+              <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                {proposal.signerEmail || 'N/A'}
+              </td>
+              <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                {proposal.signedAt ? new Date(proposal.signedAt).toLocaleDateString() : 'N/A'}
+              </td>
+              <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
+                {/* UPDATED: View button now links to signed proposal detail page */}
+                <button 
+                  onClick={() => { 
+                    if (proposal.id) {
+                      navigate(`/signed/${proposal.id}`);
+                    } else if (proposal.proposalPath) {
+                      const encoded = btoa(proposal.proposalPath);
+                      navigate(`/signed/${proposal.id || encoded}`);
+                    }
+                  }}
+                  style={compactViewBtn}
+                >
+                  <MdVisibility size={14} /> View Details
+                </button>
+              </td>
+            </tr>
+          ))}
+          {signedProposals.length === 0 && (
+            <tr><td colSpan={5} style={{ textAlign: "center", padding: 50 }}>No signed proposals yet</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </>
+)}
 
         {/* LIVE VIEWS TAB */}
         {activeTab === "views" && (
