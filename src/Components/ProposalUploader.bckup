@@ -1,18 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { storage, auth, db } from "../firebase";
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytesResumable } from "firebase/storage";
 import { onAuthStateChanged } from "firebase/auth";
-import { 
-  collection, 
-  addDoc, 
-  serverTimestamp,
-  query,
-  where,
-  getDocs,
-  doc,
-  setDoc,
-  getDoc
-} from "firebase/firestore";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { 
   MdCloudUpload, 
   MdCheckCircle, 
@@ -21,10 +11,7 @@ import {
   MdEmail, 
   MdClose,
   MdContentCopy,
-  MdOpenInNew,
-  MdPerson,
-  MdSearch,
-  MdInfo
+  MdOpenInNew
 } from "react-icons/md";
 import emailjs from '@emailjs/browser';
 
@@ -45,67 +32,22 @@ export default function ProposalUploader() {
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   
-  // Email form state
+  // Separate state for email form to prevent re-renders
   const [recipientEmail, setRecipientEmail] = useState("");
   const [recipientName, setRecipientName] = useState("");
   const [emailMessage, setEmailMessage] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+  
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [emailError, setEmailError] = useState("");
   const [uploadedFileInfo, setUploadedFileInfo] = useState(null);
-  
-  // Client search state
-  const [searchTerm, setSearchTerm] = useState("");
-  const [searchResults, setSearchResults] = useState([]);
-  const [searching, setSearching] = useState(false);
-  const [selectedClient, setSelectedClient] = useState(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
     emailjs.init(EMAILJS_CONFIG.PUBLIC_KEY);
     return () => unsub();
   }, []);
-
-  // Search for existing clients
-  const searchClients = async (term) => {
-    if (!term || term.length < 2) {
-      setSearchResults([]);
-      return;
-    }
-    
-    setSearching(true);
-    try {
-      const usersRef = collection(db, "users");
-      const q = query(
-        usersRef,
-        where("role", "==", "client"),
-        where("email", ">=", term.toLowerCase()),
-        where("email", "<=", term.toLowerCase() + '\uf8ff')
-      );
-      const snapshot = await getDocs(q);
-      const results = [];
-      snapshot.forEach(doc => {
-        results.push({ id: doc.id, ...doc.data() });
-      });
-      setSearchResults(results);
-    } catch (error) {
-      console.error("Error searching clients:", error);
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  // Debounced search
-  useEffect(() => {
-    const delayDebounce = setTimeout(() => {
-      if (searchTerm) {
-        searchClients(searchTerm);
-      } else {
-        setSearchResults([]);
-      }
-    }, 500);
-    return () => clearTimeout(delayDebounce);
-  }, [searchTerm]);
 
   const sanitizeFileName = useCallback((fileName) => {
     return fileName.replace(/[^a-zA-Z0-9.\-_]/g, "_");
@@ -175,7 +117,6 @@ export default function ProposalUploader() {
         setUploading(false);
       },
       async () => {
-        const url = await getDownloadURL(fileRef);
         const encoded = btoa(filePath);
         const link = `${window.location.origin}/p/${encoded}`;
         setShareLink(link);
@@ -188,15 +129,12 @@ export default function ProposalUploader() {
         });
         
         try {
-          // Save proposal to Firestore
           await addDoc(collection(db, "proposals"), {
             fileName: uniqueName,
             originalName: file.name,
             filePath: filePath,
             shareLink: link,
-            downloadUrl: url,
-            uploadedBy: user.uid,
-            uploadedByEmail: user.email,
+            uploadedBy: user.email,
             uploadedAt: serverTimestamp(),
             size: file.size
           });
@@ -219,14 +157,6 @@ export default function ProposalUploader() {
     );
   }, [file, user, sanitizeFileName]);
 
-  const selectExistingClient = (client) => {
-    setSelectedClient(client);
-    setRecipientEmail(client.email);
-    setRecipientName(client.displayName || client.email.split('@')[0]);
-    setSearchTerm("");
-    setSearchResults([]);
-  };
-
   const sendEmail = useCallback(async () => {
     if (!recipientEmail) {
       setEmailError("Please enter recipient email");
@@ -242,68 +172,20 @@ export default function ProposalUploader() {
     setSendingEmail(true);
     setEmailError("");
 
+    const templateParams = {
+      to_email: recipientEmail,
+      to_name: recipientName || "Valued Recipient",
+      from_name: user?.displayName || user?.email?.split('@')[0] || "Someone",
+      from_email: user?.email,
+      proposal_name: uploadedFileInfo?.name || "Proposal",
+      proposal_link: shareLink,
+      message: emailMessage || "I'd like to share this proposal with you. Please review it and let me know your thoughts.",
+      reply_to: user?.email,
+      current_date: new Date().toLocaleDateString()
+    };
+
     try {
-      // Find or create client in users collection
-      let clientId = null;
-      const usersQuery = query(
-        collection(db, "users"),
-        where("email", "==", recipientEmail.toLowerCase())
-      );
-      const userSnapshot = await getDocs(usersQuery);
-      
-      if (!userSnapshot.empty) {
-        const clientDoc = userSnapshot.docs[0];
-        clientId = clientDoc.id;
-        const clientData = clientDoc.data();
-        
-        // Update if role is not set
-        if (clientData.role !== "client") {
-          await updateDoc(doc(db, "users", clientId), {
-            role: "client"
-          });
-        }
-      } else {
-        // Create new client user
-        const newClientRef = await addDoc(collection(db, "users"), {
-          email: recipientEmail.toLowerCase(),
-          displayName: recipientName || recipientEmail.split('@')[0],
-          role: "client",
-          createdAt: serverTimestamp(),
-          status: "active"
-        });
-        clientId = newClientRef.id;
-      }
-      
-      // Save to sharedProposals collection
-      await addDoc(collection(db, "sharedProposals"), {
-        fileName: uploadedFileInfo?.name,
-        filePath: uploadedFileInfo?.path,
-        fileUrl: uploadedFileInfo?.link,
-        clientEmail: recipientEmail.toLowerCase(),
-        clientId: clientId,
-        clientName: recipientName || recipientEmail.split('@')[0],
-        sharedBy: user.uid,
-        sharedByEmail: user.email,
-        sharedAt: serverTimestamp(),
-        status: "pending",
-        viewCount: 0
-      });
-
-      // Send email via EmailJS
-      const templateParams = {
-        to_email: recipientEmail,
-        to_name: recipientName || "Valued Client",
-        from_name: user?.displayName || user?.email?.split('@')[0] || "Someone",
-        from_email: user?.email,
-        proposal_name: uploadedFileInfo?.name || "Proposal",
-        proposal_link: shareLink,
-        message: emailMessage || "I'd like to share this proposal with you. Please log in to view and sign it.",
-        reply_to: user?.email,
-        current_date: new Date().toLocaleDateString(),
-        login_link: `${window.location.origin}/client-login`
-      };
-
-      await emailjs.send(
+      const response = await emailjs.send(
         EMAILJS_CONFIG.SERVICE_ID,
         EMAILJS_CONFIG.TEMPLATE_ID,
         templateParams
@@ -311,33 +193,37 @@ export default function ProposalUploader() {
 
       console.log("Email sent successfully to:", recipientEmail);
       
-      // Save email history
-      await addDoc(collection(db, "emailHistory"), {
-        proposalId: uploadedFileInfo?.path,
-        proposalName: uploadedFileInfo?.name,
-        recipientEmail: recipientEmail,
-        recipientName: recipientName,
-        sentBy: user.email,
-        sentAt: serverTimestamp(),
-        shareLink: shareLink,
-        message: emailMessage,
-        status: "sent"
-      });
+      try {
+        await addDoc(collection(db, "emailHistory"), {
+          proposalId: uploadedFileInfo?.path,
+          proposalName: uploadedFileInfo?.name,
+          recipientEmail: recipientEmail,
+          recipientName: recipientName,
+          sentBy: user.email,
+          sentAt: serverTimestamp(),
+          shareLink: shareLink,
+          message: emailMessage,
+          status: "sent"
+        });
+      } catch (err) {
+        console.error("Error saving email record:", err);
+      }
 
       setEmailSent(true);
       
       setTimeout(() => {
         setShowEmailModal(false);
         setEmailSent(false);
+        // Reset email form
         setRecipientEmail("");
         setRecipientName("");
         setEmailMessage("");
-        setSelectedClient(null);
+        setEmailSubject("");
       }, 3000);
       
     } catch (error) {
       console.error("Error sending email:", error);
-      setEmailError(`Failed to send email: ${error.text || error.message || "Please check your configuration"}`);
+      setEmailError(`Failed to send email: ${error.text || error.message || "Please check your EmailJS configuration"}`);
     } finally {
       setSendingEmail(false);
     }
@@ -357,12 +243,9 @@ export default function ProposalUploader() {
     setShowEmailModal(false);
     setEmailError("");
     setEmailSent(false);
-    setSearchTerm("");
-    setSearchResults([]);
-    setSelectedClient(null);
   }, []);
 
-  // Email Modal Component
+  // Memoized Email Modal to prevent re-renders
   const EmailModal = useMemo(() => {
     if (!showEmailModal) return null;
     
@@ -372,7 +255,7 @@ export default function ProposalUploader() {
           <div style={styles.modalHeader}>
             <h3 style={styles.modalTitle}>
               <MdEmail style={styles.modalIcon} />
-              Share Proposal with Client
+              Send Proposal via Email
             </h3>
             {!sendingEmail && !emailSent && (
               <button style={styles.closeButton} onClick={closeModal}>
@@ -384,12 +267,9 @@ export default function ProposalUploader() {
           {emailSent ? (
             <div style={styles.emailSuccess}>
               <MdCheckCircle size={60} style={styles.successIcon} />
-              <h3 style={styles.successTitle}>Proposal Shared Successfully!</h3>
+              <h3 style={styles.successTitle}>Email Sent Successfully!</h3>
               <p style={styles.successMessage}>
                 Your proposal has been sent to <strong>{recipientEmail}</strong>
-              </p>
-              <p style={styles.successNote}>
-                The client can now log in to view and sign the proposal.
               </p>
               <button style={styles.doneButton} onClick={closeModal}>
                 Done
@@ -398,52 +278,20 @@ export default function ProposalUploader() {
           ) : (
             <>
               <div style={styles.modalBody}>
-                {/* Search for existing clients */}
-                <div style={styles.searchSection}>
-                  <label style={styles.label}>
-                    <MdSearch size={14} /> Search Existing Client
-                  </label>
-                  <input
-                    type="text"
-                    style={styles.searchInput}
-                    placeholder="Search by email..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    disabled={sendingEmail}
-                  />
-                  {searching && <p style={styles.searchingText}>Searching...</p>}
-                  {searchResults.length > 0 && (
-                    <div style={styles.searchResults}>
-                      {searchResults.map(client => (
-                        <div
-                          key={client.id}
-                          onClick={() => selectExistingClient(client)}
-                          style={styles.searchResultItem}
-                        >
-                          <MdPerson size={16} color="#6366f1" />
-                          <div>
-                            <div style={styles.resultEmail}>{client.email}</div>
-                            <div style={styles.resultName}>{client.displayName || "Client"}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <div style={styles.infoBox}>
+                  <strong>📧 Sending as:</strong> Your EmailJS registered email
+                  <br />
+                  <strong>👤 Your name shown:</strong> {user?.email?.split('@')[0] || user?.email}
                 </div>
 
-                <div style={styles.divider}>
-                  <span>OR</span>
-                </div>
-
-                {/* New client form */}
                 <div style={styles.formGroup}>
                   <label style={styles.label}>
-                    Client Email <span style={styles.required}>*</span>
+                    Recipient Email <span style={styles.required}>*</span>
                   </label>
                   <input
                     type="email"
                     style={styles.input}
-                    placeholder="client@example.com"
+                    placeholder="recipient@example.com"
                     value={recipientEmail}
                     onChange={(e) => setRecipientEmail(e.target.value)}
                     disabled={sendingEmail}
@@ -452,7 +300,7 @@ export default function ProposalUploader() {
                 </div>
 
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>Client Name (Optional)</label>
+                  <label style={styles.label}>Recipient Name (Optional)</label>
                   <input
                     type="text"
                     style={styles.input}
@@ -475,23 +323,15 @@ export default function ProposalUploader() {
                   />
                 </div>
 
-                <div style={styles.infoBox}>
-                  <MdInfo size={16} color="#00D4FF" />
-                  <span>
-                    The client will receive an email with a link to log in and access this proposal.
-                    They can view, track time spent, and sign the document.
-                  </span>
-                </div>
-
                 <div style={styles.proposalPreview}>
                   <div style={styles.previewHeader}>
                     <MdOpenInNew size={14} />
-                    <span>Proposal to Share</span>
+                    <span>Proposal Preview</span>
                   </div>
                   <div style={styles.previewContent}>
                     <strong>{uploadedFileInfo?.name}</strong>
                     <div style={styles.previewLink}>
-                      {shareLink?.substring(0, 60)}...
+                      <span>{shareLink?.substring(0, 50)}...</span>
                     </div>
                   </div>
                 </div>
@@ -521,7 +361,7 @@ export default function ProposalUploader() {
                   ) : (
                     <>
                       <MdSend size={18} />
-                      Share Proposal
+                      Send Email
                     </>
                   )}
                 </button>
@@ -531,7 +371,7 @@ export default function ProposalUploader() {
         </div>
       </div>
     );
-  }, [showEmailModal, sendingEmail, emailSent, recipientEmail, recipientName, emailMessage, uploadedFileInfo, shareLink, emailError, user, searchTerm, searchResults, searching, sendEmail, closeModal, selectExistingClient]);
+  }, [showEmailModal, sendingEmail, emailSent, recipientEmail, recipientName, emailMessage, uploadedFileInfo, shareLink, emailError, user, sendEmail, closeModal]);
 
   return (
     <div style={styles.container}>
@@ -643,7 +483,7 @@ export default function ProposalUploader() {
                 style={styles.emailButton}
               >
                 <MdEmail size={18} />
-                Share with Client
+                Send via Email
               </button>
               <a 
                 href={shareLink} 
@@ -852,54 +692,6 @@ const styles = {
     justifyContent: 'center',
     gap: '8px'
   },
-  searchSection: {
-    marginBottom: '20px'
-  },
-  searchInput: {
-    width: '100%',
-    padding: '10px 12px',
-    border: '1px solid #ddd',
-    borderRadius: '8px',
-    fontSize: '14px',
-    boxSizing: 'border-box'
-  },
-  searchingText: {
-    fontSize: '12px',
-    color: '#666',
-    marginTop: '5px'
-  },
-  searchResults: {
-    marginTop: '8px',
-    border: '1px solid #e0e0e0',
-    borderRadius: '8px',
-    maxHeight: '200px',
-    overflowY: 'auto'
-  },
-  searchResultItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    padding: '10px 12px',
-    cursor: 'pointer',
-    borderBottom: '1px solid #f0f0f0',
-    transition: 'background 0.2s'
-  },
-  resultEmail: {
-    fontSize: '13px',
-    fontWeight: '500',
-    color: '#333'
-  },
-  resultName: {
-    fontSize: '11px',
-    color: '#666'
-  },
-  divider: {
-    textAlign: 'center',
-    margin: '20px 0',
-    position: 'relative',
-    color: '#999',
-    fontSize: '12px'
-  },
   infoBox: {
     background: '#e3f2fd',
     padding: '12px',
@@ -907,10 +699,7 @@ const styles = {
     marginBottom: '20px',
     fontSize: '12px',
     color: '#1976D2',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    lineHeight: '1.4'
+    lineHeight: '1.5'
   },
   modalOverlay: {
     position: 'fixed',
@@ -1088,11 +877,6 @@ const styles = {
     fontSize: '14px',
     color: '#666'
   },
-  successNote: {
-    margin: 0,
-    fontSize: '12px',
-    color: '#10B981'
-  },
   doneButton: {
     marginTop: '8px',
     padding: '10px 32px',
@@ -1146,10 +930,6 @@ styleSheet.textContent = `
   
   button:active {
     transform: translateY(0);
-  }
-  
-  .search-result-item:hover {
-    background: #f5f5f5;
   }
 `;
 document.head.appendChild(styleSheet);

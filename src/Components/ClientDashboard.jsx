@@ -1,3 +1,4 @@
+// src/Components/ClientDashboard.jsx
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { auth, db, storage } from "../firebase";
@@ -186,6 +187,15 @@ export default function ClientDashboard() {
           console.error("Error getting file URL:", error);
         }
 
+        let senderDisplay = "Admin";
+        if (data.sharedByEmail) {
+          senderDisplay = data.sharedByEmail;
+        } else if (data.sharedBy && data.sharedBy.includes('@')) {
+          senderDisplay = data.sharedBy;
+        } else if (data.sharedByName) {
+          senderDisplay = data.sharedByName;
+        }
+
         proposalsData.push({
           id: documentSnapshot.id,
           fileName: data.fileName,
@@ -194,6 +204,8 @@ export default function ClientDashboard() {
           sharedAt: data.sharedAt?.toDate?.() || new Date(data.sharedAt),
           sharedBy: data.sharedBy,
           sharedByEmail: data.sharedByEmail,
+          sharedByName: data.sharedByName,
+          senderDisplay: senderDisplay,
           status: isSigned ? "signed" : (hasViewed ? "viewed" : "pending"),
           signedAt: data.signedAt,
           expiresAt: data.expiresAt?.toDate?.() || null,
@@ -316,7 +328,7 @@ export default function ClientDashboard() {
 
   const filteredProposals = proposals.filter(proposal => {
     const matchesSearch = proposal.fileName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          (proposal.sharedBy || "").toLowerCase().includes(searchTerm.toLowerCase());
+                          (proposal.senderDisplay || "").toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === "all" || proposal.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -362,7 +374,7 @@ export default function ClientDashboard() {
                   <div style={recentProposalInfoStyle}>
                     <div style={recentProposalNameStyle}>{proposal.fileName}</div>
                     <div style={recentProposalMetaStyle}>
-                      <span>From {proposal.sharedBy || "Admin"}</span>
+                      <span>From: {proposal.senderDisplay || proposal.sharedByEmail || proposal.sharedBy || "Admin"}</span>
                       <span>•</span>
                       <span>{proposal.sharedAt.toLocaleDateString()}</span>
                     </div>
@@ -894,11 +906,11 @@ const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, hand
           <div style={proposalMetaStyle}>
             <div style={metaItemStyle}>
               <MdPerson size={14} color="#94a3b8" />
-              <span>{proposal.sharedBy || "Admin"}</span>
+              <span>From: <strong>{proposal.senderDisplay || proposal.sharedByEmail || proposal.sharedBy || "Admin"}</strong></span>
             </div>
             <div style={metaItemStyle}>
               <MdAccessTime size={14} color="#94a3b8" />
-              <span>{proposal.sharedAt.toLocaleDateString()}</span>
+              <span>Received: {proposal.sharedAt.toLocaleDateString()}</span>
             </div>
             {isSigned && proposal.signedAt && (
               <div style={metaItemStyle}>
@@ -960,11 +972,11 @@ const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, hand
         <tr style={listHeaderStyle}>
           <th style={listHeaderCellStyle}>Proposal</th>
           <th style={listHeaderCellStyle}>From</th>
-          <th style={listHeaderCellStyle}>Shared</th>
+          <th style={listHeaderCellStyle}>Received</th>
           <th style={listHeaderCellStyle}>Signed Date</th>
           <th style={listHeaderCellStyle}>Status</th>
           <th style={listHeaderCellStyle}>Actions</th>
-         </tr>
+        </tr>
       </thead>
       <tbody>
         {proposals.map((proposal, index) => {
@@ -981,7 +993,9 @@ const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, hand
                   <span>{proposal.fileName}</span>
                 </div>
               </td>
-              <td style={listCellStyle}>{proposal.sharedBy || "Admin"}</td>
+              <td style={listCellStyle}>
+                {proposal.senderDisplay || proposal.sharedByEmail || proposal.sharedBy || "Admin"}
+              </td>
               <td style={listCellStyle}>{proposal.sharedAt.toLocaleDateString()}</td>
               <td style={listCellStyle}>
                 {isSigned && proposal.signedAt ? (
@@ -1013,8 +1027,8 @@ const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, hand
                     <MdDownload size={14} />
                   </button>
                 </div>
-               </td>
-             </tr>
+              </td>
+            </tr>
           );
         })}
       </tbody>
@@ -1051,7 +1065,7 @@ const RecentlyViewedGrid = ({ items }) => (
   </div>
 );
 
-// Keep all styles from your original file (they remain the same)
+// Styles
 const containerStyle = {
   display: "flex",
   minHeight: "100vh",

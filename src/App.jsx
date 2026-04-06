@@ -14,6 +14,8 @@ import ClientDashboard from "./Components/ClientDashboard"; // Add this import
 import SmartProposalViewer from "./Components/SmartProposalViewer"; // Add this import
 import ProtectedRoute from "./Components/ProtectedRoute";
 import SignedProposalDetail from "./Components/SignedProposalDetail"; // Add this import
+
+
 function App() {
   return (
     <BrowserRouter>
@@ -34,7 +36,8 @@ function App() {
             </ProtectedRoute>
           }
         />
-
+      
+            
         <Route
           path="/editor"
           element={
@@ -58,7 +61,7 @@ function App() {
         
         {/* NEW: Client Login - For accessing proposals */}
         
-       
+      
         <Route path="/client-login/:path" element={<ClientLogin />} />
         <Route path="/client-login" element={<ClientLogin />} />
           <Route path="/client-dashboard" element={<ClientDashboard />} />

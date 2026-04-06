@@ -1,3 +1,4 @@
+// src/pages/ClientLogin.jsx
 import { useState, useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { auth, db } from "../firebase";
@@ -25,7 +26,8 @@ import {
   MdDashboard,
   MdHistory,
   MdDelete,
-  MdVerified
+  MdVerified,
+  MdInfo
 } from "react-icons/md";
 import { FcGoogle } from "react-icons/fc";
 
@@ -50,7 +52,6 @@ export default function ClientLogin() {
   const [rememberEmail, setRememberEmail] = useState(true);
   const [savedEmails, setSavedEmails] = useState([]);
   const [passwordSetupSent, setPasswordSetupSent] = useState(false);
-  const [googleUserEmail, setGoogleUserEmail] = useState("");
 
   const params = new URLSearchParams(location.search);
   const returnTo = params.get("returnTo");
@@ -63,11 +64,9 @@ export default function ClientLogin() {
         if (saved) {
           const emails = JSON.parse(saved);
           setSavedEmails(emails);
-          // If there's a last used email, set it
           const lastUsed = localStorage.getItem("lastUsedClientEmail");
           if (lastUsed && emails.includes(lastUsed)) {
             setEmail(lastUsed);
-            // Focus password field when email is auto-filled
             setTimeout(() => {
               const passwordInput = document.getElementById("password-input");
               if (passwordInput) passwordInput.focus();
@@ -87,11 +86,8 @@ export default function ClientLogin() {
     
     try {
       let emails = [...savedEmails];
-      // Remove if exists
       emails = emails.filter(e => e !== emailToSave);
-      // Add to beginning
       emails.unshift(emailToSave);
-      // Keep only last 5
       emails = emails.slice(0, 5);
       setSavedEmails(emails);
       localStorage.setItem("savedClientEmails", JSON.stringify(emails));
@@ -110,7 +106,6 @@ export default function ClientLogin() {
       setEmail(emails[0] || "");
       if (emails[0]) {
         localStorage.setItem("lastUsedClientEmail", emails[0]);
-        // Focus password field when email changes
         setTimeout(() => {
           const passwordInput = document.getElementById("password-input");
           if (passwordInput) passwordInput.focus();
@@ -154,7 +149,14 @@ export default function ClientLogin() {
       if (user) {
         const userDoc = await getDoc(doc(db, "users", user.uid));
         if (userDoc.exists() && userDoc.data().role === "client") {
-          navigate(redirectTo);
+          // Check for stored redirect
+          const storedRedirect = sessionStorage.getItem('redirectAfterLogin');
+          if (storedRedirect) {
+            sessionStorage.removeItem('redirectAfterLogin');
+            navigate(storedRedirect);
+          } else {
+            navigate(redirectTo);
+          }
         }
       }
     });
@@ -176,6 +178,43 @@ export default function ClientLogin() {
     return () => unsubscribe();
   }, [path, navigate, returnTo, redirectTo]);
 
+  const handleSuccessfulLogin = async (userCredential, redirectPath) => {
+    const userDoc = await getDoc(doc(db, "users", userCredential.user.uid));
+    
+    if (userDoc.exists()) {
+      const userRole = userDoc.data().role;
+      
+      if (userRole === "client") {
+        await updateDoc(doc(db, "users", userCredential.user.uid), {
+          lastLogin: serverTimestamp()
+        });
+        
+        // Check if there's a stored redirect path (for shared proposal links)
+        const storedRedirect = sessionStorage.getItem('redirectAfterLogin');
+        if (storedRedirect) {
+          sessionStorage.removeItem('redirectAfterLogin');
+          navigate(storedRedirect);
+        } else {
+          navigate(redirectPath);
+        }
+      } else if (userRole === "admin") {
+        await auth.signOut();
+        setError("This is an admin account. Please use the admin login page.");
+        return false;
+      }
+    } else {
+      await setDoc(doc(db, "users", userCredential.user.uid), {
+        email: userCredential.user.email,
+        name: userCredential.user.displayName || email.split('@')[0],
+        role: "client",
+        createdAt: serverTimestamp(),
+        lastLogin: serverTimestamp()
+      });
+      navigate(redirectPath);
+    }
+    return true;
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
@@ -188,43 +227,13 @@ export default function ClientLogin() {
     }
 
     try {
-      // Save the email if remember me is checked
       if (rememberEmail) {
         saveEmailToStorage(email);
       }
 
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      await handleSuccessfulLogin(userCredential, redirectTo);
       
-      const userDoc = await getDoc(doc(db, "users", userCredential.user.uid));
-      
-      if (userDoc.exists()) {
-        const userRole = userDoc.data().role;
-        
-        if (userRole === "client") {
-          await updateDoc(doc(db, "users", userCredential.user.uid), {
-            lastLogin: serverTimestamp()
-          });
-          navigate(redirectTo);
-        } else if (userRole === "admin") {
-          await auth.signOut();
-          setError("This is an admin account. Please use the admin login page.");
-        } else {
-          await updateDoc(doc(db, "users", userCredential.user.uid), {
-            role: "client",
-            lastLogin: serverTimestamp()
-          });
-          navigate(redirectTo);
-        }
-      } else {
-        await setDoc(doc(db, "users", userCredential.user.uid), {
-          email: userCredential.user.email,
-          name: userCredential.user.displayName || email.split('@')[0],
-          role: "client",
-          createdAt: serverTimestamp(),
-          lastLogin: serverTimestamp()
-        });
-        navigate(redirectTo);
-      }
     } catch (error) {
       console.error("Login error:", error);
       switch (error.code) {
@@ -279,7 +288,6 @@ export default function ClientLogin() {
     }
 
     try {
-      // Save the email if remember me is checked
       if (rememberEmail) {
         saveEmailToStorage(email);
       }
@@ -300,7 +308,15 @@ export default function ClientLogin() {
         hasPassword: true
       });
 
-      navigate(redirectTo);
+      // Check for stored redirect
+      const storedRedirect = sessionStorage.getItem('redirectAfterLogin');
+      if (storedRedirect) {
+        sessionStorage.removeItem('redirectAfterLogin');
+        navigate(storedRedirect);
+      } else {
+        navigate(redirectTo);
+      }
+      
     } catch (error) {
       console.error("Signup error:", error);
       switch (error.code) {
@@ -334,90 +350,39 @@ export default function ClientLogin() {
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
       
-      // Save the email for auto-fill
       saveEmailToStorage(user.email);
-      setGoogleUserEmail(user.email);
       
       const userDoc = await getDoc(doc(db, "users", user.uid));
       
       if (!userDoc.exists()) {
-        // Generate a temporary password for the Google account
-        const tempPassword = generateTemporaryPassword();
-        
-        try {
-          // Set a temporary password to enable email/password login
-          await updatePassword(user, tempPassword);
-          console.log("Temporary password set for Google account");
-          
-          // Send password reset email so user can set their own password
-          await sendPasswordResetEmail(auth, user.email);
-          setPasswordSetupSent(true);
-          
-          await setDoc(doc(db, "users", user.uid), {
-            name: user.displayName || user.email.split('@')[0],
-            email: user.email,
-            role: "client",
-            createdAt: serverTimestamp(),
-            lastLogin: serverTimestamp(),
-            photoURL: user.photoURL,
-            authProvider: "both",
-            hasPassword: true,
-            tempPasswordSet: true
-          });
-          
-          // Auto-fill the email and show success message
-          setEmail(user.email);
-          
-          setTimeout(() => {
-            setPasswordSetupSent(false);
-          }, 5000);
-          
-        } catch (passwordError) {
-          console.error("Error setting temporary password:", passwordError);
-          await setDoc(doc(db, "users", user.uid), {
-            name: user.displayName || user.email.split('@')[0],
-            email: user.email,
-            role: "client",
-            createdAt: serverTimestamp(),
-            lastLogin: serverTimestamp(),
-            photoURL: user.photoURL,
-            authProvider: "google",
-            hasPassword: false
-          });
-          setEmail(user.email);
-        }
+        await setDoc(doc(db, "users", user.uid), {
+          name: user.displayName || user.email.split('@')[0],
+          email: user.email,
+          role: "client",
+          createdAt: serverTimestamp(),
+          lastLogin: serverTimestamp(),
+          photoURL: user.photoURL,
+          authProvider: "google"
+        });
       } else if (userDoc.data().role === "admin") {
         await auth.signOut();
-        setError("This Google account is linked to an admin account. Please use the admin login.");
+        setError("This Google account is linked to an admin account.");
         setLoading(false);
         return;
       } else {
         await updateDoc(doc(db, "users", user.uid), {
           lastLogin: serverTimestamp()
         });
-        
-        // If user has no password set, automatically send password setup email
-        if (!userDoc.data().hasPassword) {
-          const tempPassword = generateTemporaryPassword();
-          await updatePassword(user, tempPassword);
-          await sendPasswordResetEmail(auth, user.email);
-          setPasswordSetupSent(true);
-          await updateDoc(doc(db, "users", user.uid), {
-            hasPassword: true,
-            tempPasswordSet: true
-          });
-          
-          setTimeout(() => {
-            setPasswordSetupSent(false);
-          }, 5000);
-        }
-        
-        setEmail(user.email);
       }
       
-      // Don't redirect immediately - let user see the password setup message
-      // They can now login with email/password after setting their password
-      setLoading(false);
+      // Check for stored redirect
+      const storedRedirect = sessionStorage.getItem('redirectAfterLogin');
+      if (storedRedirect) {
+        sessionStorage.removeItem('redirectAfterLogin');
+        navigate(storedRedirect);
+      } else {
+        navigate(redirectTo);
+      }
       
     } catch (error) {
       console.error("Google sign-in error:", error);
@@ -519,11 +484,11 @@ export default function ClientLogin() {
         {passwordSetupSent && (
           <div style={successStyle}>
             <MdVerified size={18} />
-            <span>Password setup email sent! Check your inbox to set your password. You can now login with email and password after setting it up.</span>
+            <span>Password setup email sent! Check your inbox to set your password.</span>
           </div>
         )}
 
-        {/* Saved Emails Section - Shows recent logins for quick selection */}
+        {/* Saved Emails Section */}
         {savedEmails.length > 0 && isLogin && !showReset && (
           <div style={savedEmailsContainerStyle}>
             <div style={savedEmailsHeaderStyle}>
@@ -539,7 +504,6 @@ export default function ClientLogin() {
                   <button
                     onClick={() => {
                       setEmail(savedEmail);
-                      // Focus password field after selecting email
                       setTimeout(() => {
                         const passwordInput = document.getElementById("password-input");
                         if (passwordInput) passwordInput.focus();
@@ -777,7 +741,7 @@ export default function ClientLogin() {
   );
 }
 
-// Additional Styles
+// Styles
 const savedEmailsContainerStyle = {
   marginBottom: "20px",
   padding: "12px",
@@ -879,7 +843,6 @@ const checkboxTextStyle = {
   userSelect: "none",
 };
 
-// Keep all existing styles from your original file
 const containerStyle = {
   minHeight: "100vh",
   display: "flex",

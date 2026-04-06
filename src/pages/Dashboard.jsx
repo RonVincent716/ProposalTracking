@@ -38,6 +38,9 @@ import ProposalUploader from "./ProposalUploader";
 import ProposalStatusBadge from "./ProposalStatusBadge";
 import ShareModal from "./ShareModal";
 import SignedProposalsTab from "../Components/SignedProposalsTab";
+import ProposalAnalyticsTab from "../Components/ProposalAnalyticsTab";
+import ProposalsTabWithDelete from "../Components/ProposalsTabWithDelete";
+
 
 import {
   BarChart,
@@ -330,11 +333,6 @@ export default function Dashboard() {
   // Set the chart data
   const proposalChartData = getProposalChartData();
   const dailyChartData = getDailyViewsData();
-
-  // Log for debugging
-  console.log("Views count:", views.length);
-  console.log("Proposal chart data:", proposalChartData);
-  console.log("Daily chart data:", dailyChartData);
 
   /* VIEW PROPOSAL */
   const viewProposal = (file)=>{
@@ -1532,6 +1530,37 @@ export default function Dashboard() {
               {!sidebarCollapsed && <span>Engagement</span>}
             </button>
 
+            {/* NEW ANALYTICS TAB BUTTON */}
+            <button 
+              style={{
+                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                border: "none",
+                borderRadius: 14,
+                cursor: "pointer",
+                background: activeTab==="analytics" 
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                  : "transparent",
+                color: activeTab==="analytics" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: 12,
+                fontSize: sidebarCollapsed ? 0 : 15,
+                fontWeight: activeTab==="analytics" ? 600 : 500,
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                position: "relative",
+                overflow: "hidden",
+                boxShadow: activeTab==="analytics" 
+                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                  : "none",
+                border: activeTab==="analytics" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+              }} 
+              onClick={()=>setActiveTab("analytics")}
+            >
+              <MdAnalytics size={sidebarCollapsed ? 28 : 22} />
+              {!sidebarCollapsed && <span>Analytics</span>}
+            </button>
+
           </div>
 
           <button
@@ -1858,7 +1887,6 @@ export default function Dashboard() {
               Analytics Overview
             </h3>
 
-            {/* Debug info to see what data is available */}
             <div style={{ 
               marginBottom: 20, 
               padding: 10, 
@@ -1886,7 +1914,6 @@ export default function Dashboard() {
                 Views per Proposal {files.length > 10 && "(Top 10)"}
               </h4>
               
-              {/* Fixed height container for chart */}
               <div style={{ width: "100%", height: 400 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
@@ -1924,7 +1951,6 @@ export default function Dashboard() {
                 Daily View Traffic
               </h4>
               
-              {/* Fixed height container for chart */}
               <div style={{ width: "100%", height: 400 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
@@ -1978,7 +2004,7 @@ export default function Dashboard() {
                     <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Time Spent</th>
                     <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Pages</th>
                     <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Sessions</th>
-                   </tr>
+                  </tr>
                 </thead>
                 <tbody>
                   {(() => {
@@ -2041,169 +2067,23 @@ export default function Dashboard() {
 
         {/* PROPOSALS TAB WITH EMAIL SHARE BUTTON */}
         {activeTab === "proposals" && (
-          <>
-            <h2 style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <MdPictureAsPdf size={28} color="#1976D2" />
-              Uploaded Proposals
-            </h2>
+  <ProposalsTabWithDelete 
+    user={user}
+    onViewClick={(file) => viewProposal(file)}
+    onDownloadClick={(file) => downloadFile(file)}
+    onShareClick={(file) => {
+      setEmailProposal(file);
+      setShowEmailModal(true);
+    }}
+    onSignClick={(file) => handleSignProposal(file)}
+  />
+)}
 
-            <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 20, marginTop: 10, flexWrap: "wrap" }}>
-              <input
-                type="text"
-                placeholder="Search proposals..."
-                value={proposalSearch}
-                onChange={(e) => { setProposalSearch(e.target.value); setProposalPage(1); }}
-                style={{
-                  flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.1)",
-                  background: "#fff", fontSize: 14, outline: "none", minWidth: "200px"
-                }}
-              />
-              <span style={{ fontSize: 13, color: "#666", fontWeight: 500, whiteSpace: "nowrap" }}>
-                {filteredProposals.length} found
-              </span>
-            </div>
-
-            {loadingFiles ? (
-              <p>Loading...</p>
-            ) : (
-              <>
-                <div style={{ width: "100%", overflowX: "auto", borderRadius: "8px", border: "1px solid #eee", marginBottom: "10px" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", tableLayout: "fixed" }}>
-                    <thead>
-                      <tr style={{ background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)", color: "#fff" }}>
-                        <th style={{ padding: "12px 6px", width: "35%" }}>File</th>
-                        <th style={{ padding: "12px 6px", width: "10%" }}>Status</th>
-                        <th style={{ padding: "12px 6px", width: "10%" }}>Views</th>
-                        <th style={{ padding: "12px 6px", width: "45%" }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paginatedProposals.map((file, i) => {
-                        const isSigned = signedProposals.some(p => p.proposalName === file.name || p.proposalPath?.includes(file.name));
-                        return (
-                          <tr key={i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
-                            <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "left" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <MdDescription color={isSigned ? "#10B981" : "#1976D2"} />
-                                <span>{file.name}</span>
-                              </div>
-                            </td>
-                            <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                              {isSigned ? <ProposalStatusBadge status="signed" size="small" /> : <ProposalStatusBadge status="pending" size="small" />}
-                            </td>
-                            <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                              {getViewCount(file.name)} <MdRemoveRedEye color="#666" size={16} />
-                            </td>
-                            <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                              <div className="action-buttons" style={{ display: "flex", gap: "4px", flexWrap: "wrap", justifyContent: "center" }}>
-                                <button style={{
-                                  padding: "6px 10px",
-                                  background: "#2196F3",
-                                  color: "#fff",
-                                  border: "none",
-                                  borderRadius: 4,
-                                  cursor: "pointer",
-                                  fontSize: "12px",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 4
-                                }} onClick={() => viewProposal(file)}>
-                                  <MdVisibility size={14} /> View
-                                </button>
-                                
-                                <button style={{
-                                  padding: "6px 10px",
-                                  background: "#4CAF50",
-                                  color: "#fff",
-                                  border: "none",
-                                  borderRadius: 4,
-                                  cursor: "pointer",
-                                  fontSize: "12px",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 4
-                                }} onClick={() => downloadFile(file)}>
-                                  <MdFileUpload size={14} /> Download
-                                </button>
-                                
-                                {/* UPDATED SHARE BUTTON - Opens Email Modal */}
-                                <button style={{
-                                  padding: "6px 10px",
-                                  background: "#FF9800",
-                                  color: "#fff",
-                                  border: "none",
-                                  borderRadius: 4,
-                                  cursor: "pointer",
-                                  fontSize: "12px",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 4
-                                }} onClick={() => {
-                                  setEmailProposal(file);
-                                  setShowEmailModal(true);
-                                }}>
-                                  <MdEmail size={14} /> Share
-                                </button>
-                                
-                                <button style={{
-                                  padding: "6px 10px",
-                                  background: "#10B981",
-                                  color: "#fff",
-                                  border: "none",
-                                  borderRadius: 4,
-                                  cursor: "pointer",
-                                  fontSize: "12px",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 4
-                                }} onClick={() => handleSignProposal(file)}>
-                                  <MdEdit size={14} /> Sign
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {totalProposalPages > 1 && (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 25, flexWrap: "wrap" }}>
-                    <button onClick={() => setProposalPage(p => Math.max(1, p - 1))} disabled={proposalPage === 1}
-                      style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: proposalPage === 1 ? "rgba(0,0,0,0.05)" : "#fff", color: proposalPage === 1 ? "rgba(0,0,0,0.3)" : "#1976D2", cursor: proposalPage === 1 ? "not-allowed" : "pointer" }}>
-                      Previous
-                    </button>
-                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                      {Array.from({ length: Math.min(5, totalProposalPages) }, (_, i) => {
-                        let pageNum;
-                        if (totalProposalPages <= 5) pageNum = i + 1;
-                        else if (proposalPage <= 3) pageNum = i + 1;
-                        else if (proposalPage >= totalProposalPages - 2) pageNum = totalProposalPages - 4 + i;
-                        else pageNum = proposalPage - 2 + i;
-                        return (
-                          <button key={pageNum} onClick={() => setProposalPage(pageNum)}
-                            style={{ width: 36, height: 36, borderRadius: 6, border: "none", background: proposalPage === pageNum ? "linear-gradient(135deg, #1976D2 0%, #2196F3 100%)" : "#fff", color: proposalPage === pageNum ? "#fff" : "#666", cursor: "pointer" }}>
-                            {pageNum}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <button onClick={() => setProposalPage(p => Math.min(totalProposalPages, p + 1))} disabled={proposalPage === totalProposalPages}
-                      style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: proposalPage === totalProposalPages ? "rgba(0,0,0,0.05)" : "#fff", color: proposalPage === totalProposalPages ? "rgba(0,0,0,0.3)" : "#1976D2", cursor: proposalPage === totalProposalPages ? "not-allowed" : "pointer" }}>
-                      Next
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </>
-        )}
-
-        {/* SIGNED PROPOSALS TAB - USING NEW COMPONENT */}
+        {/* SIGNED PROPOSALS TAB */}
         {activeTab === "signed" && (
           <SignedProposalsTab user={user} />
         )}
+        
         {/* LIVE VIEWS TAB */}
         {activeTab === "views" && (
           <>
@@ -2293,19 +2173,19 @@ export default function Dashboard() {
                           checked={selectedViews.includes(v.id)}
                           onChange={() => toggleViewSelection(v.id)}
                         />
-                      </td>
+                       </td>
                       <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "left" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <MdDescription color="#1976D2" />
                           <span>{v.fileName || "N/A"}</span>
                         </div>
-                      </td>
+                       </td>
                       <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
                         {v.viewerEmail || "Anonymous"}
-                      </td>
+                       </td>
                       <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
                         {v.viewedAt ? new Date(v.viewedAt).toLocaleString() : "Loading"}
-                      </td>
+                       </td>
                       <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
                         <button
                           onClick={() => handleDeleteView(v.id, v.fileName)}
@@ -2324,7 +2204,7 @@ export default function Dashboard() {
                         >
                           <MdDelete size={14} /> Delete
                         </button>
-                      </td>
+                       </td>
                     </tr>
                   ))}
                   {paginatedViews.length === 0 && (
@@ -2434,581 +2314,575 @@ export default function Dashboard() {
           </>
         )}
 
-        {/* ENGAGEMENT with Delete and Search */}
-{activeTab === "engagement" && (
-  <>
-    <div style={{
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: 20,
-      flexWrap: "wrap",
-      gap: 10
-    }}>
-      <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <MdTimeline size={28} color="#1976D2" />
-        Engagement Analytics
-      </h2>
-
-      <div style={{
-        display: "flex",
-        gap: 10,
-        flexWrap: "wrap"
-      }}>
-        {/* Filter Dropdown */}
-        <select
-          value={dateFilter}
-          onChange={(e) => setDateFilter(e.target.value)}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 6,
-            border: "1px solid #ddd",
-            background: "#fff",
-            cursor: "pointer",
-            fontSize: "13px"
-          }}
-        >
-          <option value="all">All Time</option>
-          <option value="today">Today</option>
-          <option value="week">This Week</option>
-          <option value="month">This Month</option>
-        </select>
-
-        {/* Bulk Delete Button */}
-        {selectedSessions.length > 0 && (
-          <button
-            onClick={() => {
-              setDeleteType("sessions");
-              setShowDeleteModal(true);
-            }}
-            style={{
-              padding: "8px 12px",
-              background: "#d32f2f",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer",
+        {/* ENGAGEMENT TAB */}
+        {activeTab === "engagement" && (
+          <>
+            <div style={{
               display: "flex",
+              justifyContent: "space-between",
               alignItems: "center",
-              gap: 6,
-              fontWeight: "bold",
-              fontSize: "13px",
-              whiteSpace: "nowrap"
-            }}
-          >
-            <MdDelete size={18} />
-            Delete ({selectedSessions.length})
-          </button>
-        )}
-
-        {/* Delete All Filtered Button */}
-        {getFilteredSessions().length > 0 && (
-          <button
-            onClick={() => {
-              setDeleteType("filteredSessions");
-              setShowDeleteModal(true);
-            }}
-            style={{
-              padding: "8px 12px",
-              background: "#ff9800",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: "13px",
-              whiteSpace: "nowrap"
-            }}
-          >
-            <MdDelete size={18} />
-            Delete {getFilteredSessions().length}
-          </button>
-        )}
-      </div>
-    </div>
-
-    {/* Search Bar */}
-    <div style={{
-      display: "flex",
-      alignItems: "center",
-      gap: 15,
-      marginBottom: 20,
-      marginTop: 10,
-      flexWrap: "wrap",
-    }}>
-      <input
-        type="text"
-        placeholder="Search by proposal or viewer..."
-        value={engagementSearch}
-        onChange={(e) => {
-          setEngagementSearch(e.target.value);
-          setEngagementPage(1);
-        }}
-        style={{
-          flex: 1,
-          padding: "10px 14px",
-          borderRadius: 8,
-          border: "1px solid rgba(0,0,0,0.1)",
-          background: "#fff",
-          fontSize: 14,
-          outline: "none",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-          minWidth: "200px",
-        }}
-      />
-      <span style={{
-        fontSize: 13,
-        color: "#666",
-        fontWeight: 500,
-        whiteSpace: "nowrap",
-      }}>
-        {filteredEngagement.length} found
-      </span>
-    </div>
-
-    {/* Filter Info */}
-    <div style={{
-      background: "#e3f2fd",
-      padding: "8px 15px",
-      borderRadius: 6,
-      marginBottom: 15,
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      fontSize: 13,
-      flexWrap: "wrap"
-    }}>
-      <MdFilterList color="#1976D2" />
-      Showing {paginatedEngagement.length} of {filteredEngagement.length} sessions
-      {dateFilter !== "all" && ` (${dateFilter})`}
-    </div>
-
-    <div style={{
-      width: "100%",
-      overflowX: "auto",
-      WebkitOverflowScrolling: "touch",
-      borderRadius: "8px",
-      border: "1px solid #eee",
-      marginBottom: "10px"
-    }}>
-      <table style={{
-        width: "100%",
-        borderCollapse: "collapse",
-        background: "#fff",
-        borderRadius: 8,
-        overflow: "hidden",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-        tableLayout: "fixed",
-      }}>
-        <thead>
-          <tr style={{
-            background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
-            color: "#fff"
-          }}>
-            <th style={{
-              padding: "12px 6px",
-              border: "none",
-              textAlign: "center",
-              fontSize: "12px",
-              fontWeight: "bold",
-              whiteSpace: "nowrap",
-              width: "5%"
+              marginBottom: 20,
+              flexWrap: "wrap",
+              gap: 10
             }}>
-              <input
-                type="checkbox"
-                onChange={(e) => selectAllSessions(e.target.checked)}
-                checked={selectedSessions.length === sessions.length && sessions.length > 0}
-              />
-            </th>
-            <th style={{
-              padding: "12px 6px",
-              border: "none",
-              textAlign: "center",
-              fontSize: "12px",
-              fontWeight: "bold",
-              whiteSpace: "nowrap",
-              width: "25%"
-            }}>Proposal</th>
-            <th style={{
-              padding: "12px 6px",
-              border: "none",
-              textAlign: "center",
-              fontSize: "12px",
-              fontWeight: "bold",
-              whiteSpace: "nowrap",
-              width: "20%"
-            }}>Viewer Email</th>
-            <th style={{
-              padding: "12px 6px",
-              border: "none",
-              textAlign: "center",
-              fontSize: "12px",
-              fontWeight: "bold",
-              whiteSpace: "nowrap",
-              width: "15%"
-            }}>Started</th>
-            <th style={{
-              padding: "12px 6px",
-              border: "none",
-              textAlign: "center",
-              fontSize: "12px",
-              fontWeight: "bold",
-              whiteSpace: "nowrap",
-              width: "15%"
-            }}>Last Active</th>
-            <th style={{
-              padding: "12px 6px",
-              border: "none",
-              textAlign: "center",
-              fontSize: "12px",
-              fontWeight: "bold",
-              whiteSpace: "nowrap",
-              width: "10%"
-            }}>Time Spent</th>
-            <th style={{
-              padding: "12px 6px",
-              border: "none",
-              textAlign: "center",
-              fontSize: "12px",
-              fontWeight: "bold",
-              whiteSpace: "nowrap",
-              width: "10%"
-            }}>Pages</th>
-            <th style={{
-              padding: "12px 6px",
-              border: "none",
-              textAlign: "center",
-              fontSize: "12px",
-              fontWeight: "bold",
-              whiteSpace: "nowrap",
-              width: "10%"
-            }}>Actions</th>
-           </tr>
-        </thead>
-        <tbody>
-          {paginatedEngagement.map((s, i) => {
-            // Calculate duration safely
-            let durationSeconds = 0;
-            
-            if (s.duration) {
-              if (s.duration > 1000) {
-                durationSeconds = Math.round(s.duration / 1000);
-              } else {
-                durationSeconds = Math.round(s.duration);
-              }
-            } else if (s.timeSpent) {
-              durationSeconds = Math.round(s.timeSpent);
-            }
+              <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <MdTimeline size={28} color="#1976D2" />
+                Engagement Analytics
+              </h2>
 
-            durationSeconds = Math.max(0, durationSeconds);
+              <div style={{
+                display: "flex",
+                gap: 10,
+                flexWrap: "wrap"
+              }}>
+                <select
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #ddd",
+                    background: "#fff",
+                    cursor: "pointer",
+                    fontSize: "13px"
+                  }}
+                >
+                  <option value="all">All Time</option>
+                  <option value="today">Today</option>
+                  <option value="week">This Week</option>
+                  <option value="month">This Month</option>
+                </select>
 
-            const formatDate = (timestamp) => {
-              if (!timestamp) return 'N/A';
-              try {
-                if (timestamp.seconds) {
-                  return new Date(timestamp.seconds * 1000).toLocaleString();
-                } else if (timestamp instanceof Date) {
-                  return timestamp.toLocaleString();
-                } else {
-                  return new Date(timestamp).toLocaleString();
-                }
-              } catch (e) {
-                return 'Invalid date';
-              }
-            };
-
-            const startTime = s.startedAt || s.startTime || s.createdAt;
-            const lastActive = s.lastActiveAt || s.endTime || s.updatedAt || s.lastActivity;
-            const pageCount = s.pagesViewed?.length || s.pageCount || s.pages || s.totalPages || 0;
-            // FIXED: Use viewerEmail instead of viewerName
-            const viewerEmail = s.viewerEmail || s.email || s.userEmail || 'Anonymous';
-            const proposalName = s.fileName || s.proposalName || s.proposal || 'Unknown';
-
-            return (
-              <tr key={s.id || i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
-                <td style={{
-                  padding: "10px 6px",
-                  border: "1px solid #eee",
-                  textAlign: "center",
-                  fontSize: "12px",
-                  verticalAlign: "middle",
-                  wordBreak: "break-word",
-                  width: "5%"
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedSessions.includes(s.id)}
-                    onChange={() => toggleSessionSelection(s.id)}
-                  />
-                </td>
-                <td style={{
-                  padding: "10px 6px",
-                  border: "1px solid #eee",
-                  textAlign: "center",
-                  fontSize: "12px",
-                  verticalAlign: "middle",
-                  wordBreak: "break-word",
-                  textAlign: "left"
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <MdDescription color="#1976D2" style={{ flexShrink: 0 }} />
-                    <span style={{ wordBreak: "break-word" }}>{proposalName}</span>
-                  </div>
-                </td>
-                <td style={{
-                  padding: "10px 6px",
-                  border: "1px solid #eee",
-                  textAlign: "center",
-                  fontSize: "12px",
-                  verticalAlign: "middle",
-                  wordBreak: "break-word",
-                }}>
-                  {viewerEmail}
-                </td>
-                <td style={{
-                  padding: "10px 6px",
-                  border: "1px solid #eee",
-                  textAlign: "center",
-                  fontSize: "11px",
-                  verticalAlign: "middle",
-                  wordBreak: "break-word",
-                  whiteSpace: "nowrap"
-                }}>
-                  {formatDate(startTime)}
-                </td>
-                <td style={{
-                  padding: "10px 6px",
-                  border: "1px solid #eee",
-                  textAlign: "center",
-                  fontSize: "11px",
-                  verticalAlign: "middle",
-                  wordBreak: "break-word",
-                  whiteSpace: "nowrap"
-                }}>
-                  {formatDate(lastActive)}
-                </td>
-                <td style={{
-                  padding: "10px 6px",
-                  border: "1px solid #eee",
-                  textAlign: "center",
-                  fontSize: "12px",
-                  verticalAlign: "middle",
-                  wordBreak: "break-word",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "center" }}>
-                    <MdTimeline color="#FF9800" size={16} />
-                    <span style={{ fontWeight: "bold" }}>
-                      {durationSeconds > 0 ? `${durationSeconds}s` : '< 1s'}
-                    </span>
-                  </div>
-                </td>
-                <td style={{
-                  padding: "10px 6px",
-                  border: "1px solid #eee",
-                  textAlign: "center",
-                  fontSize: "12px",
-                  verticalAlign: "middle",
-                  wordBreak: "break-word",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "center" }}>
-                    <MdDescription color="#4CAF50" size={16} />
-                    <span style={{ fontWeight: "bold" }}>{pageCount}</span>
-                  </div>
-                </td>
-                <td style={{
-                  padding: "10px 6px",
-                  border: "1px solid #eee",
-                  textAlign: "center",
-                  fontSize: "12px",
-                  verticalAlign: "middle",
-                  wordBreak: "break-word",
-                }}>
+                {selectedSessions.length > 0 && (
                   <button
-                    onClick={() => handleDeleteSession(s.id, proposalName)}
+                    onClick={() => {
+                      setDeleteType("sessions");
+                      setShowDeleteModal(true);
+                    }}
                     style={{
-                      padding: "6px 10px",
+                      padding: "8px 12px",
                       background: "#d32f2f",
                       color: "#fff",
                       border: "none",
-                      borderRadius: 4,
+                      borderRadius: 6,
                       cursor: "pointer",
-                      display: "inline-flex",
+                      display: "flex",
                       alignItems: "center",
-                      gap: 4,
-                      fontSize: "12px",
+                      gap: 6,
+                      fontWeight: "bold",
+                      fontSize: "13px",
                       whiteSpace: "nowrap"
                     }}
                   >
-                    <MdDelete size={14} />
-                    <span>Delete</span>
+                    <MdDelete size={18} />
+                    Delete ({selectedSessions.length})
                   </button>
-                </td>
-              </tr>
-            );
-          })}
-          {paginatedEngagement.length === 0 && (
-            <tr>
-              <td colSpan={8} style={{ textAlign: "center", padding: 30 }}>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
-                  <MdTimeline size={40} color="#ccc" />
-                  <p style={{ color: "#999", fontSize: 14, margin: 0 }}>No engagement data found</p>
-                  <p style={{ color: "#999", fontSize: 12 }}>
-                    Sessions will appear here when viewers interact with proposals
-                  </p>
-                </div>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+                )}
 
-    {/* Summary Stats */}
-    {sessions.length > 0 && (
-      <div style={{
-        display: "flex",
-        gap: 16,
-        marginTop: 20,
-        padding: "16px 20px",
-        background: "#fff",
-        borderRadius: 12,
-        border: "1px solid #eee",
-        flexWrap: "wrap"
-      }}>
-        <div style={{ flex: 1, minWidth: 150 }}>
-          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Total Sessions</div>
-          <div style={{ fontSize: 24, fontWeight: "bold", color: "#1976D2" }}>{sessions.length}</div>
-        </div>
-        <div style={{ flex: 1, minWidth: 150 }}>
-          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Avg Time Spent</div>
-          <div style={{ fontSize: 24, fontWeight: "bold", color: "#FF9800" }}>
-            {(() => {
-              const totalDuration = sessions.reduce((acc, s) => {
-                if (s.duration) {
-                  return acc + (s.duration > 1000 ? s.duration / 1000 : s.duration);
-                }
-                return acc;
-              }, 0);
-              const avgSeconds = Math.round(totalDuration / sessions.length);
-              return avgSeconds > 0 ? `${avgSeconds}s` : '< 1s';
-            })()}
-          </div>
-        </div>
-        <div style={{ flex: 1, minWidth: 150 }}>
-          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Total Pages Viewed</div>
-          <div style={{ fontSize: 24, fontWeight: "bold", color: "#4CAF50" }}>
-            {sessions.reduce((acc, s) => {
-              const pages = s.pagesViewed?.length || s.pageCount || s.pages || 0;
-              return acc + pages;
-            }, 0)}
-          </div>
-        </div>
-        <div style={{ flex: 1, minWidth: 150 }}>
-          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Unique Viewers</div>
-          <div style={{ fontSize: 24, fontWeight: "bold", color: "#9C27B0" }}>
-            {new Set(sessions.map(s => s.viewerEmail || s.email || s.userEmail)).size}
-          </div>
-        </div>
-      </div>
-    )}
+                {getFilteredSessions().length > 0 && (
+                  <button
+                    onClick={() => {
+                      setDeleteType("filteredSessions");
+                      setShowDeleteModal(true);
+                    }}
+                    style={{
+                      padding: "8px 12px",
+                      background: "#ff9800",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontSize: "13px",
+                      whiteSpace: "nowrap"
+                    }}
+                  >
+                    <MdDelete size={18} />
+                    Delete {getFilteredSessions().length}
+                  </button>
+                )}
+              </div>
+            </div>
 
-    {/* Pagination */}
-    {totalEngagementPages > 1 && (
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 12,
-        marginTop: 25,
-        padding: "15px 0",
-        flexWrap: "wrap",
-      }}>
-        <button
-          onClick={() => setEngagementPage(p => Math.max(1, p - 1))}
-          disabled={engagementPage === 1}
-          style={{
-            padding: "8px 16px",
-            borderRadius: 8,
-            border: "none",
-            background: engagementPage === 1 ? "rgba(0,0,0,0.05)" : "#fff",
-            color: engagementPage === 1 ? "rgba(0,0,0,0.3)" : "#1976D2",
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: engagementPage === 1 ? "not-allowed" : "pointer",
-            boxShadow: engagementPage === 1 ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
-            transition: "all 0.2s ease",
-            whiteSpace: "nowrap",
-          }}
-        >
-          Previous
-        </button>
-
-        <div style={{
-          display: "flex",
-          gap: 4,
-          flexWrap: "wrap",
-          justifyContent: "center",
-        }}>
-          {Array.from({ length: Math.min(5, totalEngagementPages) }, (_, i) => {
-            let pageNum;
-            if (totalEngagementPages <= 5) {
-              pageNum = i + 1;
-            } else if (engagementPage <= 3) {
-              pageNum = i + 1;
-            } else if (engagementPage >= totalEngagementPages - 2) {
-              pageNum = totalEngagementPages - 4 + i;
-            } else {
-              pageNum = engagementPage - 2 + i;
-            }
-            return (
-              <button
-                key={pageNum}
-                onClick={() => setEngagementPage(pageNum)}
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 6,
-                  border: "none",
-                  background: engagementPage === pageNum ? "linear-gradient(135deg, #1976D2 0%, #2196F3 100%)" : "#fff",
-                  color: engagementPage === pageNum ? "#fff" : "#666",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  boxShadow: engagementPage === pageNum ? "0 4px 12px rgba(25, 118, 210, 0.3)" : "0 2px 8px rgba(0,0,0,0.04)",
-                  transition: "all 0.2s ease",
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 15,
+              marginBottom: 20,
+              marginTop: 10,
+              flexWrap: "wrap",
+            }}>
+              <input
+                type="text"
+                placeholder="Search by proposal or viewer..."
+                value={engagementSearch}
+                onChange={(e) => {
+                  setEngagementSearch(e.target.value);
+                  setEngagementPage(1);
                 }}
-              >
-                {pageNum}
-              </button>
-            );
-          })}
-        </div>
+                style={{
+                  flex: 1,
+                  padding: "10px 14px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(0,0,0,0.1)",
+                  background: "#fff",
+                  fontSize: 14,
+                  outline: "none",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                  minWidth: "200px",
+                }}
+              />
+              <span style={{
+                fontSize: 13,
+                color: "#666",
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+              }}>
+                {filteredEngagement.length} found
+              </span>
+            </div>
 
-        <button
-          onClick={() => setEngagementPage(p => Math.min(totalEngagementPages, p + 1))}
-          disabled={engagementPage === totalEngagementPages}
-          style={{
-            padding: "8px 16px",
-            borderRadius: 8,
-            border: "none",
-            background: engagementPage === totalEngagementPages ? "rgba(0,0,0,0.05)" : "#fff",
-            color: engagementPage === totalEngagementPages ? "rgba(0,0,0,0.3)" : "#1976D2",
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: engagementPage === totalEngagementPages ? "not-allowed" : "pointer",
-            boxShadow: engagementPage === totalEngagementPages ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
-            transition: "all 0.2s ease",
-            whiteSpace: "nowrap",
-          }}
-        >
-          Next
-        </button>
-      </div>
-    )}
-  </>
-)}
+            <div style={{
+              background: "#e3f2fd",
+              padding: "8px 15px",
+              borderRadius: 6,
+              marginBottom: 15,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 13,
+              flexWrap: "wrap"
+            }}>
+              <MdFilterList color="#1976D2" />
+              Showing {paginatedEngagement.length} of {filteredEngagement.length} sessions
+              {dateFilter !== "all" && ` (${dateFilter})`}
+            </div>
+
+            <div style={{
+              width: "100%",
+              overflowX: "auto",
+              WebkitOverflowScrolling: "touch",
+              borderRadius: "8px",
+              border: "1px solid #eee",
+              marginBottom: "10px"
+            }}>
+              <table style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                background: "#fff",
+                borderRadius: 8,
+                overflow: "hidden",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                tableLayout: "fixed",
+              }}>
+                <thead>
+                  <tr style={{
+                    background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
+                    color: "#fff"
+                  }}>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "5%"
+                    }}>
+                      <input
+                        type="checkbox"
+                        onChange={(e) => selectAllSessions(e.target.checked)}
+                        checked={selectedSessions.length === sessions.length && sessions.length > 0}
+                      />
+                    </th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "25%"
+                    }}>Proposal</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "20%"
+                    }}>Viewer Email</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "15%"
+                    }}>Started</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "15%"
+                    }}>Last Active</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "10%"
+                    }}>Time Spent</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "10%"
+                    }}>Pages</th>
+                    <th style={{
+                      padding: "12px 6px",
+                      border: "none",
+                      textAlign: "center",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      whiteSpace: "nowrap",
+                      width: "10%"
+                    }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedEngagement.map((s, i) => {
+                    let durationSeconds = 0;
+                    
+                    if (s.duration) {
+                      if (s.duration > 1000) {
+                        durationSeconds = Math.round(s.duration / 1000);
+                      } else {
+                        durationSeconds = Math.round(s.duration);
+                      }
+                    } else if (s.timeSpent) {
+                      durationSeconds = Math.round(s.timeSpent);
+                    }
+
+                    durationSeconds = Math.max(0, durationSeconds);
+
+                    const formatDate = (timestamp) => {
+                      if (!timestamp) return 'N/A';
+                      try {
+                        if (timestamp.seconds) {
+                          return new Date(timestamp.seconds * 1000).toLocaleString();
+                        } else if (timestamp instanceof Date) {
+                          return timestamp.toLocaleString();
+                        } else {
+                          return new Date(timestamp).toLocaleString();
+                        }
+                      } catch (e) {
+                        return 'Invalid date';
+                      }
+                    };
+
+                    const startTime = s.startedAt || s.startTime || s.createdAt;
+                    const lastActive = s.lastActiveAt || s.endTime || s.updatedAt || s.lastActivity;
+                    const pageCount = s.pagesViewed?.length || s.pageCount || s.pages || s.totalPages || 0;
+                    const viewerEmail = s.viewerEmail || s.email || s.userEmail || 'Anonymous';
+                    const proposalName = s.fileName || s.proposalName || s.proposal || 'Unknown';
+
+                    return (
+                      <tr key={s.id || i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
+                        <td style={{
+                          padding: "10px 6px",
+                          border: "1px solid #eee",
+                          textAlign: "center",
+                          fontSize: "12px",
+                          verticalAlign: "middle",
+                          wordBreak: "break-word",
+                          width: "5%"
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedSessions.includes(s.id)}
+                            onChange={() => toggleSessionSelection(s.id)}
+                          />
+                        </td>
+                        <td style={{
+                          padding: "10px 6px",
+                          border: "1px solid #eee",
+                          textAlign: "center",
+                          fontSize: "12px",
+                          verticalAlign: "middle",
+                          wordBreak: "break-word",
+                          textAlign: "left"
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <MdDescription color="#1976D2" style={{ flexShrink: 0 }} />
+                            <span style={{ wordBreak: "break-word" }}>{proposalName}</span>
+                          </div>
+                        </td>
+                        <td style={{
+                          padding: "10px 6px",
+                          border: "1px solid #eee",
+                          textAlign: "center",
+                          fontSize: "12px",
+                          verticalAlign: "middle",
+                          wordBreak: "break-word",
+                        }}>
+                          {viewerEmail}
+                        </td>
+                        <td style={{
+                          padding: "10px 6px",
+                          border: "1px solid #eee",
+                          textAlign: "center",
+                          fontSize: "11px",
+                          verticalAlign: "middle",
+                          wordBreak: "break-word",
+                          whiteSpace: "nowrap"
+                        }}>
+                          {formatDate(startTime)}
+                        </td>
+                        <td style={{
+                          padding: "10px 6px",
+                          border: "1px solid #eee",
+                          textAlign: "center",
+                          fontSize: "11px",
+                          verticalAlign: "middle",
+                          wordBreak: "break-word",
+                          whiteSpace: "nowrap"
+                        }}>
+                          {formatDate(lastActive)}
+                        </td>
+                        <td style={{
+                          padding: "10px 6px",
+                          border: "1px solid #eee",
+                          textAlign: "center",
+                          fontSize: "12px",
+                          verticalAlign: "middle",
+                          wordBreak: "break-word",
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "center" }}>
+                            <MdTimeline color="#FF9800" size={16} />
+                            <span style={{ fontWeight: "bold" }}>
+                              {durationSeconds > 0 ? `${durationSeconds}s` : '< 1s'}
+                            </span>
+                          </div>
+                        </td>
+                        <td style={{
+                          padding: "10px 6px",
+                          border: "1px solid #eee",
+                          textAlign: "center",
+                          fontSize: "12px",
+                          verticalAlign: "middle",
+                          wordBreak: "break-word",
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "center" }}>
+                            <MdDescription color="#4CAF50" size={16} />
+                            <span style={{ fontWeight: "bold" }}>{pageCount}</span>
+                          </div>
+                        </td>
+                        <td style={{
+                          padding: "10px 6px",
+                          border: "1px solid #eee",
+                          textAlign: "center",
+                          fontSize: "12px",
+                          verticalAlign: "middle",
+                          wordBreak: "break-word",
+                        }}>
+                          <button
+                            onClick={() => handleDeleteSession(s.id, proposalName)}
+                            style={{
+                              padding: "6px 10px",
+                              background: "#d32f2f",
+                              color: "#fff",
+                              border: "none",
+                              borderRadius: 4,
+                              cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontSize: "12px",
+                              whiteSpace: "nowrap"
+                            }}
+                          >
+                            <MdDelete size={14} />
+                            <span>Delete</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {paginatedEngagement.length === 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ textAlign: "center", padding: 30 }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                          <MdTimeline size={40} color="#ccc" />
+                          <p style={{ color: "#999", fontSize: 14, margin: 0 }}>No engagement data found</p>
+                          <p style={{ color: "#999", fontSize: 12 }}>
+                            Sessions will appear here when viewers interact with proposals
+                          </p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {sessions.length > 0 && (
+              <div style={{
+                display: "flex",
+                gap: 16,
+                marginTop: 20,
+                padding: "16px 20px",
+                background: "#fff",
+                borderRadius: 12,
+                border: "1px solid #eee",
+                flexWrap: "wrap"
+              }}>
+                <div style={{ flex: 1, minWidth: 150 }}>
+                  <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Total Sessions</div>
+                  <div style={{ fontSize: 24, fontWeight: "bold", color: "#1976D2" }}>{sessions.length}</div>
+                </div>
+                <div style={{ flex: 1, minWidth: 150 }}>
+                  <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Avg Time Spent</div>
+                  <div style={{ fontSize: 24, fontWeight: "bold", color: "#FF9800" }}>
+                    {(() => {
+                      const totalDuration = sessions.reduce((acc, s) => {
+                        if (s.duration) {
+                          return acc + (s.duration > 1000 ? s.duration / 1000 : s.duration);
+                        }
+                        return acc;
+                      }, 0);
+                      const avgSeconds = Math.round(totalDuration / sessions.length);
+                      return avgSeconds > 0 ? `${avgSeconds}s` : '< 1s';
+                    })()}
+                  </div>
+                </div>
+                <div style={{ flex: 1, minWidth: 150 }}>
+                  <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Total Pages Viewed</div>
+                  <div style={{ fontSize: 24, fontWeight: "bold", color: "#4CAF50" }}>
+                    {sessions.reduce((acc, s) => {
+                      const pages = s.pagesViewed?.length || s.pageCount || s.pages || 0;
+                      return acc + pages;
+                    }, 0)}
+                  </div>
+                </div>
+                <div style={{ flex: 1, minWidth: 150 }}>
+                  <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Unique Viewers</div>
+                  <div style={{ fontSize: 24, fontWeight: "bold", color: "#9C27B0" }}>
+                    {new Set(sessions.map(s => s.viewerEmail || s.email || s.userEmail)).size}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {totalEngagementPages > 1 && (
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 12,
+                marginTop: 25,
+                padding: "15px 0",
+                flexWrap: "wrap",
+              }}>
+                <button
+                  onClick={() => setEngagementPage(p => Math.max(1, p - 1))}
+                  disabled={engagementPage === 1}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: engagementPage === 1 ? "rgba(0,0,0,0.05)" : "#fff",
+                    color: engagementPage === 1 ? "rgba(0,0,0,0.3)" : "#1976D2",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: engagementPage === 1 ? "not-allowed" : "pointer",
+                    boxShadow: engagementPage === 1 ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
+                    transition: "all 0.2s ease",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Previous
+                </button>
+
+                <div style={{
+                  display: "flex",
+                  gap: 4,
+                  flexWrap: "wrap",
+                  justifyContent: "center",
+                }}>
+                  {Array.from({ length: Math.min(5, totalEngagementPages) }, (_, i) => {
+                    let pageNum;
+                    if (totalEngagementPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (engagementPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (engagementPage >= totalEngagementPages - 2) {
+                      pageNum = totalEngagementPages - 4 + i;
+                    } else {
+                      pageNum = engagementPage - 2 + i;
+                    }
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setEngagementPage(pageNum)}
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: 6,
+                          border: "none",
+                          background: engagementPage === pageNum ? "linear-gradient(135deg, #1976D2 0%, #2196F3 100%)" : "#fff",
+                          color: engagementPage === pageNum ? "#fff" : "#666",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          boxShadow: engagementPage === pageNum ? "0 4px 12px rgba(25, 118, 210, 0.3)" : "0 2px 8px rgba(0,0,0,0.04)",
+                          transition: "all 0.2s ease",
+                        }}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => setEngagementPage(p => Math.min(totalEngagementPages, p + 1))}
+                  disabled={engagementPage === totalEngagementPages}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: engagementPage === totalEngagementPages ? "rgba(0,0,0,0.05)" : "#fff",
+                    color: engagementPage === totalEngagementPages ? "rgba(0,0,0,0.3)" : "#1976D2",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: engagementPage === totalEngagementPages ? "not-allowed" : "pointer",
+                    boxShadow: engagementPage === totalEngagementPages ? "none" : "0 2px 8px rgba(0,0,0,0.08)",
+                    transition: "all 0.2s ease",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* NEW ANALYTICS TAB - Page View Tracking */}
+        {activeTab === "analytics" && <ProposalAnalyticsTab />}
 
         {/* Share Modal */}
         <ShareModal

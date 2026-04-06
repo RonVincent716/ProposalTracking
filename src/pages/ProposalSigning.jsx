@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db, storage } from "../firebase";
-import { doc, setDoc, updateDoc, arrayUnion, serverTimestamp, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, setDoc, updateDoc, serverTimestamp, getDoc, collection, query, where, getDocs, addDoc } from "firebase/firestore";
 import { ref, getDownloadURL } from "firebase/storage";
 import { 
   MdDraw, 
@@ -37,6 +37,7 @@ export default function ProposalSigning() {
   const [isSaving, setIsSaving] = useState(false);
   const [signed, setSigned] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
+  const [viewTracked, setViewTracked] = useState(false);
   
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -51,7 +52,6 @@ export default function ProposalSigning() {
     try {
       setLoading(true);
       
-      // Decode the proposalId (it's base64 encoded from the uploader)
       let decodedPath;
       try {
         decodedPath = atob(proposalId);
@@ -61,7 +61,6 @@ export default function ProposalSigning() {
 
       console.log("Decoded path:", decodedPath);
 
-      // Get download URL from Firebase Storage
       const fileRef = ref(storage, decodedPath);
       const url = await getDownloadURL(fileRef);
       const fileName = decodedPath.split('/').pop();
@@ -77,9 +76,6 @@ export default function ProposalSigning() {
       setPdfUrl(url);
       setLoading(false);
       
-      // Track view in Firestore
-      await trackView(fileName, decodedPath);
-      
     } catch (error) {
       console.error("Error loading proposal:", error);
       setError("Failed to load proposal. The link may be invalid or expired.");
@@ -87,18 +83,27 @@ export default function ProposalSigning() {
     }
   };
 
-  const trackView = async (fileName, filePath) => {
+  // Track view only once when signer email is entered
+  const trackView = async () => {
+    if (!signerEmail || viewTracked || !proposal) return;
+    
     try {
       const viewData = {
-        fileName: fileName,
-        filePath: filePath,
+        fileName: proposal.name,
+        filePath: proposal.path,
+        viewerEmail: signerEmail,
+        viewerName: signerName || signerEmail.split('@')[0],
         viewedAt: serverTimestamp(),
         userAgent: navigator.userAgent,
         page: "signing",
-        viewerEmail: signerEmail || "anonymous"
+        proposalId: proposal.id,
+        status: "viewed"
       };
       
-      await setDoc(doc(db, "proposalViews", `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`), viewData);
+      await addDoc(collection(db, "proposalViews"), viewData);
+      setViewTracked(true);
+      console.log("✅ View tracked for:", signerEmail);
+      
     } catch (error) {
       console.error("Error tracking view:", error);
     }
@@ -115,11 +120,20 @@ export default function ProposalSigning() {
       context.lineJoin = "round";
       setCtx(context);
       
-      // Set white background
       context.fillStyle = "#fff";
       context.fillRect(0, 0, canvas.width, canvas.height);
     }
   }, [signatureType, signed]);
+
+  // Track view when email is entered (after debounce)
+  useEffect(() => {
+    if (signerEmail && signerEmail.includes('@') && proposal && !viewTracked) {
+      const timer = setTimeout(() => {
+        trackView();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [signerEmail, proposal, viewTracked]);
 
   // Drawing handlers
   const startDrawing = (e) => {
@@ -200,16 +214,14 @@ export default function ProposalSigning() {
         ? signatureData 
         : typedSignature;
 
-      // Create signing record
       const signingId = `sign_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       console.log("=== STARTING SIGNING PROCESS ===");
-      console.log("1. Signer Email:", signerEmail);
-      console.log("2. Proposal Path:", proposal.path);
-      console.log("3. Proposal Name:", proposal.name);
-      console.log("4. Signing ID:", signingId);
-      
-      // Enhanced signing data with all necessary fields
+      console.log("Signer Email:", signerEmail);
+      console.log("Proposal Path:", proposal.path);
+      console.log("Proposal Name:", proposal.name);
+
+      // Save to signedProposals collection
       const signingData = {
         id: signingId,
         proposalId: proposal.id,
@@ -220,41 +232,27 @@ export default function ProposalSigning() {
         signerTitle: signerTitle || "Client",
         signature: signature,
         signatureType: signatureType,
-        signedAt: new Date().toISOString(),
-        signedAtTimestamp: serverTimestamp(),
+        signedAt: serverTimestamp(),
+        signedAtISO: new Date().toISOString(),
         ipAddress: "collected",
         userAgent: navigator.userAgent,
         status: "completed",
-        documentId: proposal.id,
         filePath: proposal.path,
         fileName: proposal.name,
-        sharedAt: new Date().toISOString(),
         clientEmail: signerEmail,
         clientName: signerName,
-        createdAt: new Date().toISOString()
+        createdAt: serverTimestamp()
       };
 
-      console.log("5. Saving to signedProposals...");
-      // Save to signedProposals collection
-      const signedProposalsRef = doc(db, "signedProposals", signingId);
-      await setDoc(signedProposalsRef, signingData);
-      console.log("   ✓ SUCCESS: Saved to signedProposals");
+      await setDoc(doc(db, "signedProposals", signingId), signingData);
+      console.log("✓ Saved to signedProposals");
 
-      console.log("6. Saving to clientSignedProposals...");
-      // Also save to clientSignedProposals collection
+      // Save to clientSignedProposals
       const clientSignedId = `client_${signerEmail.replace(/[^a-zA-Z0-9]/g, '_')}_${signingId}`;
-      const clientSignedRef = doc(db, "clientSignedProposals", clientSignedId);
-      await setDoc(clientSignedRef, {
-        ...signingData,
-        signedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      });
-      console.log("   ✓ SUCCESS: Saved to clientSignedProposals");
+      await setDoc(doc(db, "clientSignedProposals", clientSignedId), signingData);
+      console.log("✓ Saved to clientSignedProposals");
 
-      console.log("7. Looking for matching shared proposal...");
-      
-      // IMPORTANT FIX: Query shared proposals by fileName OR filePath
-      // First, try to find by exact filePath
+      // Update sharedProposals
       let sharedQuery = query(
         collection(db, "sharedProposals"),
         where("clientEmail", "==", signerEmail),
@@ -262,42 +260,30 @@ export default function ProposalSigning() {
       );
       let sharedSnapshot = await getDocs(sharedQuery);
       
-      console.log(`   Found ${sharedSnapshot.size} shared proposals matching by filePath`);
-      
-      // If not found by filePath, try by fileName
       if (sharedSnapshot.empty) {
-        console.log("   No match by filePath, trying by fileName...");
         sharedQuery = query(
           collection(db, "sharedProposals"),
           where("clientEmail", "==", signerEmail),
           where("fileName", "==", proposal.name)
         );
         sharedSnapshot = await getDocs(sharedQuery);
-        console.log(`   Found ${sharedSnapshot.size} shared proposals matching by fileName`);
       }
       
       let updatedCount = 0;
       
-      // Update all matching shared proposals
       for (const sharedDoc of sharedSnapshot.docs) {
-        const data = sharedDoc.data();
-        console.log(`   ✓ Found matching proposal: ${sharedDoc.id}`);
-        console.log(`     - Current status: ${data.status}`);
-        
         await updateDoc(sharedDoc.ref, {
           status: "signed",
-          signedAt: new Date().toISOString(),
+          signedAt: serverTimestamp(),
           signedBy: signerName,
           signedById: signingId,
-          lastActivity: new Date().toISOString()
+          signerEmail: signerEmail,
+          lastActivity: serverTimestamp()
         });
         updatedCount++;
-        console.log(`   ✓ SUCCESS: Updated sharedProposals entry ${sharedDoc.id} to status: signed`);
       }
       
-      // If no matching shared proposal found, create a new one
       if (updatedCount === 0) {
-        console.log("   No matching shared proposal found, creating new one...");
         const newSharedId = `shared_${Date.now()}`;
         await setDoc(doc(db, "sharedProposals", newSharedId), {
           filePath: proposal.path,
@@ -306,48 +292,19 @@ export default function ProposalSigning() {
           clientName: signerName,
           sharedBy: signerName,
           sharedByEmail: signerEmail,
-          sharedAt: new Date().toISOString(),
+          sharedAt: serverTimestamp(),
           status: "signed",
-          signedAt: new Date().toISOString(),
+          signedAt: serverTimestamp(),
           signedBy: signerName,
           signedById: signingId,
-          lastActivity: new Date().toISOString(),
           viewCount: 0
         });
-        console.log("   ✓ SUCCESS: Created new sharedProposals entry");
-        updatedCount = 1;
       }
 
-      console.log(`8. Verification: Updated ${updatedCount} shared proposal(s)`);
-      
-      // Wait a moment for Firestore to update
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Verify the shared proposal update
-      const verifyQuery = query(
-        collection(db, "sharedProposals"),
-        where("clientEmail", "==", signerEmail),
-        where("fileName", "==", proposal.name)
-      );
-      const verifySnapshot = await getDocs(verifyQuery);
-      
-      if (!verifySnapshot.empty) {
-        const verifiedDoc = verifySnapshot.docs[0];
-        console.log(`   ✓ VERIFIED: Shared proposal status is now: ${verifiedDoc.data().status}`);
-        if (verifiedDoc.data().status === "signed") {
-          console.log("   ✓✓✓ SUCCESS! Proposal is now marked as signed in sharedProposals!");
-        } else {
-          console.error(`   ✗ ERROR: Status is still ${verifiedDoc.data().status}, not signed!`);
-        }
-      } else {
-        console.error("   ✗ VERIFICATION FAILED: No shared proposal found with this fileName!");
-      }
-
-      console.log("=== SIGNING PROCESS COMPLETED SUCCESSFULLY ===");
+      console.log("=== SIGNING COMPLETED ===");
       
       setSigned(true);
       
-      // Show success message
       alert(`✓ Successfully signed ${proposal.name}!`);
       
       setTimeout(() => {
@@ -355,21 +312,16 @@ export default function ProposalSigning() {
       }, 2000);
       
     } catch (error) {
-      console.error("!!! ERROR IN SIGNING PROCESS:", error);
-      console.error("Error details:", error.message);
-      console.error("Error stack:", error.stack);
+      console.error("Error in signing process:", error);
       alert("Error signing proposal: " + error.message);
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Rest of the component remains the same (all the JSX and styles)
-  // ... [keep all your existing JSX and styles from your original file]
-  
   if (loading) {
     return (
-      <div style={loadingContainerStyle}>
+      <div style={styles.loadingContainer}>
         <div className="spinner"></div>
         <p>Loading proposal...</p>
       </div>
@@ -378,11 +330,11 @@ export default function ProposalSigning() {
 
   if (error) {
     return (
-      <div style={errorContainerStyle}>
+      <div style={styles.errorContainer}>
         <MdDescription size={64} color="#ef4444" />
         <h2>Proposal Not Found</h2>
         <p>{error}</p>
-        <button onClick={() => navigate('/')} style={backButtonStyle}>
+        <button onClick={() => navigate('/')} style={styles.backButton}>
           <MdArrowBack size={18} />
           Go to Homepage
         </button>
@@ -392,31 +344,31 @@ export default function ProposalSigning() {
 
   if (signed) {
     return (
-      <div style={successContainerStyle}>
-        <div style={successCardStyle}>
-          <div style={successIconStyle}>
+      <div style={styles.successContainer}>
+        <div style={styles.successCard}>
+          <div style={styles.successIcon}>
             <MdCheckCircle size={80} color="#10B981" />
           </div>
-          <h2 style={successTitleStyle}>Thank You, {signerName}!</h2>
-          <p style={successMessageStyle}>
+          <h2 style={styles.successTitle}>Thank You, {signerName}!</h2>
+          <p style={styles.successMessage}>
             You have successfully signed <strong>{proposal?.name}</strong>
           </p>
           
-          <div style={successActionsStyle}>
-            <button onClick={() => window.print()} style={successButtonStyle}>
+          <div style={styles.successActions}>
+            <button onClick={() => window.print()} style={styles.successButton}>
               <MdPrint size={18} />
               Download Copy
             </button>
             <button onClick={() => {
               navigator.clipboard.writeText(window.location.href);
               alert("Link copied!");
-            }} style={successButtonStyle}>
+            }} style={styles.successButton}>
               <MdShare size={18} />
               Share
             </button>
           </div>
           
-          <p style={successRedirectStyle}>
+          <p style={styles.successRedirect}>
             Redirecting to confirmation page in 2 seconds...
           </p>
         </div>
@@ -425,57 +377,57 @@ export default function ProposalSigning() {
   }
 
   return (
-    <div style={containerStyle}>
+    <div style={styles.container}>
       {/* Header */}
-      <div style={headerStyle}>
-        <button onClick={() => navigate(-1)} style={backBtnStyle}>
+      <div style={styles.header}>
+        <button onClick={() => navigate(-1)} style={styles.backBtn}>
           <MdArrowBack size={20} />
           Back
         </button>
         
-        <div style={titleGroupStyle}>
-          <div style={logoStyle}>
+        <div style={styles.titleGroup}>
+          <div style={styles.logo}>
             <MdDraw size={24} color="#fff" />
           </div>
           <div>
-            <h1 style={titleStyle}>Sign Proposal</h1>
-            <p style={subtitleStyle}>Review and sign electronically</p>
+            <h1 style={styles.title}>Sign Proposal</h1>
+            <p style={styles.subtitle}>Review and sign electronically</p>
           </div>
         </div>
         
-        <div style={proposalBadgeStyle}>
+        <div style={styles.proposalBadge}>
           <MdDescription size={16} />
           <span>{proposal?.name || "Proposal"}</span>
         </div>
       </div>
 
       {/* Progress Steps */}
-      <div style={stepsContainerStyle}>
-        <div style={stepStyle(currentStep >= 1)}>
-          <span style={stepNumberStyle(1, currentStep >= 1)}>1</span>
-          <span style={stepLabelStyle}>Review</span>
+      <div style={styles.stepsContainer}>
+        <div style={styles.step(currentStep >= 1)}>
+          <span style={styles.stepNumber(1, currentStep >= 1)}>1</span>
+          <span style={styles.stepLabel}>Review</span>
         </div>
-        <div style={stepLineStyle(currentStep >= 2)} />
-        <div style={stepStyle(currentStep >= 2)}>
-          <span style={stepNumberStyle(2, currentStep >= 2)}>2</span>
-          <span style={stepLabelStyle}>Sign</span>
+        <div style={styles.stepLine(currentStep >= 2)} />
+        <div style={styles.step(currentStep >= 2)}>
+          <span style={styles.stepNumber(2, currentStep >= 2)}>2</span>
+          <span style={styles.stepLabel}>Sign</span>
         </div>
-        <div style={stepLineStyle(currentStep >= 3)} />
-        <div style={stepStyle(currentStep >= 3)}>
-          <span style={stepNumberStyle(3, currentStep >= 3)}>3</span>
-          <span style={stepLabelStyle}>Confirm</span>
+        <div style={styles.stepLine(currentStep >= 3)} />
+        <div style={styles.step(currentStep >= 3)}>
+          <span style={styles.stepNumber(3, currentStep >= 3)}>3</span>
+          <span style={styles.stepLabel}>Confirm</span>
         </div>
       </div>
 
-      <div style={mainContentStyle}>
+      <div style={styles.mainContent}>
         {/* Left Column - PDF Preview */}
-        <div style={previewContainerStyle}>
-          <div style={previewHeaderStyle}>
+        <div style={styles.previewContainer}>
+          <div style={styles.previewHeader}>
             <MdDescription size={20} color="#00D4FF" />
             <span>Document Preview</span>
             <button 
               onClick={() => window.open(pdfUrl, '_blank')}
-              style={previewButtonStyle}
+              style={styles.previewButton}
             >
               <MdDownload size={16} />
               Download
@@ -483,22 +435,22 @@ export default function ProposalSigning() {
           </div>
           <iframe
             src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1`}
-            style={previewFrameStyle}
+            style={styles.previewFrame}
             title="Proposal Preview"
           />
         </div>
 
         {/* Right Column - Signing Form */}
-        <div style={formContainerStyle}>
+        <div style={styles.formContainer}>
           {/* Step 1: Review */}
           {currentStep === 1 && (
-            <div style={stepContentStyle}>
-              <h3 style={stepTitleStyle}>Step 1: Review Document</h3>
-              <p style={stepDescriptionStyle}>
+            <div style={styles.stepContent}>
+              <h3 style={styles.stepTitle}>Step 1: Review Document</h3>
+              <p style={styles.stepDescription}>
                 Please review the proposal carefully before signing.
               </p>
               
-              <div style={reviewCardStyle}>
+              <div style={styles.reviewCard}>
                 <MdCheckCircle size={24} color="#10B981" />
                 <div>
                   <h4>Proposal Details</h4>
@@ -509,7 +461,7 @@ export default function ProposalSigning() {
               
               <button 
                 onClick={() => setCurrentStep(2)}
-                style={nextButtonStyle}
+                style={styles.nextButton}
               >
                 Continue to Sign
               </button>
@@ -518,60 +470,60 @@ export default function ProposalSigning() {
 
           {/* Step 2: Sign */}
           {currentStep === 2 && (
-            <div style={stepContentStyle}>
-              <h3 style={stepTitleStyle}>Step 2: Sign Document</h3>
+            <div style={styles.stepContent}>
+              <h3 style={styles.stepTitle}>Step 2: Sign Document</h3>
               
               {/* Signer Information */}
-              <div style={sectionStyle}>
-                <h4 style={sectionTitleStyle}>Your Information</h4>
-                <div style={inputGroupStyle}>
-                  <div style={inputWrapperStyle}>
+              <div style={styles.section}>
+                <h4 style={styles.sectionTitle}>Your Information</h4>
+                <div style={styles.inputGroup}>
+                  <div style={styles.inputWrapper}>
                     <MdPerson size={18} color="#666" />
                     <input
                       type="text"
                       placeholder="Full Name *"
                       value={signerName}
                       onChange={(e) => setSignerName(e.target.value)}
-                      style={inputStyle}
+                      style={styles.input}
                     />
                   </div>
-                  <div style={inputWrapperStyle}>
+                  <div style={styles.inputWrapper}>
                     <MdEmail size={18} color="#666" />
                     <input
                       type="email"
                       placeholder="Email Address *"
                       value={signerEmail}
                       onChange={(e) => setSignerEmail(e.target.value)}
-                      style={inputStyle}
+                      style={styles.input}
                     />
                   </div>
-                  <div style={inputWrapperStyle}>
+                  <div style={styles.inputWrapper}>
                     <MdPerson size={18} color="#666" />
                     <input
                       type="text"
                       placeholder="Title/Position (Optional)"
                       value={signerTitle}
                       onChange={(e) => setSignerTitle(e.target.value)}
-                      style={inputStyle}
+                      style={styles.input}
                     />
                   </div>
                 </div>
               </div>
 
               {/* Signature Type Selector */}
-              <div style={sectionStyle}>
-                <h4 style={sectionTitleStyle}>Signature Method</h4>
-                <div style={tabContainerStyle}>
+              <div style={styles.section}>
+                <h4 style={styles.sectionTitle}>Signature Method</h4>
+                <div style={styles.tabContainer}>
                   <button
                     onClick={() => setSignatureType("draw")}
-                    style={tabStyle(signatureType === "draw")}
+                    style={styles.tab(signatureType === "draw")}
                   >
                     <MdDraw size={18} />
                     Draw Signature
                   </button>
                   <button
                     onClick={() => setSignatureType("type")}
-                    style={tabStyle(signatureType === "type")}
+                    style={styles.tab(signatureType === "type")}
                   >
                     <MdTextFields size={18} />
                     Type Signature
@@ -580,50 +532,50 @@ export default function ProposalSigning() {
               </div>
 
               {/* Signature Input */}
-              <div style={sectionStyle}>
-                <h4 style={sectionTitleStyle}>Your Signature</h4>
+              <div style={styles.section}>
+                <h4 style={styles.sectionTitle}>Your Signature</h4>
                 
                 {signatureType === "draw" ? (
-                  <div style={canvasContainerStyle}>
+                  <div style={styles.canvasContainer}>
                     <canvas
                       ref={canvasRef}
                       width={400}
                       height={150}
-                      style={canvasStyle}
+                      style={styles.canvas}
                       onMouseDown={startDrawing}
                       onMouseMove={draw}
                       onMouseUp={stopDrawing}
                       onMouseLeave={stopDrawing}
                     />
-                    <div style={canvasControlsStyle}>
-                      <button onClick={clearCanvas} style={clearBtnStyle}>
+                    <div style={styles.canvasControls}>
+                      <button onClick={clearCanvas} style={styles.clearBtn}>
                         Clear
                       </button>
-                      <button onClick={saveDrawing} style={saveBtnStyle}>
+                      <button onClick={saveDrawing} style={styles.saveBtn}>
                         <MdCheckCircle size={16} />
                         Save Signature
                       </button>
                     </div>
                     {signatureData && (
-                      <div style={savedSignatureStyle}>
-                        <img src={signatureData} alt="Signature" style={signatureImageStyle} />
-                        <span style={savedTextStyle}>✓ Signature saved</span>
+                      <div style={styles.savedSignature}>
+                        <img src={signatureData} alt="Signature" style={styles.signatureImage} />
+                        <span style={styles.savedText}>✓ Signature saved</span>
                       </div>
                     )}
                   </div>
                 ) : (
-                  <div style={typeContainerStyle}>
+                  <div style={styles.typeContainer}>
                     <input
                       type="text"
                       placeholder="Type your full name"
                       value={typedSignature}
                       onChange={(e) => setTypedSignature(e.target.value)}
-                      style={typeInputStyle}
+                      style={styles.typeInput}
                     />
                     {typedSignature && (
-                      <div style={typePreviewStyle}>
-                        <span style={typeSignatureStyle}>{typedSignature}</span>
-                        <span style={previewTextStyle}>✓ Will be used as signature</span>
+                      <div style={styles.typePreview}>
+                        <span style={styles.typeSignature}>{typedSignature}</span>
+                        <span style={styles.previewText}>✓ Will be used as signature</span>
                       </div>
                     )}
                   </div>
@@ -631,8 +583,8 @@ export default function ProposalSigning() {
               </div>
 
               {/* Legal Disclaimer */}
-              <div style={disclaimerStyle}>
-                <label style={checkboxStyle}>
+              <div style={styles.disclaimer}>
+                <label style={styles.checkbox}>
                   <input
                     type="checkbox"
                     checked={agreeToTerms}
@@ -642,17 +594,17 @@ export default function ProposalSigning() {
                 </label>
               </div>
 
-              <div style={buttonGroupStyle}>
+              <div style={styles.buttonGroup}>
                 <button 
                   onClick={() => setCurrentStep(1)}
-                  style={backButtonStyle}
+                  style={styles.backButtonStyle}
                 >
                   Back
                 </button>
                 <button
                   onClick={() => setCurrentStep(3)}
                   disabled={!signerName || !signerEmail || !agreeToTerms || (signatureType === "draw" ? !signatureData : !typedSignature)}
-                  style={continueButtonStyle(!signerName || !signerEmail || !agreeToTerms || (signatureType === "draw" ? !signatureData : !typedSignature))}
+                  style={styles.continueButton(!signerName || !signerEmail || !agreeToTerms || (signatureType === "draw" ? !signatureData : !typedSignature))}
                 >
                   Review & Confirm
                 </button>
@@ -662,10 +614,10 @@ export default function ProposalSigning() {
 
           {/* Step 3: Confirm */}
           {currentStep === 3 && (
-            <div style={stepContentStyle}>
-              <h3 style={stepTitleStyle}>Step 3: Confirm & Sign</h3>
+            <div style={styles.stepContent}>
+              <h3 style={styles.stepTitle}>Step 3: Confirm & Sign</h3>
               
-              <div style={confirmCardStyle}>
+              <div style={styles.confirmCard}>
                 <h4>Review Your Information</h4>
                 <p><strong>Name:</strong> {signerName}</p>
                 <p><strong>Email:</strong> {signerEmail}</p>
@@ -673,18 +625,18 @@ export default function ProposalSigning() {
                 <p><strong>Document:</strong> {proposal?.name}</p>
                 <p><strong>Signature Method:</strong> {signatureType === "draw" ? "Drawn Signature" : "Typed Signature"}</p>
                 
-                <div style={signaturePreviewStyle}>
+                <div style={styles.signaturePreview}>
                   <strong>Signature:</strong>
                   {signatureType === "draw" ? (
-                    <img src={signatureData} alt="Signature" style={confirmSignatureStyle} />
+                    <img src={signatureData} alt="Signature" style={styles.confirmSignature} />
                   ) : (
-                    <span style={confirmTypeStyle}>{typedSignature}</span>
+                    <span style={styles.confirmType}>{typedSignature}</span>
                   )}
                 </div>
               </div>
 
               {/* Legal Text */}
-              <div style={legalTextStyle}>
+              <div style={styles.legalText}>
                 <p>
                   By clicking "Sign & Approve", you agree that this electronic signature 
                   is the legal equivalent of your manual signature and you consent to be 
@@ -693,17 +645,17 @@ export default function ProposalSigning() {
                 </p>
               </div>
 
-              <div style={buttonGroupStyle}>
+              <div style={styles.buttonGroup}>
                 <button 
                   onClick={() => setCurrentStep(2)}
-                  style={backButtonStyle}
+                  style={styles.backButtonStyle}
                 >
                   Back
                 </button>
                 <button
                   onClick={handleSign}
                   disabled={isSaving}
-                  style={signButtonStyle(isSaving)}
+                  style={styles.signButton(isSaving)}
                 >
                   {isSaving ? (
                     <>
@@ -748,572 +700,517 @@ export default function ProposalSigning() {
   );
 }
 
-// Keep all your existing style objects (they remain exactly the same)
-const containerStyle = {
-  minHeight: "100vh",
-  background: "#f8fafc",
-  fontFamily: "'Inter', sans-serif",
-};
-
-const headerStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  padding: "20px 40px",
-  background: "#fff",
-  borderBottom: "1px solid #e2e8f0",
-  boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
-};
-
-const backBtnStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  padding: "10px 20px",
-  background: "#f1f5f9",
-  border: "1px solid #e2e8f0",
-  borderRadius: "10px",
-  color: "#64748b",
-  fontSize: "14px",
-  cursor: "pointer",
-  transition: "all 0.2s",
-};
-
-const titleGroupStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "15px",
-};
-
-const logoStyle = {
-  width: "48px",
-  height: "48px",
-  borderRadius: "12px",
-  background: "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
-const titleStyle = {
-  color: "#1a1a2e",
-  fontSize: "24px",
-  fontWeight: "700",
-  margin: 0,
-};
-
-const subtitleStyle = {
-  color: "#64748b",
-  fontSize: "14px",
-  margin: "4px 0 0 0",
-};
-
-const proposalBadgeStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "10px",
-  padding: "10px 20px",
-  background: "#f1f5f9",
-  borderRadius: "100px",
-  color: "#1a1a2e",
-  fontSize: "14px",
-  fontWeight: "500",
-  maxWidth: "300px",
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-};
-
-const stepsContainerStyle = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "20px",
-  padding: "30px 40px",
-  background: "#fff",
-  borderBottom: "1px solid #e2e8f0",
-};
-
-const stepStyle = (active) => ({
-  display: "flex",
-  alignItems: "center",
-  gap: "10px",
-  opacity: active ? 1 : 0.5,
-});
-
-const stepNumberStyle = (number, active) => ({
-  width: "32px",
-  height: "32px",
-  borderRadius: "50%",
-  background: active ? "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)" : "#e2e8f0",
-  color: active ? "#fff" : "#94a3b8",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  fontSize: "14px",
-  fontWeight: "600",
-});
-
-const stepLabelStyle = {
-  fontSize: "14px",
-  fontWeight: "500",
-  color: "#1a1a2e",
-};
-
-const stepLineStyle = (active) => ({
-  width: "60px",
-  height: "2px",
-  background: active ? "#00D4FF" : "#e2e8f0",
-});
-
-const mainContentStyle = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: "30px",
-  padding: "30px 40px",
-  maxWidth: "1600px",
-  margin: "0 auto",
-};
-
-const previewContainerStyle = {
-  background: "#fff",
-  borderRadius: "16px",
-  overflow: "hidden",
-  boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
-  height: "fit-content",
-  border: "1px solid #e2e8f0",
-};
-
-const previewHeaderStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "12px",
-  padding: "16px 20px",
-  background: "#f8fafc",
-  borderBottom: "1px solid #e2e8f0",
-  color: "#1a1a2e",
-  fontWeight: "500",
-};
-
-const previewButtonStyle = {
-  marginLeft: "auto",
-  display: "flex",
-  alignItems: "center",
-  gap: "6px",
-  padding: "6px 12px",
-  background: "#fff",
-  border: "1px solid #e2e8f0",
-  borderRadius: "6px",
-  color: "#64748b",
-  fontSize: "12px",
-  cursor: "pointer",
-};
-
-const previewFrameStyle = {
-  width: "100%",
-  height: "700px",
-  border: "none",
-};
-
-const formContainerStyle = {
-  background: "#fff",
-  borderRadius: "16px",
-  padding: "30px",
-  boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
-  border: "1px solid #e2e8f0",
-};
-
-const stepContentStyle = {
-  animation: "fadeIn 0.3s ease",
-};
-
-const stepTitleStyle = {
-  color: "#1a1a2e",
-  fontSize: "20px",
-  fontWeight: "600",
-  margin: "0 0 10px 0",
-};
-
-const stepDescriptionStyle = {
-  color: "#64748b",
-  fontSize: "14px",
-  margin: "0 0 25px 0",
-};
-
-const reviewCardStyle = {
-  display: "flex",
-  gap: "20px",
-  padding: "20px",
-  background: "#f8fafc",
-  borderRadius: "12px",
-  marginBottom: "30px",
-  border: "1px solid #e2e8f0",
-};
-
-const nextButtonStyle = {
-  width: "100%",
-  padding: "14px",
-  background: "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
-  border: "none",
-  borderRadius: "10px",
-  color: "#fff",
-  fontSize: "16px",
-  fontWeight: "600",
-  cursor: "pointer",
-  boxShadow: "0 4px 15px rgba(0, 212, 255, 0.3)",
-};
-
-const sectionStyle = {
-  marginBottom: "25px",
-};
-
-const sectionTitleStyle = {
-  color: "#1a1a2e",
-  fontSize: "16px",
-  fontWeight: "600",
-  margin: "0 0 15px 0",
-};
-
-const inputGroupStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "12px",
-};
-
-const inputWrapperStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "12px",
-  padding: "12px 16px",
-  background: "#f8fafc",
-  border: "1px solid #e2e8f0",
-  borderRadius: "10px",
-  transition: "all 0.2s",
-};
-
-const inputStyle = {
-  flex: 1,
-  border: "none",
-  background: "transparent",
-  fontSize: "14px",
-  outline: "none",
-  color: "#1a1a2e",
-};
-
-const tabContainerStyle = {
-  display: "flex",
-  gap: "12px",
-};
-
-const tabStyle = (active) => ({
-  flex: 1,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "8px",
-  padding: "12px",
-  borderRadius: "10px",
-  border: active ? "2px solid #00D4FF" : "1px solid #e2e8f0",
-  background: active ? "rgba(0, 212, 255, 0.1)" : "#fff",
-  color: active ? "#00D4FF" : "#64748b",
-  fontSize: "14px",
-  fontWeight: "500",
-  cursor: "pointer",
-  transition: "all 0.2s",
-});
-
-const canvasContainerStyle = {
-  background: "#f8fafc",
-  borderRadius: "12px",
-  padding: "20px",
-  border: "1px solid #e2e8f0",
-};
-
-const canvasStyle = {
-  width: "100%",
-  height: "150px",
-  background: "#fff",
-  borderRadius: "8px",
-  border: "1px solid #e2e8f0",
-  cursor: "crosshair",
-};
-
-const canvasControlsStyle = {
-  display: "flex",
-  gap: "10px",
-  marginTop: "12px",
-};
-
-const clearBtnStyle = {
-  padding: "8px 16px",
-  background: "#f1f5f9",
-  border: "1px solid #e2e8f0",
-  borderRadius: "6px",
-  color: "#64748b",
-  fontSize: "13px",
-  cursor: "pointer",
-};
-
-const saveBtnStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "6px",
-  padding: "8px 16px",
-  background: "#10B981",
-  border: "none",
-  borderRadius: "6px",
-  color: "#fff",
-  fontSize: "13px",
-  cursor: "pointer",
-};
-
-const savedSignatureStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "12px",
-  marginTop: "12px",
-  padding: "10px",
-  background: "#f0fdf4",
-  borderRadius: "8px",
-  border: "1px solid #86efac",
-};
-
-const signatureImageStyle = {
-  maxHeight: "40px",
-  background: "#fff",
-  padding: "4px",
-  borderRadius: "4px",
-};
-
-const savedTextStyle = {
-  fontSize: "13px",
-  color: "#10B981",
-};
-
-const typeContainerStyle = {
-  background: "#f8fafc",
-  borderRadius: "12px",
-  padding: "20px",
-  border: "1px solid #e2e8f0",
-};
-
-const typeInputStyle = {
-  width: "100%",
-  padding: "12px",
-  fontSize: "18px",
-  fontFamily: "'Dancing Script', cursive",
-  border: "1px solid #e2e8f0",
-  borderRadius: "8px",
-  outline: "none",
-  marginBottom: "12px",
-};
-
-const typePreviewStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "8px",
-  padding: "12px",
-  background: "#fff",
-  borderRadius: "8px",
-  border: "1px solid #e2e8f0",
-};
-
-const typeSignatureStyle = {
-  fontSize: "24px",
-  fontFamily: "'Dancing Script', cursive",
-  color: "#1a1a2e",
-};
-
-const previewTextStyle = {
-  fontSize: "12px",
-  color: "#10B981",
-};
-
-const disclaimerStyle = {
-  marginBottom: "25px",
-  padding: "16px",
-  background: "#fff7ed",
-  borderRadius: "10px",
-  border: "1px solid #fed7aa",
-};
-
-const checkboxStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "12px",
-  fontSize: "14px",
-  color: "#9a3412",
-  cursor: "pointer",
-};
-
-const buttonGroupStyle = {
-  display: "flex",
-  gap: "12px",
-  marginTop: "20px",
-};
-
-const backButtonStyle = {
-  flex: 1,
-  padding: "14px",
-  background: "#f1f5f9",
-  border: "1px solid #e2e8f0",
-  borderRadius: "10px",
-  color: "#64748b",
-  fontSize: "14px",
-  fontWeight: "500",
-  cursor: "pointer",
-};
-
-const continueButtonStyle = (disabled) => ({
-  flex: 2,
-  padding: "14px",
-  background: disabled ? "#cbd5e1" : "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
-  border: "none",
-  borderRadius: "10px",
-  color: "#fff",
-  fontSize: "14px",
-  fontWeight: "600",
-  cursor: disabled ? "not-allowed" : "pointer",
-  boxShadow: disabled ? "none" : "0 4px 15px rgba(0, 212, 255, 0.3)",
-});
-
-const confirmCardStyle = {
-  padding: "20px",
-  background: "#f8fafc",
-  borderRadius: "12px",
-  marginBottom: "20px",
-  border: "1px solid #e2e8f0",
-};
-
-const signaturePreviewStyle = {
-  marginTop: "15px",
-  padding: "15px",
-  background: "#fff",
-  borderRadius: "8px",
-  border: "1px solid #e2e8f0",
-};
-
-const confirmSignatureStyle = {
-  maxHeight: "50px",
-  marginTop: "10px",
-  display: "block",
-};
-
-const confirmTypeStyle = {
-  display: "block",
-  marginTop: "10px",
-  fontSize: "20px",
-  fontFamily: "'Dancing Script', cursive",
-  color: "#1a1a2e",
-};
-
-const legalTextStyle = {
-  padding: "16px",
-  background: "#f0f9ff",
-  borderRadius: "10px",
-  border: "1px solid #bae6fd",
-  fontSize: "13px",
-  color: "#0369a1",
-  lineHeight: "1.6",
-  marginBottom: "20px",
-};
-
-const signButtonStyle = (disabled) => ({
-  flex: 2,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "10px",
-  padding: "14px",
-  background: disabled ? "#cbd5e1" : "linear-gradient(135deg, #10B981 0%, #059669 100%)",
-  border: "none",
-  borderRadius: "10px",
-  color: "#fff",
-  fontSize: "14px",
-  fontWeight: "600",
-  cursor: disabled ? "not-allowed" : "pointer",
-  boxShadow: disabled ? "none" : "0 4px 15px rgba(16, 185, 129, 0.3)",
-});
-
-const loadingContainerStyle = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  height: "100vh",
-  gap: "20px",
-  background: "#f8fafc",
-};
-
-const errorContainerStyle = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  height: "100vh",
-  gap: "16px",
-  background: "#f8fafc",
-  textAlign: "center",
-  padding: "0 20px",
-};
-
-const successContainerStyle = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  minHeight: "100vh",
-  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-  padding: "20px",
-};
-
-const successCardStyle = {
-  background: "#fff",
-  borderRadius: "24px",
-  padding: "50px",
-  maxWidth: "500px",
-  textAlign: "center",
-  boxShadow: "0 25px 60px rgba(0,0,0,0.3)",
-};
-
-const successIconStyle = {
-  marginBottom: "30px",
-};
-
-const successTitleStyle = {
-  color: "#1a1a2e",
-  fontSize: "32px",
-  fontWeight: "700",
-  margin: "0 0 15px 0",
-};
-
-const successMessageStyle = {
-  color: "#64748b",
-  fontSize: "16px",
-  lineHeight: "1.6",
-  margin: "0 0 30px 0",
-};
-
-const successActionsStyle = {
-  display: "flex",
-  gap: "15px",
-  justifyContent: "center",
-  marginBottom: "30px",
-};
-
-const successButtonStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  padding: "12px 24px",
-  background: "#f1f5f9",
-  border: "1px solid #e2e8f0",
-  borderRadius: "10px",
-  color: "#1a1a2e",
-  fontSize: "14px",
-  cursor: "pointer",
-};
-
-const successRedirectStyle = {
-  color: "#94a3b8",
-  fontSize: "14px",
+const styles = {
+  container: {
+    minHeight: "100vh",
+    background: "#f8fafc",
+    fontFamily: "'Inter', sans-serif",
+  },
+  loadingContainer: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "100vh",
+    gap: "20px",
+    background: "#f8fafc",
+  },
+  errorContainer: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "100vh",
+    gap: "16px",
+    background: "#f8fafc",
+    textAlign: "center",
+    padding: "0 20px",
+  },
+  backButton: {
+    padding: "10px 24px",
+    background: "#2196F3",
+    color: "#fff",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "14px",
+    cursor: "pointer",
+    marginTop: "20px",
+  },
+  successContainer: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: "100vh",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    padding: "20px",
+  },
+  successCard: {
+    background: "#fff",
+    borderRadius: "24px",
+    padding: "50px",
+    maxWidth: "500px",
+    textAlign: "center",
+    boxShadow: "0 25px 60px rgba(0,0,0,0.3)",
+  },
+  successIcon: {
+    marginBottom: "30px",
+  },
+  successTitle: {
+    color: "#1a1a2e",
+    fontSize: "32px",
+    fontWeight: "700",
+    margin: "0 0 15px 0",
+  },
+  successMessage: {
+    color: "#64748b",
+    fontSize: "16px",
+    lineHeight: "1.6",
+    margin: "0 0 30px 0",
+  },
+  successActions: {
+    display: "flex",
+    gap: "15px",
+    justifyContent: "center",
+    marginBottom: "30px",
+  },
+  successButton: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "12px 24px",
+    background: "#f1f5f9",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    color: "#1a1a2e",
+    fontSize: "14px",
+    cursor: "pointer",
+  },
+  successRedirect: {
+    color: "#94a3b8",
+    fontSize: "14px",
+  },
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "20px 40px",
+    background: "#fff",
+    borderBottom: "1px solid #e2e8f0",
+    boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+  },
+  backBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "10px 20px",
+    background: "#f1f5f9",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    color: "#64748b",
+    fontSize: "14px",
+    cursor: "pointer",
+  },
+  titleGroup: {
+    display: "flex",
+    alignItems: "center",
+    gap: "15px",
+  },
+  logo: {
+    width: "48px",
+    height: "48px",
+    borderRadius: "12px",
+    background: "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: {
+    color: "#1a1a2e",
+    fontSize: "24px",
+    fontWeight: "700",
+    margin: 0,
+  },
+  subtitle: {
+    color: "#64748b",
+    fontSize: "14px",
+    margin: "4px 0 0 0",
+  },
+  proposalBadge: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "10px 20px",
+    background: "#f1f5f9",
+    borderRadius: "100px",
+    color: "#1a1a2e",
+    fontSize: "14px",
+    fontWeight: "500",
+    maxWidth: "300px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  stepsContainer: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "20px",
+    padding: "30px 40px",
+    background: "#fff",
+    borderBottom: "1px solid #e2e8f0",
+  },
+  step: (active) => ({
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    opacity: active ? 1 : 0.5,
+  }),
+  stepNumber: (number, active) => ({
+    width: "32px",
+    height: "32px",
+    borderRadius: "50%",
+    background: active ? "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)" : "#e2e8f0",
+    color: active ? "#fff" : "#94a3b8",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "14px",
+    fontWeight: "600",
+  }),
+  stepLabel: {
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#1a1a2e",
+  },
+  stepLine: (active) => ({
+    width: "60px",
+    height: "2px",
+    background: active ? "#00D4FF" : "#e2e8f0",
+  }),
+  mainContent: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "30px",
+    padding: "30px 40px",
+    maxWidth: "1600px",
+    margin: "0 auto",
+  },
+  previewContainer: {
+    background: "#fff",
+    borderRadius: "16px",
+    overflow: "hidden",
+    boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
+    height: "fit-content",
+    border: "1px solid #e2e8f0",
+  },
+  previewHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "16px 20px",
+    background: "#f8fafc",
+    borderBottom: "1px solid #e2e8f0",
+    color: "#1a1a2e",
+    fontWeight: "500",
+  },
+  previewButton: {
+    marginLeft: "auto",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "6px 12px",
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: "6px",
+    color: "#64748b",
+    fontSize: "12px",
+    cursor: "pointer",
+  },
+  previewFrame: {
+    width: "100%",
+    height: "700px",
+    border: "none",
+  },
+  formContainer: {
+    background: "#fff",
+    borderRadius: "16px",
+    padding: "30px",
+    boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
+    border: "1px solid #e2e8f0",
+  },
+  stepContent: {
+    animation: "fadeIn 0.3s ease",
+  },
+  stepTitle: {
+    color: "#1a1a2e",
+    fontSize: "20px",
+    fontWeight: "600",
+    margin: "0 0 10px 0",
+  },
+  stepDescription: {
+    color: "#64748b",
+    fontSize: "14px",
+    margin: "0 0 25px 0",
+  },
+  reviewCard: {
+    display: "flex",
+    gap: "20px",
+    padding: "20px",
+    background: "#f8fafc",
+    borderRadius: "12px",
+    marginBottom: "30px",
+    border: "1px solid #e2e8f0",
+  },
+  nextButton: {
+    width: "100%",
+    padding: "14px",
+    background: "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
+    border: "none",
+    borderRadius: "10px",
+    color: "#fff",
+    fontSize: "16px",
+    fontWeight: "600",
+    cursor: "pointer",
+    boxShadow: "0 4px 15px rgba(0, 212, 255, 0.3)",
+  },
+  section: {
+    marginBottom: "25px",
+  },
+  sectionTitle: {
+    color: "#1a1a2e",
+    fontSize: "16px",
+    fontWeight: "600",
+    margin: "0 0 15px 0",
+  },
+  inputGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  inputWrapper: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "12px 16px",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    transition: "all 0.2s",
+  },
+  input: {
+    flex: 1,
+    border: "none",
+    background: "transparent",
+    fontSize: "14px",
+    outline: "none",
+    color: "#1a1a2e",
+  },
+  tabContainer: {
+    display: "flex",
+    gap: "12px",
+  },
+  tab: (active) => ({
+    flex: 1,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "12px",
+    borderRadius: "10px",
+    border: active ? "2px solid #00D4FF" : "1px solid #e2e8f0",
+    background: active ? "rgba(0, 212, 255, 0.1)" : "#fff",
+    color: active ? "#00D4FF" : "#64748b",
+    fontSize: "14px",
+    fontWeight: "500",
+    cursor: "pointer",
+  }),
+  canvasContainer: {
+    background: "#f8fafc",
+    borderRadius: "12px",
+    padding: "20px",
+    border: "1px solid #e2e8f0",
+  },
+  canvas: {
+    width: "100%",
+    height: "150px",
+    background: "#fff",
+    borderRadius: "8px",
+    border: "1px solid #e2e8f0",
+    cursor: "crosshair",
+  },
+  canvasControls: {
+    display: "flex",
+    gap: "10px",
+    marginTop: "12px",
+  },
+  clearBtn: {
+    padding: "8px 16px",
+    background: "#f1f5f9",
+    border: "1px solid #e2e8f0",
+    borderRadius: "6px",
+    color: "#64748b",
+    fontSize: "13px",
+    cursor: "pointer",
+  },
+  saveBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "8px 16px",
+    background: "#10B981",
+    border: "none",
+    borderRadius: "6px",
+    color: "#fff",
+    fontSize: "13px",
+    cursor: "pointer",
+  },
+  savedSignature: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    marginTop: "12px",
+    padding: "10px",
+    background: "#f0fdf4",
+    borderRadius: "8px",
+    border: "1px solid #86efac",
+  },
+  signatureImage: {
+    maxHeight: "40px",
+    background: "#fff",
+    padding: "4px",
+    borderRadius: "4px",
+  },
+  savedText: {
+    fontSize: "13px",
+    color: "#10B981",
+  },
+  typeContainer: {
+    background: "#f8fafc",
+    borderRadius: "12px",
+    padding: "20px",
+    border: "1px solid #e2e8f0",
+  },
+  typeInput: {
+    width: "100%",
+    padding: "12px",
+    fontSize: "18px",
+    fontFamily: "'Dancing Script', cursive",
+    border: "1px solid #e2e8f0",
+    borderRadius: "8px",
+    outline: "none",
+    marginBottom: "12px",
+  },
+  typePreview: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    padding: "12px",
+    background: "#fff",
+    borderRadius: "8px",
+    border: "1px solid #e2e8f0",
+  },
+  typeSignature: {
+    fontSize: "24px",
+    fontFamily: "'Dancing Script', cursive",
+    color: "#1a1a2e",
+  },
+  previewText: {
+    fontSize: "12px",
+    color: "#10B981",
+  },
+  disclaimer: {
+    marginBottom: "25px",
+    padding: "16px",
+    background: "#fff7ed",
+    borderRadius: "10px",
+    border: "1px solid #fed7aa",
+  },
+  checkbox: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    fontSize: "14px",
+    color: "#9a3412",
+    cursor: "pointer",
+  },
+  buttonGroup: {
+    display: "flex",
+    gap: "12px",
+    marginTop: "20px",
+  },
+  backButtonStyle: {
+    flex: 1,
+    padding: "14px",
+    background: "#f1f5f9",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    color: "#64748b",
+    fontSize: "14px",
+    fontWeight: "500",
+    cursor: "pointer",
+  },
+  continueButton: (disabled) => ({
+    flex: 2,
+    padding: "14px",
+    background: disabled ? "#cbd5e1" : "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
+    border: "none",
+    borderRadius: "10px",
+    color: "#fff",
+    fontSize: "14px",
+    fontWeight: "600",
+    cursor: disabled ? "not-allowed" : "pointer",
+    boxShadow: disabled ? "none" : "0 4px 15px rgba(0, 212, 255, 0.3)",
+  }),
+  confirmCard: {
+    padding: "20px",
+    background: "#f8fafc",
+    borderRadius: "12px",
+    marginBottom: "20px",
+    border: "1px solid #e2e8f0",
+  },
+  signaturePreview: {
+    marginTop: "15px",
+    padding: "15px",
+    background: "#fff",
+    borderRadius: "8px",
+    border: "1px solid #e2e8f0",
+  },
+  confirmSignature: {
+    maxHeight: "50px",
+    marginTop: "10px",
+    display: "block",
+  },
+  confirmType: {
+    display: "block",
+    marginTop: "10px",
+    fontSize: "20px",
+    fontFamily: "'Dancing Script', cursive",
+    color: "#1a1a2e",
+  },
+  legalText: {
+    padding: "16px",
+    background: "#f0f9ff",
+    borderRadius: "10px",
+    border: "1px solid #bae6fd",
+    fontSize: "13px",
+    color: "#0369a1",
+    lineHeight: "1.6",
+    marginBottom: "20px",
+  },
+  signButton: (disabled) => ({
+    flex: 2,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "10px",
+    padding: "14px",
+    background: disabled ? "#cbd5e1" : "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+    border: "none",
+    borderRadius: "10px",
+    color: "#fff",
+    fontSize: "14px",
+    fontWeight: "600",
+    cursor: disabled ? "not-allowed" : "pointer",
+    boxShadow: disabled ? "none" : "0 4px 15px rgba(16, 185, 129, 0.3)",
+  }),
 };
