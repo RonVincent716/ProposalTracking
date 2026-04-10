@@ -40,6 +40,8 @@ import ShareModal from "./ShareModal";
 import SignedProposalsTab from "../Components/SignedProposalsTab";
 import ProposalAnalyticsTab from "../Components/ProposalAnalyticsTab";
 import ProposalsTabWithDelete from "../Components/ProposalsTabWithDelete";
+import RealTimeViewTracker from "../Components/RealTimeViewTracker";
+import ClientFeedbackTab from "../Components/ClientFeedbackTab";
 
 
 import {
@@ -60,6 +62,7 @@ export default function Dashboard() {
   const [views, setViews] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [signedProposals, setSignedProposals] = useState([]);
+  const [activeViewers, setActiveViewers] = useState([]);
   const [activeTab, setActiveTab] = useState("home");
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
@@ -93,6 +96,7 @@ export default function Dashboard() {
   const [showViewModal, setShowViewModal] = useState(false);
   const [viewingFile, setViewingFile] = useState(null);
   const [viewUrl, setViewUrl] = useState("");
+  const [liveTrackerProposal, setLiveTrackerProposal] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteSuccess, setDeleteSuccess] = useState(null);
   
@@ -253,6 +257,32 @@ export default function Dashboard() {
     );
     return ()=>unsub();
   },[user]);
+
+  /* LISTEN TO ACTIVE VIEWERS */
+  useEffect(() => {
+    if (!user) return;
+
+    const unsub = onSnapshot(collection(db, "activeViewers"), (snapshot) => {
+      const now = Date.now();
+      const liveData = snapshot.docs
+        .map((viewerDoc) => {
+          const data = viewerDoc.data();
+          const lastActive = data.lastActive?.toDate?.() || (data.lastActive ? new Date(data.lastActive) : null);
+
+          return {
+            id: viewerDoc.id,
+            ...data,
+            lastActive
+          };
+        })
+        .filter((viewer) => viewer.lastActive && (now - viewer.lastActive.getTime()) < 60000)
+        .sort((a, b) => b.lastActive - a.lastActive);
+
+      setActiveViewers(liveData);
+    });
+
+    return () => unsub();
+  }, [user]);
 
   /* LISTEN TO SIGNED PROPOSALS */
   useEffect(()=>{
@@ -564,6 +594,32 @@ export default function Dashboard() {
   );
 
   const totalEngagementPages = Math.ceil(filteredEngagement.length / engagementPerPage);
+  const activeViewerGroups = Object.values(
+    activeViewers.reduce((acc, viewer) => {
+      const key = viewer.proposalId || viewer.filePath || viewer.fileName || viewer.id;
+
+      if (!acc[key]) {
+        acc[key] = {
+          proposalId: viewer.proposalId || viewer.filePath || viewer.fileName,
+          proposalName: viewer.proposalName || viewer.fileName || "Unknown proposal",
+          viewers: []
+        };
+      }
+
+      acc[key].viewers.push(viewer);
+      return acc;
+    }, {})
+  ).sort((a, b) => b.viewers.length - a.viewers.length);
+  const uniqueActiveViewerCount = new Set(
+    activeViewers.map((viewer) => viewer.viewerId || viewer.viewerEmail || viewer.id)
+  ).size;
+  const formatActiveLastSeen = (date) => {
+    if (!date) return "Just now";
+    const diff = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+    if (diff < 5) return "Just now";
+    if (diff < 60) return `${diff}s ago`;
+    return `${Math.floor(diff / 60)}m ago`;
+  };
 
   if(!authChecked) return <div style={{padding:40}}>Loading...</div>;
 
@@ -1180,6 +1236,26 @@ export default function Dashboard() {
         </div>
       )}
 
+      {liveTrackerProposal && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.82)",
+          backdropFilter: "blur(8px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 2100,
+          padding: "20px",
+        }}>
+          <RealTimeViewTracker
+            proposalId={liveTrackerProposal.proposalId}
+            proposalName={liveTrackerProposal.proposalName}
+            onClose={() => setLiveTrackerProposal(null)}
+          />
+        </div>
+      )}
+
       {/* DELETE CONFIRMATION MODAL */}
       {showDeleteModal && (
         <div style={{
@@ -1498,6 +1574,36 @@ export default function Dashboard() {
             >
               <MdRemoveRedEye size={sidebarCollapsed ? 28 : 22} />
               {!sidebarCollapsed && <span>Live Views</span>}
+            </button>
+
+            <button 
+              style={{
+                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                border: "none",
+                borderRadius: 14,
+                cursor: "pointer",
+                background: activeTab==="feedback" 
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                  : "transparent",
+                color: activeTab==="feedback" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: 12,
+                fontSize: sidebarCollapsed ? 0 : 15,
+                fontWeight: activeTab==="feedback" ? 600 : 500,
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                position: "relative",
+                overflow: "hidden",
+                boxShadow: activeTab==="feedback" 
+                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                  : "none",
+                border: activeTab==="feedback" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+              }} 
+              onClick={()=>setActiveTab("feedback")}
+            >
+              <MdInfo size={sidebarCollapsed ? 28 : 22} />
+              {!sidebarCollapsed && <span>Feedback</span>}
             </button>
 
             <button 
@@ -2083,6 +2189,10 @@ export default function Dashboard() {
         {activeTab === "signed" && (
           <SignedProposalsTab user={user} />
         )}
+
+        {activeTab === "feedback" && (
+          <ClientFeedbackTab currentUser={user} />
+        )}
         
         {/* LIVE VIEWS TAB */}
         {activeTab === "views" && (
@@ -2110,6 +2220,107 @@ export default function Dashboard() {
                   </button>
                 )}
               </div>
+            </div>
+
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: 16,
+              marginBottom: 20
+            }}>
+              <div style={{ background: "#fff", padding: 18, borderRadius: 14, border: "1px solid #dbeafe", boxShadow: "0 4px 16px rgba(59, 130, 246, 0.08)" }}>
+                <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Active Right Now</div>
+                <div style={{ fontSize: 30, fontWeight: 700, color: "#1976D2" }}>{activeViewers.length}</div>
+              </div>
+              <div style={{ background: "#fff", padding: 18, borderRadius: 14, border: "1px solid #dcfce7", boxShadow: "0 4px 16px rgba(16, 185, 129, 0.08)" }}>
+                <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Live Proposals</div>
+                <div style={{ fontSize: 30, fontWeight: 700, color: "#10B981" }}>{activeViewerGroups.length}</div>
+              </div>
+              <div style={{ background: "#fff", padding: 18, borderRadius: 14, border: "1px solid #fef3c7", boxShadow: "0 4px 16px rgba(245, 158, 11, 0.08)" }}>
+                <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Unique Live Viewers</div>
+                <div style={{ fontSize: 30, fontWeight: 700, color: "#D97706" }}>{uniqueActiveViewerCount}</div>
+              </div>
+            </div>
+
+            <div style={{
+              background: "#fff",
+              borderRadius: 16,
+              padding: 20,
+              marginBottom: 20,
+              border: "1px solid #e2e8f0",
+              boxShadow: "0 6px 20px rgba(15, 23, 42, 0.05)"
+            }}>
+              <div style={{ marginBottom: 16 }}>
+                <h3 style={{ margin: 0, fontSize: 18, color: "#0f172a" }}>Who’s viewing right now</h3>
+                <p style={{ margin: "6px 0 0 0", fontSize: 13, color: "#64748b" }}>
+                  Clients with activity in the last 60 seconds appear here.
+                </p>
+              </div>
+
+              {activeViewerGroups.length === 0 ? (
+                <div style={{ padding: "28px 18px", borderRadius: 12, background: "#f8fafc", textAlign: "center", color: "#64748b" }}>
+                  No clients are actively viewing proposals right now.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  {activeViewerGroups.map((group) => (
+                    <div key={group.proposalId} style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 16, background: "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 16, fontWeight: 700, color: "#0f172a" }}>{group.proposalName}</div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+                            {group.viewers.length} active viewer{group.viewers.length === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setLiveTrackerProposal({
+                            proposalId: group.proposalId,
+                            proposalName: group.proposalName
+                          })}
+                          style={{
+                            padding: "10px 14px",
+                            borderRadius: 10,
+                            border: "none",
+                            background: "linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)",
+                            color: "#fff",
+                            fontSize: 13,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8
+                          }}
+                        >
+                          <MdVisibility size={16} />
+                          Open Tracker
+                        </button>
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {group.viewers.map((viewer) => (
+                          <div key={viewer.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 14px", borderRadius: 12, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              <div style={{ fontSize: 14, fontWeight: 600, color: "#0f172a" }}>
+                                {viewer.viewerName || viewer.viewerEmail || "Anonymous"}
+                              </div>
+                              <div style={{ fontSize: 12, color: "#64748b", display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                <span>{viewer.viewerEmail || "No email"}</span>
+                                <span>Page {viewer.currentPage || 1}</span>
+                                <span>{viewer.deviceInfo?.device || "Desktop"}</span>
+                                <span>{viewer.location?.city || "Unknown"}, {viewer.location?.country || "Unknown"}</span>
+                              </div>
+                            </div>
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 999, background: "#dcfce7", color: "#166534", fontSize: 12, fontWeight: 600 }}>
+                              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", boxShadow: "0 0 0 4px rgba(34, 197, 94, 0.15)" }}></span>
+                              {formatActiveLastSeen(viewer.lastActive)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 15, marginBottom: 20, flexWrap: "wrap" }}>

@@ -12,7 +12,8 @@ import {
   getDoc,
   updateDoc,
   orderBy,
-  limit
+  limit,
+  onSnapshot
 } from "firebase/firestore";
 import { ref, getDownloadURL } from "firebase/storage";
 import { 
@@ -41,7 +42,8 @@ import {
   MdEdit,
   MdExitToApp,
   MdSearch,
-  MdFilterList
+  MdFilterList,
+  MdForum
 } from "react-icons/md";
 import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
 
@@ -66,6 +68,9 @@ export default function ClientDashboard() {
     signed: 0,
     pending: 0
   });
+  const [adminReplies, setAdminReplies] = useState([]);
+  const [unreadRepliesCount, setUnreadRepliesCount] = useState(0);
+  const [proposalsLoaded, setProposalsLoaded] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -89,6 +94,12 @@ export default function ClientDashboard() {
           loadRecentlyViewed(user),
           loadSignedProposalsData(user)
         ]);
+        
+        // Set up real-time listener for admin replies
+        const repliesUnsubscribe = await loadAdminReplies(user);
+        
+        // Store unsubscribe function for cleanup
+        user.repliesUnsubscribe = repliesUnsubscribe;
       } catch (error) {
         console.error("Error checking user:", error);
         navigate("/client-login");
@@ -97,8 +108,26 @@ export default function ClientDashboard() {
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (currentUser?.repliesUnsubscribe) {
+        currentUser.repliesUnsubscribe();
+      }
+    };
   }, [navigate]);
+
+  // Update proposals with admin reply information when replies change
+  useEffect(() => {
+    if (proposalsLoaded && adminReplies.length >= 0) {
+      setProposals(currentProposals => 
+        currentProposals.map(proposal => ({
+          ...proposal,
+          hasAdminReplies: adminReplies.some(reply => reply.filePath === proposal.filePath && reply.totalReplies > 0),
+          unreadAdminReplies: adminReplies.some(reply => reply.filePath === proposal.filePath && reply.isUnread)
+        }))
+      );
+    }
+  }, [adminReplies, proposalsLoaded]);
 
   const refreshDashboard = async () => {
     if (!currentUser) return;
@@ -136,6 +165,66 @@ export default function ClientDashboard() {
       setSignedProposalsData(signedData);
     } catch (error) {
       console.error("Error loading signed proposals data:", error);
+    }
+  };
+
+  const loadAdminReplies = async (user) => {
+    try {
+      const feedbackQuery = query(
+        collection(db, "proposalFeedback"),
+        where("clientEmail", "==", user.email)
+      );
+      
+      const unsubscribe = onSnapshot(feedbackQuery, (snapshot) => {
+        const replies = [];
+        let unreadCount = 0;
+        
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          const hasAdminReplies = data.items?.some(item => item.adminReply && item.adminReply.trim());
+          
+          if (hasAdminReplies) {
+            // Check if client has seen these replies
+            const lastClientView = data.clientLastViewedRepliesAt;
+            const lastAdminUpdate = data.lastUpdated?.toDate?.() || new Date(data.lastUpdated);
+            
+            const isUnread = !lastClientView || 
+              (lastAdminUpdate && lastAdminUpdate > lastClientView.toDate?.());
+            
+            if (isUnread) {
+              unreadCount++;
+            }
+            
+            replies.push({
+              id: doc.id,
+              proposalId: data.proposalId,
+              proposalName: data.proposalName,
+              filePath: data.filePath,
+              lastUpdated: lastAdminUpdate,
+              isUnread,
+              totalReplies: data.items?.filter(item => item.adminReply && item.adminReply.trim()).length || 0
+            });
+          }
+        });
+        
+        setAdminReplies(replies);
+        setUnreadRepliesCount(unreadCount);
+      });
+      
+      return unsubscribe;
+    } catch (error) {
+      console.error("Error loading admin replies:", error);
+      return null;
+    }
+  };
+
+  const markRepliesAsRead = async (feedbackId) => {
+    try {
+      await updateDoc(doc(db, "proposalFeedback", feedbackId), {
+        clientLastViewedRepliesAt: new Date()
+      });
+    } catch (error) {
+      console.error("Error marking replies as read:", error);
     }
   };
 
@@ -209,7 +298,9 @@ export default function ClientDashboard() {
           status: isSigned ? "signed" : (hasViewed ? "viewed" : "pending"),
           signedAt: data.signedAt,
           expiresAt: data.expiresAt?.toDate?.() || null,
-          viewCount: data.viewCount || 0
+          viewCount: data.viewCount || 0,
+          hasAdminReplies: adminReplies.some(reply => reply.filePath === data.filePath && reply.totalReplies > 0),
+          unreadAdminReplies: adminReplies.some(reply => reply.filePath === data.filePath && reply.isUnread)
         });
       }
 
@@ -225,6 +316,8 @@ export default function ClientDashboard() {
       
     } catch (error) {
       console.error("Error loading proposals:", error);
+    } finally {
+      setProposalsLoaded(true);
     }
   };
 
@@ -275,6 +368,12 @@ export default function ClientDashboard() {
 
   const handleViewProposal = (proposal) => {
     const encodedPath = btoa(proposal.filePath);
+    
+    // Check if this proposal has admin replies and mark them as read
+    const feedbackWithReplies = adminReplies.find(reply => reply.filePath === proposal.filePath);
+    if (feedbackWithReplies) {
+      markRepliesAsRead(feedbackWithReplies.id);
+    }
     
     if (proposal.status === "signed") {
       const signedData = signedProposalsData[proposal.filePath];
@@ -377,6 +476,12 @@ export default function ClientDashboard() {
                       <span>From: {proposal.senderDisplay || proposal.sharedByEmail || proposal.sharedBy || "Admin"}</span>
                       <span>•</span>
                       <span>{proposal.sharedAt.toLocaleDateString()}</span>
+                      {proposal.hasAdminReplies && (
+                        <span style={{ marginLeft: "8px", display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 6px", borderRadius: "8px", fontSize: "10px", fontWeight: "500", background: proposal.unreadAdminReplies ? "#fef3c7" : "#ecfdf5", color: proposal.unreadAdminReplies ? "#d97706" : "#059669" }}>
+                          <MdForum size={10} />
+                          {proposal.unreadAdminReplies ? "New Reply" : "Replied"}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <ProposalStatusBadge status={proposal.status} size="small" />
@@ -713,6 +818,33 @@ export default function ClientDashboard() {
           </div>
         </div>
 
+        {/* Admin Replies Notification */}
+        {unreadRepliesCount > 0 && (
+          <div style={notificationBannerStyle}>
+            <div style={notificationContentStyle}>
+              <MdForum size={20} color="#fff" />
+              <div style={notificationTextStyle}>
+                <strong>{unreadRepliesCount} proposal{unreadRepliesCount > 1 ? 's' : ''} with admin replies</strong>
+                <span>The admin has responded to your feedback. Check the proposals below for details.</span>
+              </div>
+              <button 
+                onClick={() => {
+                  // Mark all replies as read
+                  adminReplies.forEach(reply => {
+                    if (reply.isUnread) {
+                      markRepliesAsRead(reply.id);
+                    }
+                  });
+                }}
+                style={notificationDismissStyle}
+              >
+                <MdCheckCircle size={16} />
+                Mark as Read
+              </button>
+            </div>
+          </div>
+        )}
+
         <div style={statsContainerStyle}>
           <StatCard icon={<MdFolder size={24} />} color="#6366f1" value={stats.total} label="Total Proposals" trend="All time" />
           <StatCard icon={<MdPending size={24} />} color="#f59e0b" value={stats.pending} label="Pending Review" trend="Awaiting action" />
@@ -891,6 +1023,12 @@ const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, hand
         <div key={proposal.id || index} style={proposalCardStyle}>
           <div style={cardBadgeStyle}>
             <ProposalStatusBadge status={proposal.status} size="small" />
+            {proposal.hasAdminReplies && (
+              <div style={adminReplyBadgeStyle(proposal.unreadAdminReplies)}>
+                <MdForum size={12} />
+                {proposal.unreadAdminReplies ? "New Reply" : "Admin Replied"}
+              </div>
+            )}
           </div>
           
           <div style={cardIconStyle}>
@@ -1007,7 +1145,15 @@ const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, hand
                 )}
               </td>
               <td style={listCellStyle}>
-                <ProposalStatusBadge status={proposal.status} size="small" />
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <ProposalStatusBadge status={proposal.status} size="small" />
+                  {proposal.hasAdminReplies && (
+                    <div style={adminReplyBadgeStyle(proposal.unreadAdminReplies)}>
+                      <MdForum size={10} />
+                      {proposal.unreadAdminReplies ? "New Reply" : "Admin Replied"}
+                    </div>
+                  )}
+                </div>
               </td>
               <td style={listCellStyle}>
                 <div style={listActionsStyle}>
@@ -1567,6 +1713,20 @@ const cardBadgeStyle = {
   right: "20px",
 };
 
+const adminReplyBadgeStyle = (isUnread) => ({
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "4px",
+  padding: "4px 8px",
+  borderRadius: "12px",
+  fontSize: "11px",
+  fontWeight: "500",
+  marginTop: "8px",
+  background: isUnread ? "#fef3c7" : "#ecfdf5",
+  color: isUnread ? "#d97706" : "#059669",
+  border: `1px solid ${isUnread ? "#f59e0b" : "#10b981"}`,
+});
+
 const cardIconStyle = {
   marginBottom: "20px",
 };
@@ -1836,4 +1996,44 @@ const loadingContainerStyle = {
   height: "100vh",
   gap: "20px",
   background: "#fff",
+};
+
+const notificationBannerStyle = {
+  margin: "0 24px",
+  background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
+  borderRadius: "16px",
+  padding: "16px 20px",
+  display: "flex",
+  alignItems: "center",
+  boxShadow: "0 4px 12px rgba(99, 102, 241, 0.3)",
+  border: "1px solid rgba(255,255,255,0.2)",
+};
+
+const notificationContentStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  width: "100%",
+};
+
+const notificationTextStyle = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  gap: "2px",
+  color: "#fff",
+};
+
+const notificationDismissStyle = {
+  padding: "8px 12px",
+  background: "rgba(255,255,255,0.2)",
+  border: "1px solid rgba(255,255,255,0.3)",
+  borderRadius: "8px",
+  color: "#fff",
+  fontSize: "12px",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  transition: "all 0.2s",
 };

@@ -10,6 +10,8 @@ import {
   serverTimestamp,  
   updateDoc,
   doc,
+  setDoc,
+  deleteDoc,
   getDoc,
   query,
   where,
@@ -19,7 +21,8 @@ import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { MdEdit, MdFileUpload, MdLogout, MdDescription, MdArrowBack, MdCheckCircle, MdDashboard, MdVisibility } from "react-icons/md";
-import emailjs from '@emailjs/browser';
+import emailjs from "@emailjs/browser";
+import ProposalReviewPanel from "../Components/ProposalReviewPanel";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -64,6 +67,14 @@ export default function ProposalDetail() {
   const pageStartTime = useRef(Date.now());
   const trackedPagesRef = useRef(new Set());
   const lastPageTimeRef = useRef({});
+  const activeViewerDocId = useRef(null);
+  const currentPageRef = useRef(1);
+  const currentScrollDepthRef = useRef(0);
+  const proposalMetaRef = useRef({
+    proposalId: "",
+    fileName: "",
+    filePath: ""
+  });
   
   // Store viewer data for notification
   const viewerDataRef = useRef({
@@ -81,6 +92,69 @@ export default function ProposalDetail() {
     return `proposals/${decodedPath}`;
   };
 
+  useEffect(() => {
+    currentPageRef.current = pageNumber;
+  }, [pageNumber]);
+
+  useEffect(() => {
+    currentScrollDepthRef.current = scrollDepth;
+  }, [scrollDepth]);
+
+  const syncActiveViewer = async (overrides = {}, includeStartedAt = false) => {
+    if (!activeViewerDocId.current || !proposalMetaRef.current.proposalId || !auth.currentUser) {
+      return;
+    }
+
+    try {
+      const { proposalId, fileName, filePath } = proposalMetaRef.current;
+      const resolvedViewerName =
+        viewerName ||
+        userDisplayName ||
+        auth.currentUser.displayName ||
+        auth.currentUser.email?.split('@')[0] ||
+        "Viewer";
+      const resolvedViewerEmail = userEmail || auth.currentUser.email || "anonymous";
+
+      const payload = {
+        proposalId,
+        proposalName: fileName,
+        fileName,
+        filePath,
+        sessionId: sessionId.current,
+        viewerId: auth.currentUser.uid,
+        viewerEmail: resolvedViewerEmail,
+        viewerName: resolvedViewerName,
+        currentPage: currentPageRef.current,
+        pagesViewed: Array.from(pagesViewed.current),
+        pageCount: pagesViewed.current.size,
+        scrollDepth: Math.round(currentScrollDepthRef.current),
+        deviceInfo: deviceInfo || {},
+        location: location || null,
+        status: document.hidden ? "background" : "active",
+        lastActive: serverTimestamp(),
+        ...overrides
+      };
+
+      if (includeStartedAt) {
+        payload.startedAt = serverTimestamp();
+      }
+
+      await setDoc(doc(db, "activeViewers", activeViewerDocId.current), payload, { merge: true });
+    } catch (error) {
+      console.error("Error syncing active viewer:", error);
+    }
+  };
+
+  const clearActiveViewer = async () => {
+    if (!activeViewerDocId.current) return;
+
+    try {
+      await deleteDoc(doc(db, "activeViewers", activeViewerDocId.current));
+    } catch (error) {
+      console.error("Error clearing active viewer:", error);
+    }
+  };
+
   // Function to update session with current pages viewed
   const updateSessionPages = async () => {
     if (!sessionId.current) return;
@@ -93,6 +167,10 @@ export default function ProposalDetail() {
         lastUpdated: serverTimestamp(),
         viewerEmail: userEmail,
         viewerName: viewerName || userEmail?.split('@')[0]
+      });
+      await syncActiveViewer({
+        pagesViewed: pagesArray,
+        pageCount: pagesArray.length
       });
       console.log(`✅ Session updated: ${pagesArray.length} pages - [${pagesArray.join(', ')}]`);
     } catch (error) {
@@ -153,7 +231,7 @@ export default function ProposalDetail() {
         };
         setLocation(locationData);
         viewerDataRef.current.location = `${locationData.city}, ${locationData.country}`;
-      } catch (e) {
+      } catch {
         console.log('Geolocation not available');
         viewerDataRef.current.location = 'Unknown';
       }
@@ -285,6 +363,11 @@ export default function ProposalDetail() {
         viewerEmail: userEmailValue,
         viewerName: userNameValue
       });
+      await syncActiveViewer({
+        currentPage: pageNum,
+        viewerEmail: userEmailValue,
+        viewerName: userNameValue
+      });
       
     } catch (error) {
       console.error("Error tracking page view:", error);
@@ -372,15 +455,17 @@ export default function ProposalDetail() {
           if (secondDecode.includes('proposals/')) {
             return secondDecode;
           }
-        } catch (e) {}
+        } catch {
+          // Ignore double-decoding failures and fall back to the first decode.
+        }
       }
       return decoded;
-    } catch (e) {
+    } catch {
       return encodedPath;
     }
   };
 
-  const sendViewNotification = async (proposalName, proposalPath) => {
+  const sendViewNotification = async (proposalName) => {
     if (window._notificationSent) return false;
     
     try {
@@ -433,7 +518,13 @@ export default function ProposalDetail() {
       setFileUrl(url);
 
       const extractedFileName = decodedPath.split("/").pop();
+      const consistentProposalId = getConsistentProposalId(decodedPath);
       setFileName(extractedFileName);
+      proposalMetaRef.current = {
+        proposalId: consistentProposalId,
+        fileName: extractedFileName,
+        filePath: decodedPath
+      };
 
       // Check if already signed
       const signedQuery = query(
@@ -446,6 +537,8 @@ export default function ProposalDetail() {
 
       // Log view to Firestore with proper user info
       const viewData = {
+        proposalId: consistentProposalId,
+        proposalName: extractedFileName,
         fileName: extractedFileName,
         filePath: decodedPath,
         viewerId: user.uid,
@@ -462,6 +555,8 @@ export default function ProposalDetail() {
 
       // Create session with proper user info
       const session = await addDoc(collection(db, "proposalSessions"), {
+        proposalId: consistentProposalId,
+        proposalName: extractedFileName,
         fileName: extractedFileName,
         filePath: decodedPath,
         viewerId: user.uid,
@@ -471,11 +566,22 @@ export default function ProposalDetail() {
         pageCount: 1,
         duration: 0,
         startedAt: serverTimestamp(),
+        lastActiveAt: serverTimestamp(),
+        currentPage: 1,
         deviceInfo: deviceInfo,
         location: location,
       });
 
       sessionId.current = session.id;
+      activeViewerDocId.current = session.id;
+      await syncActiveViewer(
+        {
+          currentPage: 1,
+          viewerEmail: user.email,
+          viewerName: viewerName || user.displayName || user.email.split('@')[0]
+        },
+        true
+      );
       
       // Track initial page view with proper user info
       await trackPageView(1);
@@ -552,6 +658,7 @@ export default function ProposalDetail() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       isTabActive.current = !document.hidden;
+      syncActiveViewer();
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () =>
@@ -573,8 +680,15 @@ export default function ProposalDetail() {
         duration,
         scrollDepth: Math.round(scrollDepth),
         lastHeartbeat: serverTimestamp(),
+        lastActiveAt: serverTimestamp(),
+        currentPage: currentPageRef.current,
         viewerEmail: userEmail,
         viewerName: viewerName
+      });
+      await syncActiveViewer({
+        currentPage: currentPageRef.current,
+        duration,
+        scrollDepth: Math.round(currentScrollDepthRef.current)
       });
       console.log(`❤️ Heartbeat: ${pagesArray.length} pages viewed`);
     }, 30000);
@@ -603,6 +717,7 @@ export default function ProposalDetail() {
         scrollDepth: Math.round(scrollDepth),
         endedAt: serverTimestamp(),
       });
+      await clearActiveViewer();
       console.log(`💾 Final session saved: ${pagesArray.length} pages viewed`);
     };
 
@@ -830,6 +945,16 @@ export default function ProposalDetail() {
           Next
         </button>
       </div>
+
+      <ProposalReviewPanel
+        proposalId={proposalMetaRef.current.proposalId}
+        proposalName={proposalMetaRef.current.fileName || fileName}
+        filePath={proposalMetaRef.current.filePath}
+        userRole={userRole}
+        clientId={auth.currentUser?.uid || ""}
+        clientEmail={userEmail}
+        clientName={viewerName || userDisplayName || auth.currentUser?.displayName || ""}
+      />
 
       <style>{`
         .spinner {
