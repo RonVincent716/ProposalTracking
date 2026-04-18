@@ -27,7 +27,8 @@ import {
   MdSchedule,
   MdShare,
   MdContentCopy,
-  MdCheckCircleOutline
+  MdCheckCircleOutline,
+  MdChat
 } from "react-icons/md";
 import { collection, onSnapshot, orderBy, query, deleteDoc, doc, writeBatch, addDoc, serverTimestamp } from "firebase/firestore";
 import { ref, listAll, getDownloadURL } from "firebase/storage";
@@ -42,6 +43,7 @@ import ProposalAnalyticsTab from "../Components/ProposalAnalyticsTab";
 import ProposalsTabWithDelete from "../Components/ProposalsTabWithDelete";
 import RealTimeViewTracker from "../Components/RealTimeViewTracker";
 import ClientFeedbackTab from "../Components/ClientFeedbackTab";
+import AdminDiscussionDashboard from "../Components/AdminDiscussionDashboard";
 
 
 import {
@@ -67,6 +69,8 @@ export default function Dashboard() {
   const [loadingFiles, setLoadingFiles] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showAdminDiscussionDashboard, setShowAdminDiscussionDashboard] = useState(false);
+  const [showMoreMenuItems, setShowMoreMenuItems] = useState(false);
   
   // Delete functionality states
   const [selectedViews, setSelectedViews] = useState([]);
@@ -1424,8 +1428,9 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div style={{display:"flex", flexDirection:"column", gap: sidebarCollapsed ? 16 : 10, flex:1, marginTop: sidebarCollapsed ? 30 : 20}}>
+          <div style={{display:"flex", flexDirection:"column", gap: sidebarCollapsed ? 16 : 12, flex:1, marginTop: sidebarCollapsed ? 30 : 20}}>
 
+            {/* PRIMARY MENU ITEMS */}
             <button 
               style={{
                 padding: sidebarCollapsed ? "16px" : "14px 18px",
@@ -1582,90 +1587,164 @@ export default function Dashboard() {
                 border: "none",
                 borderRadius: 14,
                 cursor: "pointer",
-                background: activeTab==="feedback" 
+                background: showAdminDiscussionDashboard
                   ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
                   : "transparent",
-                color: activeTab==="feedback" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                color: showAdminDiscussionDashboard ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: sidebarCollapsed ? "center" : "flex-start",
                 gap: 12,
                 fontSize: sidebarCollapsed ? 0 : 15,
-                fontWeight: activeTab==="feedback" ? 600 : 500,
+                fontWeight: showAdminDiscussionDashboard ? 600 : 500,
                 transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
                 position: "relative",
                 overflow: "hidden",
-                boxShadow: activeTab==="feedback" 
+                boxShadow: showAdminDiscussionDashboard
                   ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
                   : "none",
-                border: activeTab==="feedback" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                border: showAdminDiscussionDashboard ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
               }} 
-              onClick={()=>setActiveTab("feedback")}
+              onClick={()=>setShowAdminDiscussionDashboard(true)}
             >
-              <MdInfo size={sidebarCollapsed ? 28 : 22} />
-              {!sidebarCollapsed && <span>Feedback</span>}
+              <MdChat size={sidebarCollapsed ? 28 : 22} />
+              {!sidebarCollapsed && <span>Discussions</span>}
             </button>
 
+            {/* SEE MORE BUTTON */}
             <button 
               style={{
                 padding: sidebarCollapsed ? "16px" : "14px 18px",
-                border: "none",
+                border: "1px solid rgba(0, 212, 255, 0.4)",
                 borderRadius: 14,
                 cursor: "pointer",
-                background: activeTab==="engagement" 
-                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                background: showMoreMenuItems
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(0, 153, 204, 0.08) 100%)" 
                   : "transparent",
-                color: activeTab==="engagement" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                color: "#00D4FF",
                 display: "flex",
                 alignItems: "center",
-                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                justifyContent: sidebarCollapsed ? "center" : "space-between",
                 gap: 12,
-                fontSize: sidebarCollapsed ? 0 : 15,
-                fontWeight: activeTab==="engagement" ? 600 : 500,
+                fontSize: sidebarCollapsed ? 0 : 14,
+                fontWeight: 600,
                 transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
                 position: "relative",
                 overflow: "hidden",
-                boxShadow: activeTab==="engagement" 
-                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
-                  : "none",
-                border: activeTab==="engagement" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
               }} 
-              onClick={()=>setActiveTab("engagement")}
+              onClick={()=>setShowMoreMenuItems(!showMoreMenuItems)}
             >
-              <MdTimeline size={sidebarCollapsed ? 28 : 22} />
-              {!sidebarCollapsed && <span>Engagement</span>}
+              <div style={{display: "flex", alignItems: "center", gap: 12}}>
+                <MdFilterList size={sidebarCollapsed ? 24 : 20} />
+                {!sidebarCollapsed && <span>See More</span>}
+              </div>
+              {!sidebarCollapsed && (
+                <span style={{fontSize: 12, color: "rgba(0, 212, 255, 0.7)"}}>
+                  {showMoreMenuItems ? "−" : "+"}
+                </span>
+              )}
             </button>
 
-            {/* NEW ANALYTICS TAB BUTTON */}
-            <button 
-              style={{
-                padding: sidebarCollapsed ? "16px" : "14px 18px",
-                border: "none",
-                borderRadius: 14,
-                cursor: "pointer",
-                background: activeTab==="analytics" 
-                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
-                  : "transparent",
-                color: activeTab==="analytics" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+            {/* HIDDEN MENU ITEMS - SHOW WHEN EXPANDED */}
+            {showMoreMenuItems && (
+              <div style={{
                 display: "flex",
-                alignItems: "center",
-                justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                gap: 12,
-                fontSize: sidebarCollapsed ? 0 : 15,
-                fontWeight: activeTab==="analytics" ? 600 : 500,
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                position: "relative",
-                overflow: "hidden",
-                boxShadow: activeTab==="analytics" 
-                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
-                  : "none",
-                border: activeTab==="analytics" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
-              }} 
-              onClick={()=>setActiveTab("analytics")}
-            >
-              <MdAnalytics size={sidebarCollapsed ? 28 : 22} />
-              {!sidebarCollapsed && <span>Analytics</span>}
-            </button>
+                flexDirection: "column",
+                gap: sidebarCollapsed ? 16 : 12,
+                paddingTop: 8,
+                borderTop: "1px solid rgba(0, 212, 255, 0.2)",
+              }}>
+                <button 
+                  style={{
+                    padding: sidebarCollapsed ? "16px" : "14px 18px",
+                    border: "none",
+                    borderRadius: 14,
+                    cursor: "pointer",
+                    background: activeTab==="feedback" 
+                      ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                      : "transparent",
+                    color: activeTab==="feedback" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    gap: 12,
+                    fontSize: sidebarCollapsed ? 0 : 15,
+                    fontWeight: activeTab==="feedback" ? 600 : 500,
+                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                    position: "relative",
+                    overflow: "hidden",
+                    boxShadow: activeTab==="feedback" 
+                      ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                      : "none",
+                    border: activeTab==="feedback" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  }} 
+                  onClick={()=>setActiveTab("feedback")}
+                >
+                  <MdInfo size={sidebarCollapsed ? 28 : 22} />
+                  {!sidebarCollapsed && <span>Feedback</span>}
+                </button>
+
+                <button 
+                  style={{
+                    padding: sidebarCollapsed ? "16px" : "14px 18px",
+                    border: "none",
+                    borderRadius: 14,
+                    cursor: "pointer",
+                    background: activeTab==="engagement" 
+                      ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                      : "transparent",
+                    color: activeTab==="engagement" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    gap: 12,
+                    fontSize: sidebarCollapsed ? 0 : 15,
+                    fontWeight: activeTab==="engagement" ? 600 : 500,
+                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                    position: "relative",
+                    overflow: "hidden",
+                    boxShadow: activeTab==="engagement" 
+                      ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                      : "none",
+                    border: activeTab==="engagement" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  }} 
+                  onClick={()=>setActiveTab("engagement")}
+                >
+                  <MdTimeline size={sidebarCollapsed ? 28 : 22} />
+                  {!sidebarCollapsed && <span>Engagement</span>}
+                </button>
+
+                <button 
+                  style={{
+                    padding: sidebarCollapsed ? "16px" : "14px 18px",
+                    border: "none",
+                    borderRadius: 14,
+                    cursor: "pointer",
+                    background: activeTab==="analytics" 
+                      ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                      : "transparent",
+                    color: activeTab==="analytics" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    gap: 12,
+                    fontSize: sidebarCollapsed ? 0 : 15,
+                    fontWeight: activeTab==="analytics" ? 600 : 500,
+                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                    position: "relative",
+                    overflow: "hidden",
+                    boxShadow: activeTab==="analytics" 
+                      ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                      : "none",
+                    border: activeTab==="analytics" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  }} 
+                  onClick={()=>setActiveTab("analytics")}
+                >
+                  <MdAnalytics size={sidebarCollapsed ? 28 : 22} />
+                  {!sidebarCollapsed && <span>Analytics</span>}
+                </button>
+              </div>
+            )}
 
           </div>
 
@@ -1725,7 +1804,7 @@ export default function Dashboard() {
       {/* MAIN CONTENT */}
       <div style={{
         flex: 1,
-        padding: "30px 20px",
+        padding: "0 20px 30px 20px",
         background: "#f4f6f8",
         overflowY: "auto",
         overflowX: "hidden",
@@ -1734,32 +1813,38 @@ export default function Dashboard() {
         width: sidebarCollapsed ? "calc(100% - 100px)" : "calc(100% - 280px)",
       }}>
 
-        {/* User Info Bar */}
+        {/* User Info Bar - STICKY TOPBAR */}
         <div style={{
-          background: "linear-gradient(135deg, #fff 0%, #f8fafc 100%)",
-          padding: "16px 20px",
-          borderRadius: 16,
+          position: "sticky",
+          top: 0,
+          zIndex: 100,
+          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+          padding: "18px 20px",
+          borderRadius: "0 0 16px 16px",
           marginBottom: 30,
           display: "flex",
           alignItems: "center",
           gap: 16,
-          boxShadow: "0 4px 20px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.04)",
-          border: "1px solid rgba(0,0,0,0.04)",
+          boxShadow: "0 8px 32px rgba(102, 126, 234, 0.3), 0 0 0 1px rgba(102, 126, 234, 0.2)",
+          border: "1px solid rgba(102, 126, 234, 0.3)",
           flexWrap: "wrap",
+          backdropFilter: "blur(10px)",
+          transition: "all 0.3s ease",
         }}>
           <div style={{
             width: 48,
             height: 48,
             borderRadius: "50%",
-            background: "linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)",
+            background: "rgba(255, 255, 255, 0.2)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             color: "#fff",
             fontWeight: "bold",
             fontSize: 20,
-            boxShadow: "0 4px 12px rgba(0, 212, 255, 0.3)",
+            boxShadow: "0 4px 12px rgba(255, 255, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.3)",
             flexShrink: 0,
+            border: "2px solid rgba(255, 255, 255, 0.3)",
           }}>
             {user?.email?.charAt(0).toUpperCase() || "A"}
           </div>
@@ -1772,14 +1857,14 @@ export default function Dashboard() {
           }}>
             <div style={{
               fontSize: 12,
-              color: "rgba(0,0,0,0.4)",
+              color: "rgba(255, 255, 255, 0.7)",
               fontWeight: 500,
               textTransform: "uppercase",
               letterSpacing: "0.5px",
             }}>Welcome back,</div>
             <div style={{
               fontSize: 15,
-              color: "#1a1a2e",
+              color: "#ffffff",
               fontWeight: 600,
               wordBreak: "break-all",
             }}>{user?.email}</div>
@@ -1788,14 +1873,15 @@ export default function Dashboard() {
             display: "flex",
             alignItems: "center",
             gap: 6,
-            padding: "6px 12px",
-            background: "rgba(16, 185, 129, 0.1)",
+            padding: "8px 14px",
+            background: "rgba(255, 255, 255, 0.15)",
             borderRadius: 100,
             fontSize: 12,
             fontWeight: 600,
-            color: "#10B981",
-            border: "1px solid rgba(16, 185, 129, 0.2)",
+            color: "#ffffff",
+            border: "1px solid rgba(255, 255, 255, 0.3)",
             whiteSpace: "nowrap",
+            backdropFilter: "blur(5px)",
           }}>
             <span style={{
               width: 6,
@@ -3107,6 +3193,16 @@ export default function Dashboard() {
         />
         
       </div>
+
+      {/* Admin Discussion Dashboard */}
+      {showAdminDiscussionDashboard && user && (
+        <AdminDiscussionDashboard
+          userId={user.uid}
+          userEmail={user.email}
+          userRole="admin"
+          onClose={() => setShowAdminDiscussionDashboard(false)}
+        />
+      )}
     </div>
   );
 }

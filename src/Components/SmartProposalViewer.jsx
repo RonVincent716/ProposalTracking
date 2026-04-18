@@ -15,6 +15,8 @@ import {
   MdCheckCircle, MdPerson, MdEmail, MdSchedule, MdVisibility, 
   MdDownload, MdHome, MdDashboard 
 } from "react-icons/md";
+import HighlightButton from "./HighlightButton";
+import DiscussionPanel from "./DiscussionPanel";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -39,6 +41,8 @@ export default function SmartProposalViewer() {
   const [viewTracked, setViewTracked] = useState(false);
   const [viewCount, setViewCount] = useState(0);
   const [isRedirecting, setIsRedirecting] = useState(false);
+  const [highlightModeActive, setHighlightModeActive] = useState(false);
+  const [discussionPanelOpen, setDiscussionPanelOpen] = useState(false);
 
   const sessionId = useRef(null);
   const startTime = useRef(Date.now());
@@ -366,6 +370,18 @@ export default function SmartProposalViewer() {
             Download
           </button>
           
+          {/* Highlight & Discussion Button */}
+          {user && (
+            <HighlightButton
+              isActive={highlightModeActive}
+              onToggle={() => {
+                setHighlightModeActive(!highlightModeActive);
+                setDiscussionPanelOpen(true);
+              }}
+              unresolvedCount={0}
+            />
+          )}
+          
           {/* MY DASHBOARD BUTTON - Header version */}
           {user && userRole === "client" && (
             <button onClick={handleGoToDashboard} style={dashboardButtonStyle}>
@@ -406,6 +422,7 @@ export default function SmartProposalViewer() {
             renderTextLayer={true}
             renderAnnotationLayer={true}
             onRenderSuccess={() => onPageChange({ pageNumber })}
+            data-testid="pdf-page"
           />
         </Document>
       </div>
@@ -472,6 +489,23 @@ export default function SmartProposalViewer() {
             <span>Dashboard</span>
           </button>
         </div>
+      )}
+
+      {/* Discussion Panel */}
+      {user && (
+        <DiscussionPanel
+          isOpen={discussionPanelOpen}
+          onClose={() => setDiscussionPanelOpen(false)}
+          proposalId={proposalData?.filePath || encodedPath}
+          proposalName={fileName}
+          filePath={proposalData?.filePath}
+          currentPage={pageNumber}
+          userId={user.uid}
+          userEmail={user.email}
+          userRole={userRole}
+          highlightModeActive={highlightModeActive}
+          onHighlightModeChange={setHighlightModeActive}
+        />
       )}
 
       <style>{`

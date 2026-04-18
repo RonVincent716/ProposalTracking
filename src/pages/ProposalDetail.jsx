@@ -23,6 +23,8 @@ import "react-pdf/dist/Page/TextLayer.css";
 import { MdEdit, MdFileUpload, MdLogout, MdDescription, MdArrowBack, MdCheckCircle, MdDashboard, MdVisibility } from "react-icons/md";
 import emailjs from "@emailjs/browser";
 import ProposalReviewPanel from "../Components/ProposalReviewPanel";
+import HighlightButton from "../Components/HighlightButton";
+import DiscussionPanel from "../Components/DiscussionPanel";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -57,8 +59,8 @@ export default function ProposalDetail() {
   const [scrollDepth, setScrollDepth] = useState(0);
   const [userDisplayName, setUserDisplayName] = useState("");
   const [pageTrackingStatus, setPageTrackingStatus] = useState("");
-
-  // Refs for tracking
+  const [highlightModeActive, setHighlightModeActive] = useState(false);
+  const [discussionPanelOpen, setDiscussionPanelOpen] = useState(false);
   const sessionId = useRef(null);
   const startTime = useRef(Date.now());
   const pagesViewed = useRef(new Set([1]));
@@ -825,6 +827,16 @@ export default function ProposalDetail() {
             </button>
           )}
           
+          {/* Highlight & Discussion Button */}
+          <HighlightButton
+            isActive={highlightModeActive}
+            onToggle={() => {
+              setHighlightModeActive(!highlightModeActive);
+              setDiscussionPanelOpen(true);
+            }}
+            unresolvedCount={0}
+          />
+          
           {userRole === 'client' && (
             <button onClick={handleGoToDashboard} style={dashboardButtonStyle}>
               <MdDashboard size={16} />
@@ -895,6 +907,7 @@ export default function ProposalDetail() {
             renderAnnotationLayer={true}
             onRenderSuccess={() => onPageChange({ pageNumber })}
             width={Math.min(window.innerWidth - 100, 800)}
+            data-testid="pdf-page"
           />
         </Document>
       </div>
@@ -954,6 +967,21 @@ export default function ProposalDetail() {
         clientId={auth.currentUser?.uid || ""}
         clientEmail={userEmail}
         clientName={viewerName || userDisplayName || auth.currentUser?.displayName || ""}
+      />
+
+      {/* Discussion Panel */}
+      <DiscussionPanel
+        isOpen={discussionPanelOpen}
+        onClose={() => setDiscussionPanelOpen(false)}
+        proposalId={proposalMetaRef.current.proposalId || path}
+        proposalName={fileName}
+        filePath={proposalMetaRef.current.filePath}
+        currentPage={pageNumber}
+        userId={auth.currentUser?.uid}
+        userEmail={userEmail || auth.currentUser?.email}
+        userRole={userRole}
+        highlightModeActive={highlightModeActive}
+        onHighlightModeChange={setHighlightModeActive}
       />
 
       <style>{`

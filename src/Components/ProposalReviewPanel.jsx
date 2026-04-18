@@ -8,7 +8,8 @@ import {
   MdForum,
   MdOutlineMarkEmailRead,
   MdRefresh,
-  MdSend
+  MdSend,
+  MdClose
 } from "react-icons/md";
 import {
   PROPOSAL_REVIEW_SECTIONS,
@@ -77,6 +78,7 @@ export default function ProposalReviewPanel({
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("info");
   const [existingFeedback, setExistingFeedback] = useState(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   const feedbackDocId = useMemo(() => {
     if (!proposalId || !clientId) return "";
@@ -207,6 +209,18 @@ export default function ProposalReviewPanel({
     }
   };
 
+  const handleSubmitClick = () => {
+    setShowConfirmModal(true);
+  };
+
+  const handleConfirmSubmit = () => {
+    handleSubmitFeedback();
+  };
+
+  const handleCancelSubmit = () => {
+    setShowConfirmModal(false);
+  };
+
   const handleSubmitFeedback = async () => {
     if (!canSubmit) return;
 
@@ -269,12 +283,13 @@ export default function ProposalReviewPanel({
         ...payload,
         id: feedbackDocId
       }));
-      setMessage(
-        totalDisputed > 0
-          ? "Feedback submitted. The admin has been notified about the discussion points."
-          : "Feedback submitted. The admin has been notified of your approvals."
-      );
+      const successMsg = totalDisputed > 0
+        ? "Feedback submitted. The admin has been notified about the discussion points."
+        : "Feedback submitted. The admin has been notified of your approvals.";
+      setMessage(successMsg);
       setMessageType("success");
+      setShowConfirmModal(false);
+      setTimeout(() => setMessage(""), 4000);
     } catch (error) {
       console.error("Error saving proposal feedback:", error);
       setMessage("We couldn’t submit your feedback. Please try again.");
@@ -450,12 +465,54 @@ export default function ProposalReviewPanel({
                   : "Once submitted, the admin will receive your feedback in the dashboard and by email."}
             </div>
 
-            <button onClick={handleSubmitFeedback} disabled={!canSubmit} style={canSubmit ? styles.submitButton : styles.submitButtonDisabled}>
+            <button onClick={handleSubmitClick} disabled={!canSubmit} style={canSubmit ? styles.submitButton : styles.submitButtonDisabled}>
               <MdSend size={16} />
               {saving ? "Submitting..." : existingFeedback ? "Update Feedback" : "Submit Feedback"}
             </button>
           </div>
         </>
+      )}
+
+      {showConfirmModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <div style={styles.modalHeader}>
+              <h3 style={styles.modalTitle}>
+                <MdOutlineMarkEmailRead size={20} style={{marginRight: "8px", verticalAlign: "middle"}} />
+                Confirm Feedback Submission
+              </h3>
+              <button
+                onClick={handleCancelSubmit}
+                style={styles.modalCloseButton}
+              >
+                <MdClose size={20} />
+              </button>
+            </div>
+            <div style={styles.modalBody}>
+              <p style={styles.modalText}>
+                Are you sure you want to submit your feedback for <strong>{proposalName}</strong>?
+              </p>
+              <p style={styles.modalSubText}>
+                The admin will review your approvals and discussion points. You can update this feedback anytime.
+              </p>
+            </div>
+            <div style={styles.modalFooter}>
+              <button
+                onClick={handleCancelSubmit}
+                style={styles.cancelButton}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmSubmit}
+                disabled={saving}
+                style={saving ? styles.confirmButtonDisabled : styles.confirmButton}
+              >
+                {saving ? "Submitting..." : "Confirm & Submit"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <style>{`
@@ -466,6 +523,17 @@ export default function ProposalReviewPanel({
         @keyframes review-spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
+        }
+
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: scale(0.95) translateY(-10px);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
         }
       `}</style>
     </div>
@@ -729,5 +797,108 @@ const styles = {
     fontSize: "14px",
     fontWeight: "700",
     cursor: "not-allowed"
+  },
+  modalOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(15, 23, 42, 0.7)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000
+  },
+  modalContent: {
+    background: "#ffffff",
+    borderRadius: "16px",
+    boxShadow: "0 20px 60px rgba(15, 23, 42, 0.15)",
+    maxWidth: "480px",
+    width: "90%",
+    animation: "slideIn 0.3s ease-out"
+  },
+  modalHeader: {
+    padding: "24px",
+    borderBottom: "1px solid #e2e8f0",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: "20px",
+    fontWeight: "700",
+    color: "#0f172a",
+    display: "flex",
+    alignItems: "center"
+  },
+  modalCloseButton: {
+    border: "none",
+    background: "transparent",
+    cursor: "pointer",
+    color: "#64748b",
+    padding: "4px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "6px",
+    transition: "all 0.2s ease"
+  },
+  modalBody: {
+    padding: "20px 24px"
+  },
+  modalText: {
+    margin: "0 0 12px 0",
+    fontSize: "15px",
+    color: "#334155",
+    lineHeight: "1.6"
+  },
+  modalSubText: {
+    margin: 0,
+    fontSize: "14px",
+    color: "#64748b",
+    lineHeight: "1.5"
+  },
+  modalFooter: {
+    display: "flex",
+    gap: "12px",
+    padding: "16px 24px 24px 24px",
+    justifyContent: "flex-end"
+  },
+  cancelButton: {
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    padding: "12px 24px",
+    fontSize: "14px",
+    fontWeight: "600",
+    background: "#ffffff",
+    color: "#334155",
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+    boxShadow: "0 2px 8px rgba(15, 23, 42, 0.04)"
+  },
+  confirmButton: {
+    border: "none",
+    borderRadius: "10px",
+    padding: "12px 24px",
+    fontSize: "14px",
+    fontWeight: "700",
+    background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+    color: "#ffffff",
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+    boxShadow: "0 6px 16px rgba(16, 185, 129, 0.2)"
+  },
+  confirmButtonDisabled: {
+    border: "none",
+    borderRadius: "10px",
+    padding: "12px 24px",
+    fontSize: "14px",
+    fontWeight: "700",
+    background: "#cbd5e1",
+    color: "#ffffff",
+    cursor: "not-allowed",
+    opacity: "0.6"
   }
 };

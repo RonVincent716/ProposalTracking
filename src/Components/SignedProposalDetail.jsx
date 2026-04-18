@@ -17,6 +17,8 @@ import {
   MdPrint,
   MdShare
 } from "react-icons/md";
+import HighlightButton from "./HighlightButton";
+import DiscussionPanel from "./DiscussionPanel";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -34,6 +36,8 @@ export default function SignedProposalDetail() {
   const [fileName, setFileName] = useState("");
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
+  const [highlightModeActive, setHighlightModeActive] = useState(false);
+  const [discussionPanelOpen, setDiscussionPanelOpen] = useState(false);
 
   useEffect(() => {
     loadSignedProposal();
@@ -132,6 +136,16 @@ export default function SignedProposalDetail() {
         </div>
         
         <div style={headerRightStyle}>
+          {/* Highlight & Discussion Button */}
+          <HighlightButton
+            isActive={highlightModeActive}
+            onToggle={() => {
+              setHighlightModeActive(!highlightModeActive);
+              setDiscussionPanelOpen(true);
+            }}
+            unresolvedCount={0}
+          />
+          
           <button onClick={handlePrint} style={printButtonStyle}>
             <MdPrint size={16} />
             Print
@@ -231,6 +245,7 @@ export default function SignedProposalDetail() {
               pageNumber={pageNumber}
               renderTextLayer={true}
               renderAnnotationLayer={true}
+              data-testid="pdf-page"
             />
           </Document>
         </div>
@@ -271,6 +286,23 @@ export default function SignedProposalDetail() {
           Download Signed Copy
         </button>
       </div>
+
+      {/* Discussion Panel */}
+      {signingData && (
+        <DiscussionPanel
+          isOpen={discussionPanelOpen}
+          onClose={() => setDiscussionPanelOpen(false)}
+          proposalId={signingData.filePath}
+          proposalName={fileName}
+          filePath={signingData.filePath}
+          currentPage={pageNumber}
+          userId={signingData.clientId || 'unknown'}
+          userEmail={signingData.clientEmail}
+          userRole="client"
+          highlightModeActive={highlightModeActive}
+          onHighlightModeChange={setHighlightModeActive}
+        />
+      )}
 
       <style>{`
         .spinner {

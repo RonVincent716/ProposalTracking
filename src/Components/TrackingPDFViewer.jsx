@@ -4,13 +4,18 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
 import { usePageTracking } from '../hooks/usePageTracking';
+import HighlightButton from './HighlightButton';
+import DiscussionPanel from './DiscussionPanel';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
-export default function TrackingPDFViewer({ pdfUrl, proposalId, clientId }) {
+export default function TrackingPDFViewer({ pdfUrl, proposalId, clientId, proposalName, filePath, userId, userEmail, userRole }) {
   const [numPages, setNumPages] = useState(null);
   const [pageWidth, setPageWidth] = useState(800);
   const [loading, setLoading] = useState(true);
+  const [currentPageNum, setCurrentPageNum] = useState(1);
+  const [highlightModeActive, setHighlightModeActive] = useState(false);
+  const [discussionPanelOpen, setDiscussionPanelOpen] = useState(false);
   
   const {
     currentPage,
@@ -20,6 +25,10 @@ export default function TrackingPDFViewer({ pdfUrl, proposalId, clientId }) {
     pageTimes,
     setCurrentPage
   } = usePageTracking(proposalId, clientId, numPages);
+
+  useEffect(() => {
+    setCurrentPageNum(currentPage);
+  }, [currentPage]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -98,6 +107,18 @@ export default function TrackingPDFViewer({ pdfUrl, proposalId, clientId }) {
             <span style={statLabelStyle}>Total time:</span>
             <span style={statValueStyle}>{totalTime}</span>
           </div>
+          
+          {/* Highlight & Discussion Button (if user info provided) */}
+          {userId && (
+            <HighlightButton
+              isActive={highlightModeActive}
+              onToggle={() => {
+                setHighlightModeActive(!highlightModeActive);
+                setDiscussionPanelOpen(true);
+              }}
+              unresolvedCount={0}
+            />
+          )}
         </div>
       </div>
 
@@ -180,6 +201,7 @@ export default function TrackingPDFViewer({ pdfUrl, proposalId, clientId }) {
             width={pageWidth}
             renderTextLayer={true}
             renderAnnotationLayer={true}
+            data-testid="pdf-page"
           />
         </Document>
       </div>
@@ -198,6 +220,23 @@ export default function TrackingPDFViewer({ pdfUrl, proposalId, clientId }) {
           )}
         </div>
       </div>
+
+      {/* Discussion Panel */}
+      {userId && (
+        <DiscussionPanel
+          isOpen={discussionPanelOpen}
+          onClose={() => setDiscussionPanelOpen(false)}
+          proposalId={proposalId}
+          proposalName={proposalName || 'Document'}
+          filePath={filePath}
+          currentPage={currentPageNum}
+          userId={userId}
+          userEmail={userEmail}
+          userRole={userRole}
+          highlightModeActive={highlightModeActive}
+          onHighlightModeChange={setHighlightModeActive}
+        />
+      )}
 
       <style>{`
         .live-dot {

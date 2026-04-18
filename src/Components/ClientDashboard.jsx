@@ -43,7 +43,8 @@ import {
   MdExitToApp,
   MdSearch,
   MdFilterList,
-  MdForum
+  MdForum,
+  MdNotifications
 } from "react-icons/md";
 import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
 
@@ -71,6 +72,7 @@ export default function ClientDashboard() {
   const [adminReplies, setAdminReplies] = useState([]);
   const [unreadRepliesCount, setUnreadRepliesCount] = useState(0);
   const [proposalsLoaded, setProposalsLoaded] = useState(false);
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -795,21 +797,78 @@ export default function ClientDashboard() {
               <div style={welcomeDateStyle}>
                 {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
               </div>
+              
+              {/* Notification Bell Icon */}
+              <button
+                onClick={() => setShowNotificationsModal(true)}
+                style={{
+                  position: "relative",
+                  padding: "8px 12px",
+                  background: "rgba(255,255,255,0.15)",
+                  border: "1px solid rgba(255,255,255,0.3)",
+                  borderRadius: "10px",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontSize: "16px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  transition: "all 0.3s ease",
+                  backdropFilter: "blur(5px)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(255,255,255,0.25)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(255,255,255,0.15)";
+                }}
+              >
+                <MdNotifications size={20} />
+                {unreadRepliesCount > 0 && (
+                  <span style={{
+                    position: "absolute",
+                    top: "-4px",
+                    right: "-4px",
+                    background: "#ef4444",
+                    color: "#fff",
+                    fontSize: "10px",
+                    fontWeight: "700",
+                    width: "20px",
+                    height: "20px",
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 2px 8px rgba(239, 68, 68, 0.4)",
+                  }}>
+                    {unreadRepliesCount}
+                  </span>
+                )}
+              </button>
+
               <button
                 onClick={refreshDashboard}
                 style={{
                   padding: "8px 16px",
-                  background: "rgba(255,255,255,0.2)",
-                  border: "none",
+                  background: "rgba(255,255,255,0.15)",
+                  border: "1px solid rgba(255,255,255,0.3)",
                   borderRadius: "8px",
                   color: "#fff",
                   cursor: "pointer",
                   fontSize: "12px",
                   display: "flex",
                   alignItems: "center",
-                  gap: "6px"
+                  gap: "6px",
+                  transition: "all 0.3s ease",
+                  backdropFilter: "blur(5px)",
                 }}
                 disabled={refreshing}
+                onMouseEnter={(e) => {
+                  if (!refreshing) e.currentTarget.style.background = "rgba(255,255,255,0.25)";
+                }}
+                onMouseLeave={(e) => {
+                  if (!refreshing) e.currentTarget.style.background = "rgba(255,255,255,0.15)";
+                }}
               >
                 <MdRefresh size={16} />
                 {refreshing ? "Refreshing..." : "Refresh"}
@@ -855,6 +914,101 @@ export default function ClientDashboard() {
         <div style={contentAreaStyle}>
           {renderContent()}
         </div>
+
+        {/* Notifications Modal */}
+        {showNotificationsModal && (
+          <div style={notificationsModalOverlayStyle}>
+            <div style={notificationsModalStyle}>
+              {/* Modal Header */}
+              <div style={notificationsModalHeaderStyle}>
+                <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "600", color: "#1e293b" }}>
+                  Admin Notifications
+                </h3>
+                <button
+                  onClick={() => setShowNotificationsModal(false)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    fontSize: "24px",
+                    cursor: "pointer",
+                    color: "#94a3b8",
+                    padding: "0 8px",
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div style={notificationsModalBodyStyle}>
+                {adminReplies && adminReplies.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    {adminReplies.map((reply, idx) => (
+                      <div key={idx} style={notificationItemStyle(reply.isUnread)}>
+                        <div style={notificationItemHeaderStyle}>
+                          <h4 style={{ margin: 0, color: "#1e293b", fontSize: "14px", fontWeight: "600" }}>
+                            {reply.proposalName || "Proposal Update"}
+                          </h4>
+                          {reply.isUnread && (
+                            <span style={{
+                              width: "8px",
+                              height: "8px",
+                              borderRadius: "50%",
+                              background: "#ef4444",
+                            }} />
+                          )}
+                        </div>
+                        <p style={{ margin: "6px 0", color: "#64748b", fontSize: "13px", lineHeight: "1.4" }}>
+                          {reply.replyMessage || "The admin has responded to your feedback."}
+                        </p>
+                        <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px" }}>
+                          {reply.repliedAt && new Date(reply.repliedAt).toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: "center", padding: "40px 20px" }}>
+                    <div style={{ fontSize: "48px", marginBottom: "16px" }}>🔔</div>
+                    <p style={{ color: "#64748b", margin: 0 }}>No notifications yet</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              {unreadRepliesCount > 0 && adminReplies.length > 0 && (
+                <div style={notificationsModalFooterStyle}>
+                  <button
+                    onClick={() => {
+                      adminReplies.forEach(reply => {
+                        if (reply.isUnread) {
+                          markRepliesAsRead(reply.id);
+                        }
+                      });
+                      setShowNotificationsModal(false);
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: "12px",
+                      background: "#667eea",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: "10px",
+                      cursor: "pointer",
+                      fontWeight: "500",
+                      transition: "all 0.2s",
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#764ba2"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "#667eea"}
+                  >
+                    Mark All as Read
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
       </div>
 
       <style>{`
@@ -1456,11 +1610,18 @@ const mobileOverlayStyle = {
 };
 
 const welcomeBannerStyle = {
-  background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
-  margin: "24px 24px 0 24px",
-  padding: "32px",
-  borderRadius: "24px",
+  position: "sticky",
+  top: 0,
+  zIndex: 100,
+  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+  margin: "0 24px 30px 24px",
+  padding: "20px 32px",
+  borderRadius: "0 0 20px 20px",
   color: "#fff",
+  boxShadow: "0 8px 32px rgba(102, 126, 234, 0.3), 0 0 0 1px rgba(102, 126, 234, 0.2)",
+  border: "1px solid rgba(102, 126, 234, 0.3)",
+  backdropFilter: "blur(10px)",
+  transition: "all 0.3s ease",
 };
 
 const welcomeBannerContentStyle = {
@@ -2036,4 +2197,68 @@ const notificationDismissStyle = {
   alignItems: "center",
   gap: "6px",
   transition: "all 0.2s",
+};
+
+// Notifications Modal Styles
+const notificationsModalOverlayStyle = {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  background: "rgba(0, 0, 0, 0.5)",
+  backdropFilter: "blur(5px)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 2000,
+  padding: "20px",
+};
+
+const notificationsModalStyle = {
+  background: "#fff",
+  borderRadius: "20px",
+  boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3)",
+  maxWidth: "500px",
+  width: "100%",
+  maxHeight: "70vh",
+  display: "flex",
+  flexDirection: "column",
+  animation: "slideUp 0.3s ease",
+};
+
+const notificationsModalHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  padding: "24px 24px 16px 24px",
+  borderBottom: "1px solid #e2e8f0",
+};
+
+const notificationsModalBodyStyle = {
+  flex: 1,
+  overflowY: "auto",
+  padding: "20px 24px",
+};
+
+const notificationsModalFooterStyle = {
+  padding: "16px 24px",
+  borderTop: "1px solid #e2e8f0",
+  display: "flex",
+  gap: "12px",
+};
+
+const notificationItemStyle = (isUnread) => ({
+  padding: "16px",
+  borderRadius: "12px",
+  background: isUnread ? "rgba(102, 126, 234, 0.08)" : "#f8fafc",
+  border: `1px solid ${isUnread ? "rgba(102, 126, 234, 0.2)" : "#e2e8f0"}`,
+  transition: "all 0.2s",
+});
+
+const notificationItemHeaderStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: "12px",
 };
