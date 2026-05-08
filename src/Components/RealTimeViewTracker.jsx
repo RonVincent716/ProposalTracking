@@ -1,7 +1,7 @@
 // src/Components/RealTimeViewTracker.jsx
 import { useState, useEffect } from "react";
 import { db } from "../firebase";
-import { collection, query, where, onSnapshot, limit, getDocs, deleteDoc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, limit, getDocs } from "firebase/firestore";
 import { 
   MdVisibility, 
   MdPerson, 
@@ -54,11 +54,13 @@ export default function RealTimeViewTracker({ proposalId, proposalName, onClose 
           lastActive = data.lastActive.toDate();
         } else if (data.lastActive) {
           lastActive = new Date(data.lastActive);
+        } else if (data.lastActiveClient) {
+          lastActive = new Date(data.lastActiveClient);
         } else {
-          lastActive = new Date();
+          lastActive = null;
         }
         
-        const isActive = (now - lastActive.getTime()) < 60000; // Active within last 60 seconds
+        const isActive = lastActive && (now - lastActive.getTime()) < 120000; // Active within last 2 minutes
         
         if (isActive) {
           viewers.push({
@@ -66,10 +68,6 @@ export default function RealTimeViewTracker({ proposalId, proposalName, onClose 
             ...data,
             lastActive: lastActive
           });
-        } else {
-          console.log(`  - Removing inactive viewer: ${data.viewerEmail}`);
-          // Remove inactive viewers
-          deleteDoc(doc.ref).catch(console.error);
         }
       });
       
@@ -159,11 +157,13 @@ export default function RealTimeViewTracker({ proposalId, proposalName, onClose 
           lastActive = data.lastActive.toDate();
         } else if (data.lastActive) {
           lastActive = new Date(data.lastActive);
+        } else if (data.lastActiveClient) {
+          lastActive = new Date(data.lastActiveClient);
         } else {
-          lastActive = new Date();
+          lastActive = null;
         }
         
-        const isActive = (now - lastActive.getTime()) < 60000;
+        const isActive = lastActive && (now - lastActive.getTime()) < 120000;
         if (isActive) {
           viewers.push({ id: doc.id, ...data, lastActive });
         }
@@ -357,7 +357,7 @@ export default function RealTimeViewTracker({ proposalId, proposalName, onClose 
         <h4 style={styles.tipsTitle}>💡 Pro Tips</h4>
         <ul style={styles.tipsList}>
           <li>Active viewers are updated in real-time</li>
-          <li>Viewers are considered active for 60 seconds after their last action</li>
+          <li>Viewers are considered active for 2 minutes after their last action</li>
           <li>Use this data to follow up with clients while they're viewing</li>
           <li>Refresh to get the latest data</li>
         </ul>

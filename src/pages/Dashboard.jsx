@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+// src/components/Dashboard.jsx
+import { useState, useEffect, useRef } from "react";
 import { db, storage, auth } from "../firebase";
 import { 
   MdLogout, 
@@ -28,9 +29,15 @@ import {
   MdShare,
   MdContentCopy,
   MdCheckCircleOutline,
-  MdChat
+  MdChat,
+  MdNotifications,
+  MdNotificationsNone,
+  MdClear,
+  MdVisibilityOff,
+  MdGroup,
+  MdTrendingUp
 } from "react-icons/md";
-import { collection, onSnapshot, orderBy, query, deleteDoc, doc, writeBatch, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, onSnapshot, orderBy, query, deleteDoc, doc, writeBatch, addDoc, serverTimestamp, getDoc, setDoc } from "firebase/firestore";
 import { ref, listAll, getDownloadURL } from "firebase/storage";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 
@@ -38,13 +45,17 @@ import { Navigate, useNavigate } from "react-router-dom";
 import ProposalUploader from "./ProposalUploader";
 import ProposalStatusBadge from "./ProposalStatusBadge";
 import ShareModal from "./ShareModal";
+import { ActivityLogger } from "../utils/activityLogger";
 import SignedProposalsTab from "../Components/SignedProposalsTab";
 import ProposalAnalyticsTab from "../Components/ProposalAnalyticsTab";
 import ProposalsTabWithDelete from "../Components/ProposalsTabWithDelete";
 import RealTimeViewTracker from "../Components/RealTimeViewTracker";
 import ClientFeedbackTab from "../Components/ClientFeedbackTab";
 import AdminDiscussionDashboard from "../Components/AdminDiscussionDashboard";
-
+import UserProfile from "../Components/UserProfile";
+import UserManagement from "../Components/UserManagement";
+import UsersActivityTab from "../Components/UsersActivityTab";
+import { usePermissions } from "../utils/permissions";
 
 import {
   BarChart,
@@ -72,6 +83,45 @@ export default function Dashboard() {
   const [showAdminDiscussionDashboard, setShowAdminDiscussionDashboard] = useState(false);
   const [showMoreMenuItems, setShowMoreMenuItems] = useState(false);
   
+  // Notification system states
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [readNotificationKeys, setReadNotificationKeys] = useState(new Set());
+  const [readNotificationKeysLoaded, setReadNotificationKeysLoaded] = useState(false);
+  const notificationRef = useRef(null);
+  const readNotificationKeysRef = useRef(new Set());
+  const previousSignedRef = useRef(new Set());
+  const previousViewsRef = useRef(new Set());
+  
+  // Discussion unread count
+  const [unreadDiscussionCount, setUnreadDiscussionCount] = useState(0);
+  const [lastSeenByDiscussion, setLastSeenByDiscussion] = useState(() => {
+    try {
+      const raw = localStorage.getItem(`dashboard-discussion-seen:${user?.uid || ''}`);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    readNotificationKeysRef.current = readNotificationKeys;
+  }, [readNotificationKeys]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setLastSeenByDiscussion({});
+      return;
+    }
+
+    try {
+      const raw = localStorage.getItem(`dashboard-discussion-seen:${user.uid}`);
+      setLastSeenByDiscussion(raw ? JSON.parse(raw) : {});
+    } catch {
+      setLastSeenByDiscussion({});
+    }
+  }, [user?.uid]);
+  
   // Delete functionality states
   const [selectedViews, setSelectedViews] = useState([]);
   const [selectedSessions, setSelectedSessions] = useState([]);
@@ -94,6 +144,7 @@ export default function Dashboard() {
 
   // Logout confirmation modal state
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [showLogoutSuccess, setShowLogoutSuccess] = useState(false);
   const [showLogoutToast, setShowLogoutToast] = useState(false);
   
   // View proposal modal state
@@ -120,6 +171,12 @@ export default function Dashboard() {
   const engagementPerPage = 10;
 
   const navigate = useNavigate();
+  const { role, loading: permissionsLoading, can } = usePermissions();
+  const isRestrictedUser = role === "user";
+  const canDeleteData = role === "admin" || role === "superadmin";
+  const canAccessUsersTab = can("viewAllUsers");
+  const canAccessDiscussions = can("viewAdminDiscussions");
+  const canAccessUserActivity = can("viewUserActivity");
   
   /* AUTH CHECK */
   useEffect(()=>{
@@ -130,18 +187,193 @@ export default function Dashboard() {
     return ()=>unsubscribe();
   },[]);
 
-  /* UPDATED LOGOUT WITH TOAST */
+  useEffect(() => {
+    if (!role) return;
+
+    if (
+      isRestrictedUser &&
+      activeTab !== "upload" &&
+      activeTab !== "views" &&
+      activeTab !== "profile"
+    ) {
+      setActiveTab("views");
+    }
+
+    if (isRestrictedUser && showMoreMenuItems) {
+      setShowMoreMenuItems(false);
+    }
+
+    if (isRestrictedUser && showAdminDiscussionDashboard) {
+      setShowAdminDiscussionDashboard(false);
+    }
+  }, [role, activeTab, isRestrictedUser, showMoreMenuItems, showAdminDiscussionDashboard]);
+
+  /* LOAD READ NOTIFICATION KEYS FROM FIRESTORE */
+  useEffect(() => {
+    if (!user) {
+      setReadNotificationKeys(new Set());
+      setReadNotificationKeysLoaded(false);
+      return;
+    }
+
+    const loadReadNotifications = async () => {
+      try {
+        const docRef = doc(db, 'dashboardNotificationPreferences', user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists() && docSnap.data().readNotificationKeys) {
+          setReadNotificationKeys(new Set(docSnap.data().readNotificationKeys));
+        } else {
+          setReadNotificationKeys(new Set());
+        }
+      } catch (error) {
+        console.error('Error loading read notifications:', error);
+      } finally {
+        setReadNotificationKeysLoaded(true);
+      }
+    };
+
+    loadReadNotifications();
+  }, [user]);
+
+  useEffect(() => {
+    if (!readNotificationKeysLoaded) return;
+
+    setNotifications((prev) =>
+      prev.map((notification) => ({
+        ...notification,
+        read:
+          (notification.key && readNotificationKeys.has(notification.key)) ||
+          (notification.legacyKey && readNotificationKeys.has(notification.legacyKey)) ||
+          notification.read
+      }))
+    );
+  }, [readNotificationKeys, readNotificationKeysLoaded]);
+
+  /* HELPER FUNCTIONS FOR DISCUSSION UNREAD COUNT */
+  const toMillis = (value) => {
+    if (!value) return 0;
+    if (typeof value?.toDate === 'function') return value.toDate().getTime();
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === 'number') return value;
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const getLatestClientMessageMs = (messages = []) => {
+    let latest = 0;
+    messages.forEach((msg) => {
+      if (msg.senderRole === 'admin') return;
+      const ts = toMillis(msg.timestamp);
+      if (ts > latest) latest = ts;
+    });
+    return latest;
+  };
+
+  const getUnreadCount = (messages = [], seenMs = 0) =>
+    messages.reduce((count, msg) => {
+      if (msg.senderRole === 'admin') return count;
+      return toMillis(msg.timestamp) > seenMs ? count + 1 : count;
+    }, 0);
+
+  /* LOAD DISCUSSION UNREAD COUNT */
+  useEffect(() => {
+    if (!user || !canAccessDiscussions) return;
+
+    // Persist last seen to localStorage
+    try {
+      localStorage.setItem(
+        `dashboard-discussion-seen:${user.uid}`,
+        JSON.stringify(lastSeenByDiscussion)
+      );
+    } catch {
+      // no-op
+    }
+
+    // Listen to discussions
+    const discussionsQuery = query(collection(db, 'proposalDiscussions'));
+    const messagesQuery = query(
+      collection(db, 'proposalDiscussionMessages'),
+      orderBy('timestamp', 'asc')
+    );
+
+    let discussionData = {};
+    let messageData = {};
+    let totalUnread = 0;
+
+    const unsubDiscussions = onSnapshot(
+      discussionsQuery,
+      (snapshot) => {
+        discussionData = {};
+        snapshot.docs.forEach((doc) => {
+          discussionData[doc.id] = {
+            id: doc.id,
+            ...doc.data()
+          };
+        });
+        // Recalculate unread count
+        calculateUnreadCount();
+      },
+      (error) => {
+        console.error('Error loading discussions:', error);
+      }
+    );
+
+    const unsubMessages = onSnapshot(
+      messagesQuery,
+      (snapshot) => {
+        messageData = {};
+        snapshot.docs.forEach((doc) => {
+          const raw = doc.data();
+          if (!messageData[raw.discussionId]) {
+            messageData[raw.discussionId] = [];
+          }
+          messageData[raw.discussionId].push({
+            id: doc.id,
+            ...raw,
+            timestamp: raw.timestamp?.toDate?.() || new Date()
+          });
+        });
+        // Recalculate unread count
+        calculateUnreadCount();
+      },
+      (error) => {
+        console.error('Error loading messages:', error);
+      }
+    );
+
+    const calculateUnreadCount = () => {
+      totalUnread = 0;
+      Object.values(discussionData).forEach((discussion) => {
+        const messages = messageData[discussion.id] || [];
+        const seenMs = lastSeenByDiscussion[discussion.id] || 0;
+        const unread = getUnreadCount(messages, seenMs);
+        totalUnread += unread;
+      });
+      setUnreadDiscussionCount(totalUnread);
+    };
+
+    return () => {
+      unsubDiscussions();
+      unsubMessages();
+    };
+  }, [user, canAccessDiscussions, lastSeenByDiscussion]);
+
+  /* UPDATED LOGOUT WITH SUCCESS MODAL */
   const handleLogout = async () => {
     try {
+      // Log logout activity before signing out
+      if (user) {
+        await ActivityLogger.logLogout(user.email);
+      }
       await signOut(auth);
       setShowLogoutModal(false);
-      setShowLogoutToast(true);
+      setShowLogoutSuccess(true);
       
-      // Auto redirect after 2 seconds
+      // Auto redirect after 3 seconds
       setTimeout(() => {
-        setShowLogoutToast(false);
+        setShowLogoutSuccess(false);
         navigate("/login");
-      }, 2000);
+      }, 3000);
     } catch (error) {
       alert(error.message);
     }
@@ -271,7 +503,9 @@ export default function Dashboard() {
       const liveData = snapshot.docs
         .map((viewerDoc) => {
           const data = viewerDoc.data();
-          const lastActive = data.lastActive?.toDate?.() || (data.lastActive ? new Date(data.lastActive) : null);
+          const lastActiveFromServer = data.lastActive?.toDate?.() || (data.lastActive ? new Date(data.lastActive) : null);
+          const lastActiveFromClient = data.lastActiveClient ? new Date(data.lastActiveClient) : null;
+          const lastActive = lastActiveFromServer || lastActiveFromClient;
 
           return {
             id: viewerDoc.id,
@@ -279,7 +513,7 @@ export default function Dashboard() {
             lastActive
           };
         })
-        .filter((viewer) => viewer.lastActive && (now - viewer.lastActive.getTime()) < 60000)
+        .filter((viewer) => viewer.lastActive && (now - viewer.lastActive.getTime()) < 120000)
         .sort((a, b) => b.lastActive - a.lastActive);
 
       setActiveViewers(liveData);
@@ -301,10 +535,216 @@ export default function Dashboard() {
         ...doc.data(),
         signedAt: doc.data().signedAt?.toDate?.() || new Date()
       }));
+      
+      // Track new signed proposals using ref (no infinite loop)
+      data.forEach(proposal => {
+        if (!previousSignedRef.current.has(proposal.id)) {
+          previousSignedRef.current.add(proposal.id);
+          addNotification({
+            type: 'signed',
+            sourceId: proposal.id,
+            key: `signed-${proposal.id}`,
+            title: 'Proposal Signed',
+            message: `${proposal.proposalName} was signed by ${proposal.clientEmail?.split('@')[0]}`,
+            email: proposal.clientEmail,
+            proposalId: proposal.id,
+            timestamp: proposal.signedAt,
+            icon: 'checkCircle'
+          });
+        }
+      });
+      
       setSignedProposals(data);
     });
     return ()=>unsub();
   },[user]);
+
+  /* TRACK NEW PROPOSAL VIEWS */
+  useEffect(() => {
+    if (!user || views.length === 0) return;
+
+    views.forEach(view => {
+      const viewKey = `${view.id}-${view.fileName}`;
+      if (!previousViewsRef.current.has(viewKey)) {
+        previousViewsRef.current.add(viewKey);
+        addNotification({
+          type: 'view',
+          sourceId: view.id,
+          key: `view-${view.id}`,
+          title: 'Proposal Viewed',
+          message: `${view.fileName} viewed by ${view.viewerEmail?.split('@')[0]}`,
+          email: view.viewerEmail,
+          fileName: view.fileName,
+          timestamp: view.viewedAt,
+          icon: 'eye'
+        });
+      }
+    });
+  }, [views, user]);
+
+  /* CLOSE NOTIFICATION PANEL WHEN CLICKING OUTSIDE */
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target)) {
+        setShowNotifications(false);
+      }
+    };
+
+    if (showNotifications) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showNotifications]);
+
+  const buildNotificationKey = (notification) => {
+    if (notification.key) return notification.key;
+    if (notification.sourceId) return `${notification.type}-${notification.sourceId}`;
+    return `${notification.type}-${notification.email || 'unknown'}-${notification.fileName || notification.proposalId || ''}`;
+  };
+
+  const buildLegacyNotificationKey = (notification) =>
+    `${notification.type}-${notification.email}-${notification.fileName || notification.proposalId || ''}`;
+
+  const persistReadNotificationKeys = async (nextReadKeys) => {
+    if (!user?.uid) return;
+    const docRef = doc(db, 'dashboardNotificationPreferences', user.uid);
+    await setDoc(
+      docRef,
+      {
+        readNotificationKeys: Array.from(nextReadKeys),
+        lastUpdated: serverTimestamp()
+      },
+      { merge: true }
+    );
+  };
+
+  /* ADD NOTIFICATION HELPER */
+  const addNotification = (notification) => {
+    setNotifications(prev => {
+      // Prevent duplicate notifications within 5 seconds
+      const now = Date.now();
+      const isDuplicate = prev.some(n => 
+        n.type === notification.type && 
+        n.email === notification.email && 
+        (now - (n.timestamp?.getTime?.() || new Date(n.timestamp).getTime() || 0)) < 5000
+      );
+      
+      if (isDuplicate) return prev;
+      
+      // Create a stable unique key for this notification
+      const key = buildNotificationKey(notification);
+      const legacyKey = buildLegacyNotificationKey(notification);
+      
+      // Check if this notification was previously read
+      const isAlreadyRead =
+        readNotificationKeysRef.current.has(key) ||
+        readNotificationKeysRef.current.has(legacyKey);
+      
+      const id = now + Math.random();
+      const notifWithId = {
+        ...notification,
+        id,
+        timestamp: notification.timestamp || new Date(),
+        read: isAlreadyRead,
+        key,
+        legacyKey
+      };
+      
+      return [notifWithId, ...prev].slice(0, 50);
+    });
+  };
+
+  /* MARK NOTIFICATION AS READ */
+  const markNotificationAsRead = async (id) => {
+    const notification = notifications.find((n) => n.id === id);
+    if (!notification || notification.read) return;
+
+    // Update local state
+    setNotifications(prev =>
+      prev.map(n => n.id === id ? { ...n, read: true } : n)
+    );
+
+    // Persist to Firestore
+    try {
+      const newReadKeys = new Set(readNotificationKeysRef.current);
+      if (notification.key) {
+        newReadKeys.add(notification.key);
+      }
+      if (notification.legacyKey) {
+        newReadKeys.add(notification.legacyKey);
+      }
+      readNotificationKeysRef.current = newReadKeys;
+      setReadNotificationKeys(newReadKeys);
+      await persistReadNotificationKeys(newReadKeys);
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+    }
+  };
+
+  /* CLEAR SINGLE NOTIFICATION */
+  const clearNotification = async (id) => {
+    const notification = notifications.find((n) => n.id === id);
+    
+    setNotifications(prev => prev.filter(n => n.id !== id));
+
+    // Also mark as read when clearing
+    if (notification && !notification.read) {
+      try {
+        const newReadKeys = new Set(readNotificationKeysRef.current);
+        if (notification.key) {
+          newReadKeys.add(notification.key);
+        }
+        if (notification.legacyKey) {
+          newReadKeys.add(notification.legacyKey);
+        }
+        readNotificationKeysRef.current = newReadKeys;
+        setReadNotificationKeys(newReadKeys);
+        await persistReadNotificationKeys(newReadKeys);
+      } catch (error) {
+        console.error('Error clearing notification:', error);
+      }
+    }
+  };
+
+  /* CLEAR ALL NOTIFICATIONS */
+  const clearAllNotifications = async () => {
+    // Mark all unread notifications as read
+    const unreadNotifications = notifications.filter((n) => !n.read);
+    
+    if (unreadNotifications.length > 0) {
+      try {
+        const newReadKeys = new Set(readNotificationKeysRef.current);
+        unreadNotifications.forEach((n) => {
+          if (n.key) {
+            newReadKeys.add(n.key);
+          }
+          if (n.legacyKey) {
+            newReadKeys.add(n.legacyKey);
+          }
+        });
+        readNotificationKeysRef.current = newReadKeys;
+        setReadNotificationKeys(newReadKeys);
+        await persistReadNotificationKeys(newReadKeys);
+      } catch (error) {
+        console.error('Error clearing all notifications:', error);
+      }
+    }
+
+    setNotifications([]);
+  };
+
+  /* FORMAT TIME AGO */
+  const getTimeAgo = (date) => {
+    if (!date) return 'just now';
+    const seconds = Math.floor((new Date() - date) / 1000);
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  };
 
   /* COUNT VIEWS PER FILE */
   const getViewCount = (fileName)=>{
@@ -451,18 +891,34 @@ export default function Dashboard() {
 
   // Delete single view
   const handleDeleteView = async (viewId, fileName) => {
+    if (!canDeleteData) {
+      alert("Only Admins and SuperAdmins can delete data");
+      return;
+    }
+
     setDeleteItem({ id: viewId, name: fileName, type: "view" });
     setShowDeleteModal(true);
   };
 
   // Delete single session
   const handleDeleteSession = async (sessionId, fileName) => {
+    if (!canDeleteData) {
+      alert("Only Admins and SuperAdmins can delete data");
+      return;
+    }
+
     setDeleteItem({ id: sessionId, name: fileName, type: "session" });
     setShowDeleteModal(true);
   };
 
   // Confirm delete
   const confirmDelete = async () => {
+    if (!canDeleteData) {
+      setShowDeleteModal(false);
+      alert("Only Admins and SuperAdmins can delete data");
+      return;
+    }
+
     setIsDeleting(true);
     try {
       if (deleteItem) {
@@ -525,6 +981,8 @@ export default function Dashboard() {
 
   // Select all views
   const selectAllViews = (checked) => {
+    if (!canDeleteData) return;
+
     if (checked) {
       setSelectedViews(views.map(v => v.id));
     } else {
@@ -534,6 +992,8 @@ export default function Dashboard() {
 
   // Select all sessions
   const selectAllSessions = (checked) => {
+    if (!canDeleteData) return;
+
     if (checked) {
       setSelectedSessions(sessions.map(s => s.id));
     } else {
@@ -543,6 +1003,8 @@ export default function Dashboard() {
 
   // Toggle view selection
   const toggleViewSelection = (viewId) => {
+    if (!canDeleteData) return;
+
     if (selectedViews.includes(viewId)) {
       setSelectedViews(selectedViews.filter(id => id !== viewId));
     } else {
@@ -552,6 +1014,8 @@ export default function Dashboard() {
 
   // Toggle session selection
   const toggleSessionSelection = (sessionId) => {
+    if (!canDeleteData) return;
+
     if (selectedSessions.includes(sessionId)) {
       setSelectedSessions(selectedSessions.filter(id => id !== sessionId));
     } else {
@@ -625,7 +1089,7 @@ export default function Dashboard() {
     return `${Math.floor(diff / 60)}m ago`;
   };
 
-  if(!authChecked) return <div style={{padding:40}}>Loading...</div>;
+  if(!authChecked || permissionsLoading) return <div style={{padding:40}}>Loading...</div>;
 
   if(!user) return <Navigate to="/login"/>
 
@@ -711,6 +1175,122 @@ export default function Dashboard() {
               >
                 Yes, Logout
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LOGOUT SUCCESS MODAL */}
+      {showLogoutSuccess && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0, 0, 0, 0.7)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 10000,
+          animation: "fadeIn 0.3s ease",
+          backdropFilter: "blur(4px)",
+        }}>
+          <div style={{
+            background: "linear-gradient(135deg, #fff 0%, #f9fafb 100%)",
+            padding: "50px 40px",
+            borderRadius: "20px",
+            maxWidth: "420px",
+            width: "90%",
+            textAlign: "center",
+            boxShadow: "0 25px 80px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)",
+            animation: "slideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)",
+          }}>
+            {/* SUCCESS CHECKMARK */}
+            <div style={{
+              width: "80px",
+              height: "80px",
+              borderRadius: "50%",
+              background: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 25px",
+              boxShadow: "0 15px 40px rgba(16, 185, 129, 0.3)",
+              position: "relative",
+              animation: "scaleIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)",
+            }}>
+              <MdCheckCircle size={44} color="#fff" />
+            </div>
+            
+            {/* TITLE */}
+            <h2 style={{
+              margin: "0 0 12px 0",
+              color: "#1f2937",
+              fontSize: "28px",
+              fontWeight: "700",
+              letterSpacing: "-0.5px",
+            }}>
+              Logout Successful
+            </h2>
+            
+            {/* MESSAGE */}
+            <p style={{
+              margin: "0 0 30px 0",
+              color: "#6b7280",
+              fontSize: "16px",
+              lineHeight: "1.6",
+              fontWeight: "500",
+            }}>
+              You have been successfully logged out from your account. Redirecting to login page...
+            </p>
+            
+            {/* LOADING INDICATOR */}
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+              marginBottom: "10px",
+            }}>
+              <div style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: "#00D4FF",
+                animation: "pulse 1.5s ease-in-out infinite",
+              }}></div>
+              <div style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: "#00D4FF",
+                animation: "pulse 1.5s ease-in-out infinite 0.3s",
+              }}></div>
+              <div style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: "#00D4FF",
+                animation: "pulse 1.5s ease-in-out infinite 0.6s",
+              }}></div>
+            </div>
+            
+            {/* PROGRESS BAR */}
+            <div style={{
+              width: "100%",
+              height: "3px",
+              background: "rgba(0, 212, 255, 0.1)",
+              borderRadius: "3px",
+              overflow: "hidden",
+              marginTop: "20px",
+            }}>
+              <div style={{
+                height: "100%",
+                background: "linear-gradient(90deg, #00D4FF 0%, #0099CC 100%)",
+                borderRadius: "3px",
+                animation: "progress 3s ease forwards",
+              }}></div>
             </div>
           </div>
         </div>
@@ -1261,7 +1841,7 @@ export default function Dashboard() {
       )}
 
       {/* DELETE CONFIRMATION MODAL */}
-      {showDeleteModal && (
+      {showDeleteModal && canDeleteData && (
         <div style={{
           position: "fixed",
           top: 0,
@@ -1375,7 +1955,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* SIDEBAR WITH ICONS */}
+      {/* ========== IMPROVED SIDEBAR ========== */}
       <div style={{
         position: "relative",
         width: sidebarCollapsed ? 100 : 280,
@@ -1394,23 +1974,24 @@ export default function Dashboard() {
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
           borderRadius: 24,
-          padding: sidebarCollapsed ? "30px 10px" : "30px 20px",
+          padding: sidebarCollapsed ? "24px 10px" : "24px 20px",
           display: "flex",
           flexDirection: "column",
           gap: 8,
           boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 0 60px rgba(0, 212, 255, 0.1)",
           border: "1px solid rgba(255, 255, 255, 0.08)",
           position: "relative",
-          overflow: "hidden",
+          overflow: "visible",
           transition: "width 0.4s cubic-bezier(0.4, 0, 0.2, 1), padding 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
           willChange: "width, padding",
         }}>
 
+          {/* Logo Section */}
           <div style={{
             position: "relative",
             paddingBottom: 20,
             borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-            marginBottom: 10,
+            marginBottom: 20,
           }}>
             <div style={{
               display: "flex",
@@ -1421,111 +2002,126 @@ export default function Dashboard() {
               <MdDashboard size={sidebarCollapsed ? 32 : 36} color="#00D4FF" />
               {!sidebarCollapsed && (
                 <div>
-                  <h2 style={{color:"#fff", margin:0, fontSize:22, fontWeight:700, letterSpacing:"1px"}}>Admin</h2>
+                  <h2 style={{color:"#fff", margin:0, fontSize:22, fontWeight:700, letterSpacing:"1px"}}>HHI ProposalTracker</h2>
                   <p style={{color:"rgba(0,212,255,0.7)", margin:0, fontSize:11, letterSpacing:"2px"}}>DASHBOARD</p>
                 </div>
               )}
             </div>
           </div>
 
-          <div style={{display:"flex", flexDirection:"column", gap: sidebarCollapsed ? 16 : 12, flex:1, marginTop: sidebarCollapsed ? 30 : 20}}>
-
+          {/* Scrollable Menu Container */}
+          <div style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            gap: sidebarCollapsed ? 12 : 10,
+            overflowY: "auto",
+            overflowX: "visible",
+            paddingBottom: "16px",
+            marginBottom: "auto",
+            scrollbarWidth: "thin",
+            scrollbarColor: "rgba(0, 212, 255, 0.3) transparent",
+          }}>
+            
             {/* PRIMARY MENU ITEMS */}
-            <button 
-              style={{
-                padding: sidebarCollapsed ? "16px" : "14px 18px",
-                border: "none",
-                borderRadius: 14,
-                cursor: "pointer",
-                background: activeTab==="home" 
-                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
-                  : "transparent",
-                color: activeTab==="home" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                gap: 12,
-                fontSize: sidebarCollapsed ? 0 : 15,
-                fontWeight: activeTab==="home" ? 600 : 500,
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                position: "relative",
-                overflow: "hidden",
-                boxShadow: activeTab==="home" 
-                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
-                  : "none",
-                border: activeTab==="home" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
-              }} 
-              onClick={()=>setActiveTab("home")}
-            >
-              <MdHome size={sidebarCollapsed ? 28 : 22} />
-              {!sidebarCollapsed && <span>Dashboard</span>}
-            </button>
+            {!isRestrictedUser && (
+              <button 
+                style={{
+                  padding: sidebarCollapsed ? "12px" : "10px 16px",
+                  border: "none",
+                  borderRadius: 12,
+                  cursor: "pointer",
+                  background: activeTab==="home" 
+                    ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                    : "transparent",
+                  color: activeTab==="home" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                  gap: 12,
+                  fontSize: sidebarCollapsed ? 0 : 14,
+                  fontWeight: activeTab==="home" ? 600 : 500,
+                  transition: "all 0.2s ease",
+                  boxShadow: activeTab==="home" 
+                    ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                    : "none",
+                  border: activeTab==="home" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  whiteSpace: "nowrap",
+                }} 
+                onClick={()=>setActiveTab("home")}
+              >
+                <MdHome size={sidebarCollapsed ? 22 : 18} />
+                {!sidebarCollapsed && <span>Dashboard</span>}
+              </button>
+            )}
+
+            {!isRestrictedUser && (
+              <button 
+                style={{
+                  padding: sidebarCollapsed ? "12px" : "10px 16px",
+                  border: "none",
+                  borderRadius: 12,
+                  cursor: "pointer",
+                  background: activeTab==="proposals" 
+                    ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                    : "transparent",
+                  color: activeTab==="proposals" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                  gap: 12,
+                  fontSize: sidebarCollapsed ? 0 : 14,
+                  fontWeight: activeTab==="proposals" ? 600 : 500,
+                  transition: "all 0.2s ease",
+                  boxShadow: activeTab==="proposals" 
+                    ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                    : "none",
+                  border: activeTab==="proposals" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  whiteSpace: "nowrap",
+                }} 
+                onClick={()=>setActiveTab("proposals")}
+              >
+                <MdPictureAsPdf size={sidebarCollapsed ? 22 : 18} />
+                {!sidebarCollapsed && <span>Proposals</span>}
+              </button>
+            )}
+
+            {!isRestrictedUser && (
+              <button 
+                style={{
+                  padding: sidebarCollapsed ? "12px" : "10px 16px",
+                  border: "none",
+                  borderRadius: 12,
+                  cursor: "pointer",
+                  background: activeTab==="signed" 
+                    ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                    : "transparent",
+                  color: activeTab==="signed" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                  gap: 12,
+                  fontSize: sidebarCollapsed ? 0 : 14,
+                  fontWeight: activeTab==="signed" ? 600 : 500,
+                  transition: "all 0.2s ease",
+                  boxShadow: activeTab==="signed" 
+                    ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                    : "none",
+                  border: activeTab==="signed" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  whiteSpace: "nowrap",
+                }} 
+                onClick={()=>setActiveTab("signed")}
+              >
+                <MdCheckCircleOutline size={sidebarCollapsed ? 22 : 18} />
+                {!sidebarCollapsed && <span>Signed</span>}
+              </button>
+            )}
 
             <button 
               style={{
-                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                padding: sidebarCollapsed ? "12px" : "10px 16px",
                 border: "none",
-                borderRadius: 14,
-                cursor: "pointer",
-                background: activeTab==="proposals" 
-                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
-                  : "transparent",
-                color: activeTab==="proposals" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                gap: 12,
-                fontSize: sidebarCollapsed ? 0 : 15,
-                fontWeight: activeTab==="proposals" ? 600 : 500,
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                position: "relative",
-                overflow: "hidden",
-                boxShadow: activeTab==="proposals" 
-                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
-                  : "none",
-                border: activeTab==="proposals" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
-              }} 
-              onClick={()=>setActiveTab("proposals")}
-            >
-              <MdPictureAsPdf size={sidebarCollapsed ? 28 : 22} />
-              {!sidebarCollapsed && <span>Proposals</span>}
-            </button>
-
-            <button 
-              style={{
-                padding: sidebarCollapsed ? "16px" : "14px 18px",
-                border: "none",
-                borderRadius: 14,
-                cursor: "pointer",
-                background: activeTab==="signed" 
-                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
-                  : "transparent",
-                color: activeTab==="signed" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                gap: 12,
-                fontSize: sidebarCollapsed ? 0 : 15,
-                fontWeight: activeTab==="signed" ? 600 : 500,
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                position: "relative",
-                overflow: "hidden",
-                boxShadow: activeTab==="signed" 
-                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
-                  : "none",
-                border: activeTab==="signed" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
-              }} 
-              onClick={()=>setActiveTab("signed")}
-            >
-              <MdCheckCircleOutline size={sidebarCollapsed ? 28 : 22} />
-              {!sidebarCollapsed && <span>Signed</span>}
-            </button>
-
-            <button 
-              style={{
-                padding: sidebarCollapsed ? "16px" : "14px 18px",
-                border: "none",
-                borderRadius: 14,
+                borderRadius: 12,
                 cursor: "pointer",
                 background: activeTab==="upload" 
                   ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
@@ -1535,27 +2131,26 @@ export default function Dashboard() {
                 alignItems: "center",
                 justifyContent: sidebarCollapsed ? "center" : "flex-start",
                 gap: 12,
-                fontSize: sidebarCollapsed ? 0 : 15,
+                fontSize: sidebarCollapsed ? 0 : 14,
                 fontWeight: activeTab==="upload" ? 600 : 500,
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                position: "relative",
-                overflow: "hidden",
+                transition: "all 0.2s ease",
                 boxShadow: activeTab==="upload" 
-                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                  ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
                   : "none",
                 border: activeTab==="upload" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                whiteSpace: "nowrap",
               }} 
               onClick={()=>setActiveTab("upload")}
             >
-              <MdFileUpload size={sidebarCollapsed ? 28 : 22} />
+              <MdFileUpload size={sidebarCollapsed ? 22 : 18} />
               {!sidebarCollapsed && <span>Upload</span>}
             </button>
 
             <button 
               style={{
-                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                padding: sidebarCollapsed ? "12px" : "10px 16px",
                 border: "none",
-                borderRadius: 14,
+                borderRadius: 12,
                 cursor: "pointer",
                 background: activeTab==="views" 
                   ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
@@ -1565,58 +2160,126 @@ export default function Dashboard() {
                 alignItems: "center",
                 justifyContent: sidebarCollapsed ? "center" : "flex-start",
                 gap: 12,
-                fontSize: sidebarCollapsed ? 0 : 15,
+                fontSize: sidebarCollapsed ? 0 : 14,
                 fontWeight: activeTab==="views" ? 600 : 500,
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                position: "relative",
-                overflow: "hidden",
+                transition: "all 0.2s ease",
                 boxShadow: activeTab==="views" 
-                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                  ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
                   : "none",
                 border: activeTab==="views" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                whiteSpace: "nowrap",
               }} 
               onClick={()=>setActiveTab("views")}
             >
-              <MdRemoveRedEye size={sidebarCollapsed ? 28 : 22} />
+              <MdRemoveRedEye size={sidebarCollapsed ? 22 : 18} />
               {!sidebarCollapsed && <span>Live Views</span>}
             </button>
 
-            <button 
-              style={{
-                padding: sidebarCollapsed ? "16px" : "14px 18px",
-                border: "none",
-                borderRadius: 14,
-                cursor: "pointer",
-                background: showAdminDiscussionDashboard
-                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
-                  : "transparent",
-                color: showAdminDiscussionDashboard ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                gap: 12,
-                fontSize: sidebarCollapsed ? 0 : 15,
-                fontWeight: showAdminDiscussionDashboard ? 600 : 500,
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                position: "relative",
-                overflow: "hidden",
-                boxShadow: showAdminDiscussionDashboard
-                  ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
-                  : "none",
-                border: showAdminDiscussionDashboard ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
-              }} 
-              onClick={()=>setShowAdminDiscussionDashboard(true)}
-            >
-              <MdChat size={sidebarCollapsed ? 28 : 22} />
-              {!sidebarCollapsed && <span>Discussions</span>}
-            </button>
+            {isRestrictedUser && (
+              <button 
+                style={{
+                  padding: sidebarCollapsed ? "12px" : "10px 16px",
+                  border: "none",
+                  borderRadius: 12,
+                  cursor: "pointer",
+                  background: activeTab==="profile" 
+                    ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                    : "transparent",
+                  color: activeTab==="profile" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                  gap: 12,
+                  fontSize: sidebarCollapsed ? 0 : 14,
+                  fontWeight: activeTab==="profile" ? 600 : 500,
+                  transition: "all 0.2s ease",
+                  boxShadow: activeTab==="profile" 
+                    ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                    : "none",
+                  border: activeTab==="profile" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  whiteSpace: "nowrap",
+                }} 
+                onClick={()=>setActiveTab("profile")}
+              >
+                <MdPerson size={sidebarCollapsed ? 22 : 18} />
+                {!sidebarCollapsed && <span>My Profile</span>}
+              </button>
+            )}
+
+            {canAccessDiscussions && (
+              <button 
+                style={{
+                  padding: sidebarCollapsed ? "12px" : "10px 16px",
+                  border: "none",
+                  borderRadius: 12,
+                  cursor: "pointer",
+                  background: showAdminDiscussionDashboard
+                    ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                    : "transparent",
+                  color: showAdminDiscussionDashboard ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                  gap: 12,
+                  fontSize: sidebarCollapsed ? 0 : 14,
+                  fontWeight: showAdminDiscussionDashboard ? 600 : 500,
+                  transition: "all 0.2s ease",
+                  boxShadow: showAdminDiscussionDashboard
+                    ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                    : "none",
+                  border: showAdminDiscussionDashboard ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  whiteSpace: "nowrap",
+                  position: "relative"
+                }} 
+                onClick={()=>setShowAdminDiscussionDashboard(true)}
+              >
+                <MdChat size={sidebarCollapsed ? 22 : 18} />
+                {!sidebarCollapsed && <span>Discussions</span>}
+                {unreadDiscussionCount > 0 && !sidebarCollapsed && (
+                  <span style={{
+                    marginLeft: "auto",
+                    background: "#EF4444",
+                    color: "#FFFFFF",
+                    borderRadius: "12px",
+                    padding: "2px 8px",
+                    fontSize: "12px",
+                    fontWeight: "700",
+                    minWidth: "24px",
+                    textAlign: "center"
+                  }}>
+                    {unreadDiscussionCount}
+                  </span>
+                )}
+                {unreadDiscussionCount > 0 && sidebarCollapsed && (
+                  <span style={{
+                    position: "absolute",
+                    top: "-4px",
+                    right: "-4px",
+                    background: "#EF4444",
+                    color: "#FFFFFF",
+                    borderRadius: "50%",
+                    width: "20px",
+                    height: "20px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "11px",
+                    fontWeight: "700",
+                    border: "2px solid rgba(255, 255, 255, 0.3)"
+                  }}>
+                    {unreadDiscussionCount > 9 ? '9+' : unreadDiscussionCount}
+                  </span>
+                )}
+              </button>
+            )}
 
             {/* SEE MORE BUTTON */}
+            {!isRestrictedUser && (
             <button 
               style={{
-                padding: sidebarCollapsed ? "16px" : "14px 18px",
+                padding: sidebarCollapsed ? "12px" : "10px 16px",
                 border: "1px solid rgba(0, 212, 255, 0.4)",
-                borderRadius: 14,
+                borderRadius: 12,
                 cursor: "pointer",
                 background: showMoreMenuItems
                   ? "linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(0, 153, 204, 0.08) 100%)" 
@@ -1626,39 +2289,41 @@ export default function Dashboard() {
                 alignItems: "center",
                 justifyContent: sidebarCollapsed ? "center" : "space-between",
                 gap: 12,
-                fontSize: sidebarCollapsed ? 0 : 14,
+                fontSize: sidebarCollapsed ? 0 : 13,
                 fontWeight: 600,
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                position: "relative",
-                overflow: "hidden",
+                transition: "all 0.2s ease",
+                whiteSpace: "nowrap",
+                marginTop: "4px",
               }} 
               onClick={()=>setShowMoreMenuItems(!showMoreMenuItems)}
             >
               <div style={{display: "flex", alignItems: "center", gap: 12}}>
-                <MdFilterList size={sidebarCollapsed ? 24 : 20} />
+                <MdFilterList size={sidebarCollapsed ? 20 : 16} />
                 {!sidebarCollapsed && <span>See More</span>}
               </div>
               {!sidebarCollapsed && (
-                <span style={{fontSize: 12, color: "rgba(0, 212, 255, 0.7)"}}>
+                <span style={{fontSize: 14, color: "rgba(0, 212, 255, 0.7)"}}>
                   {showMoreMenuItems ? "−" : "+"}
                 </span>
               )}
             </button>
+            )}
 
             {/* HIDDEN MENU ITEMS - SHOW WHEN EXPANDED */}
-            {showMoreMenuItems && (
+            {!isRestrictedUser && showMoreMenuItems && (
               <div style={{
                 display: "flex",
                 flexDirection: "column",
-                gap: sidebarCollapsed ? 16 : 12,
-                paddingTop: 8,
-                borderTop: "1px solid rgba(0, 212, 255, 0.2)",
+                gap: sidebarCollapsed ? 10 : 8,
+                paddingTop: "8px",
+                marginTop: "4px",
+                borderTop: "1px solid rgba(0, 212, 255, 0.15)",
               }}>
                 <button 
                   style={{
-                    padding: sidebarCollapsed ? "16px" : "14px 18px",
+                    padding: sidebarCollapsed ? "10px" : "10px 16px",
                     border: "none",
-                    borderRadius: 14,
+                    borderRadius: 12,
                     cursor: "pointer",
                     background: activeTab==="feedback" 
                       ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
@@ -1668,27 +2333,26 @@ export default function Dashboard() {
                     alignItems: "center",
                     justifyContent: sidebarCollapsed ? "center" : "flex-start",
                     gap: 12,
-                    fontSize: sidebarCollapsed ? 0 : 15,
+                    fontSize: sidebarCollapsed ? 0 : 14,
                     fontWeight: activeTab==="feedback" ? 600 : 500,
-                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                    position: "relative",
-                    overflow: "hidden",
+                    transition: "all 0.2s ease",
                     boxShadow: activeTab==="feedback" 
-                      ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                      ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
                       : "none",
                     border: activeTab==="feedback" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                    whiteSpace: "nowrap",
                   }} 
                   onClick={()=>setActiveTab("feedback")}
                 >
-                  <MdInfo size={sidebarCollapsed ? 28 : 22} />
+                  <MdInfo size={sidebarCollapsed ? 20 : 16} />
                   {!sidebarCollapsed && <span>Feedback</span>}
                 </button>
 
                 <button 
                   style={{
-                    padding: sidebarCollapsed ? "16px" : "14px 18px",
+                    padding: sidebarCollapsed ? "10px" : "10px 16px",
                     border: "none",
-                    borderRadius: 14,
+                    borderRadius: 12,
                     cursor: "pointer",
                     background: activeTab==="engagement" 
                       ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
@@ -1698,27 +2362,26 @@ export default function Dashboard() {
                     alignItems: "center",
                     justifyContent: sidebarCollapsed ? "center" : "flex-start",
                     gap: 12,
-                    fontSize: sidebarCollapsed ? 0 : 15,
+                    fontSize: sidebarCollapsed ? 0 : 14,
                     fontWeight: activeTab==="engagement" ? 600 : 500,
-                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                    position: "relative",
-                    overflow: "hidden",
+                    transition: "all 0.2s ease",
                     boxShadow: activeTab==="engagement" 
-                      ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                      ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
                       : "none",
                     border: activeTab==="engagement" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                    whiteSpace: "nowrap",
                   }} 
                   onClick={()=>setActiveTab("engagement")}
                 >
-                  <MdTimeline size={sidebarCollapsed ? 28 : 22} />
+                  <MdTimeline size={sidebarCollapsed ? 20 : 16} />
                   {!sidebarCollapsed && <span>Engagement</span>}
                 </button>
 
                 <button 
                   style={{
-                    padding: sidebarCollapsed ? "16px" : "14px 18px",
+                    padding: sidebarCollapsed ? "10px" : "10px 16px",
                     border: "none",
-                    borderRadius: 14,
+                    borderRadius: 12,
                     cursor: "pointer",
                     background: activeTab==="analytics" 
                       ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
@@ -1728,58 +2391,165 @@ export default function Dashboard() {
                     alignItems: "center",
                     justifyContent: sidebarCollapsed ? "center" : "flex-start",
                     gap: 12,
-                    fontSize: sidebarCollapsed ? 0 : 15,
+                    fontSize: sidebarCollapsed ? 0 : 14,
                     fontWeight: activeTab==="analytics" ? 600 : 500,
-                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                    position: "relative",
-                    overflow: "hidden",
+                    transition: "all 0.2s ease",
                     boxShadow: activeTab==="analytics" 
-                      ? "0 4px 20px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1)" 
+                      ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
                       : "none",
                     border: activeTab==="analytics" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                    whiteSpace: "nowrap",
                   }} 
                   onClick={()=>setActiveTab("analytics")}
                 >
-                  <MdAnalytics size={sidebarCollapsed ? 28 : 22} />
+                  <MdAnalytics size={sidebarCollapsed ? 20 : 16} />
                   {!sidebarCollapsed && <span>Analytics</span>}
                 </button>
+
+                <button 
+                  style={{
+                    padding: sidebarCollapsed ? "10px" : "10px 16px",
+                    border: "none",
+                    borderRadius: 12,
+                    cursor: "pointer",
+                    background: activeTab==="profile" 
+                      ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                      : "transparent",
+                    color: activeTab==="profile" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    gap: 12,
+                    fontSize: sidebarCollapsed ? 0 : 14,
+                    fontWeight: activeTab==="profile" ? 600 : 500,
+                    transition: "all 0.2s ease",
+                    boxShadow: activeTab==="profile" 
+                      ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                      : "none",
+                    border: activeTab==="profile" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                    whiteSpace: "nowrap",
+                  }} 
+                  onClick={()=>setActiveTab("profile")}
+                >
+                  <MdPerson size={sidebarCollapsed ? 20 : 16} />
+                  {!sidebarCollapsed && <span>My Profile</span>}
+                </button>
+
+                {canAccessUsersTab && (
+                <button 
+                  style={{
+                    padding: sidebarCollapsed ? "10px" : "10px 16px",
+                    border: "none",
+                    borderRadius: 12,
+                    cursor: "pointer",
+                    background: activeTab==="users" 
+                      ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                      : "transparent",
+                    color: activeTab==="users" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    gap: 12,
+                    fontSize: sidebarCollapsed ? 0 : 14,
+                    fontWeight: activeTab==="users" ? 600 : 500,
+                    transition: "all 0.2s ease",
+                    boxShadow: activeTab==="users" 
+                      ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                      : "none",
+                    border: activeTab==="users" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                    whiteSpace: "nowrap",
+                  }} 
+                  onClick={()=>setActiveTab("users")}
+                >
+                  <MdGroup size={sidebarCollapsed ? 20 : 16} />
+                  {!sidebarCollapsed && <span>Users</span>}
+                </button>
+                )}
+
+                {canAccessUserActivity && (
+                <button 
+                  style={{
+                    padding: sidebarCollapsed ? "10px" : "10px 16px",
+                    border: "none",
+                    borderRadius: 12,
+                    cursor: "pointer",
+                    background: activeTab==="user-activity" 
+                      ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                      : "transparent",
+                    color: activeTab==="user-activity" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    gap: 12,
+                    fontSize: sidebarCollapsed ? 0 : 14,
+                    fontWeight: activeTab==="user-activity" ? 600 : 500,
+                    transition: "all 0.2s ease",
+                    boxShadow: activeTab==="user-activity" 
+                      ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                      : "none",
+                    border: activeTab==="user-activity" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                    whiteSpace: "nowrap",
+                  }} 
+                  onClick={()=>setActiveTab("user-activity")}
+                >
+                  <MdTrendingUp size={sidebarCollapsed ? 20 : 16} />
+                  {!sidebarCollapsed && <span>User Activity</span>}
+                </button>
+                )}
               </div>
             )}
-
           </div>
 
-          <button
-            onClick={() => setShowLogoutModal(true)}
-            style={{
-              marginTop: "auto",
-              padding: sidebarCollapsed ? "14px" : "14px 18px",
-              border: "none",
-              borderRadius: 14,
-              cursor: "pointer",
-              background: "linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%)",
-              color: "#EF4444",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              gap: sidebarCollapsed ? 0 : 10,
-              fontSize: sidebarCollapsed ? 0 : 15,
-              fontWeight: 600,
-              transition: "all 0.3s ease",
-              border: "1px solid rgba(239, 68, 68, 0.3)",
-              boxShadow: "0 4px 15px rgba(239, 68, 68, 0.15)",
-            }}
-          >
-            <MdLogout size={sidebarCollapsed ? 26 : 22}/>
-            {!sidebarCollapsed && <span>Logout</span>}
-          </button>
+          {/* LOGOUT BUTTON - Fixed at bottom with proper spacing */}
+          <div style={{
+            marginTop: "auto",
+            paddingTop: "16px",
+            borderTop: "1px solid rgba(255, 255, 255, 0.08)",
+          }}>
+            <button
+              onClick={() => setShowLogoutModal(true)}
+              style={{
+                width: "100%",
+                padding: sidebarCollapsed ? "12px" : "10px 16px",
+                border: "none",
+                borderRadius: 12,
+                cursor: "pointer",
+                background: "linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%)",
+                color: "#EF4444",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: sidebarCollapsed ? 0 : 12,
+                fontSize: sidebarCollapsed ? 0 : 14,
+                fontWeight: 600,
+                transition: "all 0.2s ease",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
+                boxShadow: "0 2px 8px rgba(239, 68, 68, 0.1)",
+                whiteSpace: "nowrap",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "linear-gradient(135deg, rgba(239, 68, 68, 0.3) 0%, rgba(220, 38, 38, 0.15) 100%)";
+                e.currentTarget.style.boxShadow = "0 4px 12px rgba(239, 68, 68, 0.2)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%)";
+                e.currentTarget.style.boxShadow = "0 2px 8px rgba(239, 68, 68, 0.1)";
+              }}
+            >
+              <MdLogout size={sidebarCollapsed ? 20 : 16} />
+              {!sidebarCollapsed && <span>Logout</span>}
+            </button>
+          </div>
 
         </div>
 
+        {/* COLLAPSE BUTTON */}
         <button 
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
           style={{
             position: "absolute",
-            top: 40,
+            top: "50%",
+            transform: "translateY(-50%)",
             right: -20,
             width: 44,
             height: 44,
@@ -1796,7 +2566,7 @@ export default function Dashboard() {
             transition: "all 0.3s ease",
           }}
         >
-          {sidebarCollapsed ? <MdChevronRight size={32} /> : <MdChevronLeft size={32} />}
+          {sidebarCollapsed ? <MdChevronRight size={28} /> : <MdChevronLeft size={28} />}
         </button>
 
       </div>
@@ -1892,6 +2662,238 @@ export default function Dashboard() {
             }}></span>
             Online
           </div>
+
+          {/* NOTIFICATION BELL */}
+          <div 
+            ref={notificationRef}
+            style={{
+              position: "relative",
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <button
+              onClick={() => setShowNotifications(!showNotifications)}
+              style={{
+                position: "relative",
+                width: "42px",
+                height: "42px",
+                borderRadius: "10px",
+                background: "rgba(255, 255, 255, 0.15)",
+                border: "1px solid rgba(255, 255, 255, 0.3)",
+                color: "#ffffff",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "all 0.3s ease",
+                backdropFilter: "blur(5px)",
+              }}
+              title="Notifications"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "rgba(255, 255, 255, 0.25)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)";
+              }}
+            >
+              {notifications.filter(n => !n.read).length > 0 || signedProposals.length > 0 ? (
+                <MdNotifications size={20} />
+              ) : (
+                <MdNotificationsNone size={20} />
+              )}
+              {notifications.filter(n => !n.read).length > 0 && (
+                <span style={{
+                  position: "absolute",
+                  top: "-4px",
+                  right: "-4px",
+                  background: "#EF4444",
+                  color: "#FFFFFF",
+                  borderRadius: "50%",
+                  width: "20px",
+                  height: "20px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "11px",
+                  fontWeight: "700",
+                  border: "2px solid rgba(255, 255, 255, 0.3)"
+                }}>
+                  {notifications.filter(n => !n.read).length}
+                </span>
+              )}
+            </button>
+
+            {/* NOTIFICATION PANEL */}
+            {showNotifications && (
+              <div style={{
+                position: "absolute",
+                top: "100%",
+                right: 0,
+                width: "360px",
+                maxHeight: "500px",
+                background: "#FFFFFF",
+                border: "1px solid #E2E8F0",
+                borderRadius: "12px",
+                boxShadow: "0 20px 25px rgba(0,0,0,0.15)",
+                zIndex: 2000,
+                marginTop: "8px",
+                display: "flex",
+                flexDirection: "column",
+                animation: "slideIn 0.2s ease",
+              }}>
+                {/* Notification Header */}
+                <div style={{
+                  padding: "16px 20px",
+                  borderBottom: "1px solid #F1F5F9",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexShrink: 0
+                }}>
+                  <span style={{
+                    fontSize: "16px",
+                    fontWeight: "600",
+                    color: "#0F172A"
+                  }}>Notifications</span>
+                  {notifications.length > 0 && (
+                    <button
+                      onClick={clearAllNotifications}
+                      style={{
+                        width: "32px",
+                        height: "32px",
+                        background: "#F8FAFC",
+                        border: "1px solid #E2E8F0",
+                        borderRadius: "8px",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "#64748B",
+                        transition: "all 0.2s ease"
+                      }}
+                      title="Clear all"
+                    >
+                      <MdClear size={16} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Notification List */}
+                {notifications.length === 0 ? (
+                  <div style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "40px 20px",
+                    color: "#94A3B8",
+                    textAlign: "center",
+                    fontSize: "14px"
+                  }}>
+                    <MdNotificationsNone size={32} color="#94A3B8" />
+                    <div style={{ marginTop: "12px" }}>All caught up!</div>
+                  </div>
+                ) : (
+                  <div style={{
+                    flex: 1,
+                    overflowY: "auto",
+                    display: "flex",
+                    flexDirection: "column"
+                  }}>
+                    {notifications.map(notif => (
+                      <div
+                        key={notif.id}
+                        style={{
+                          padding: "12px 16px",
+                          borderBottom: "1px solid #F1F5F9",
+                          display: "flex",
+                          gap: "12px",
+                          cursor: "pointer",
+                          transition: "all 0.2s ease",
+                          background: notif.read ? "#FFFFFF" : "#F8FAFC",
+                          opacity: notif.read ? 0.7 : 1,
+                        }}
+                        onClick={async () => await markNotificationAsRead(notif.id)}
+                      >
+                        <div style={{
+                          width: "32px",
+                          height: "32px",
+                          background: "#F1F5F9",
+                          borderRadius: "8px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0
+                        }}>
+                          {notif.type === 'signed' ? (
+                            <MdCheckCircle size={16} color="#10B981" />
+                          ) : notif.type === 'view' ? (
+                            <MdVisibility size={16} color="#00D4FF" />
+                          ) : (
+                            <MdInfo size={16} color="#3B82F6" />
+                          )}
+                        </div>
+                        <div style={{
+                          flex: 1,
+                          minWidth: 0
+                        }}>
+                          <div style={{
+                            fontSize: "13px",
+                            fontWeight: "600",
+                            color: "#0F172A",
+                            marginBottom: "2px"
+                          }}>
+                            {notif.title}
+                          </div>
+                          <div style={{
+                            fontSize: "12px",
+                            color: "#475569",
+                            marginBottom: "4px"
+                          }}>
+                            {notif.message}
+                          </div>
+                          {notif.email && (
+                            <div style={{
+                              fontSize: "11px",
+                              color: "#94A3B8",
+                              marginBottom: "4px"
+                            }}>
+                              {notif.email}
+                            </div>
+                          )}
+                          <div style={{
+                            fontSize: "10px",
+                            color: "#94A3B8"
+                          }}>
+                            {getTimeAgo(notif.timestamp)}
+                          </div>
+                        </div>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            await clearNotification(notif.id);
+                          }}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "#94A3B8",
+                            fontSize: "20px",
+                            cursor: "pointer",
+                            padding: "0 4px",
+                            transition: "color 0.2s ease"
+                          }}
+                          title="Dismiss"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* CSS Animation */}
@@ -1966,6 +2968,45 @@ export default function Dashboard() {
               box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
             }
           }
+
+          @keyframes scaleIn {
+            from {
+              transform: scale(0);
+              opacity: 0;
+            }
+            to {
+              transform: scale(1);
+              opacity: 1;
+            }
+          }
+
+          @keyframes progress {
+            from {
+              width: 0%;
+            }
+            to {
+              width: 100%;
+            }
+          }
+
+          /* Custom scrollbar for sidebar */
+          div::-webkit-scrollbar {
+            width: 4px;
+          }
+          
+          div::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+          }
+          
+          div::-webkit-scrollbar-thumb {
+            background: rgba(0, 212, 255, 0.3);
+            border-radius: 4px;
+          }
+          
+          div::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 212, 255, 0.5);
+          }
           
           /* Responsive table styles */
           table {
@@ -1996,8 +3037,8 @@ export default function Dashboard() {
           }
         `}</style>
 
-        {/* DASHBOARD */}
-        {activeTab === "home" && (
+        {/* DASHBOARD CONTENT */}
+        {!isRestrictedUser && activeTab === "home" && (
           <>
             <h2 style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <MdDashboard size={28} color="#1976D2" />
@@ -2257,26 +3298,27 @@ export default function Dashboard() {
           </>
         )}
 
-        {/* PROPOSALS TAB WITH EMAIL SHARE BUTTON */}
-        {activeTab === "proposals" && (
-  <ProposalsTabWithDelete 
-    user={user}
-    onViewClick={(file) => viewProposal(file)}
-    onDownloadClick={(file) => downloadFile(file)}
-    onShareClick={(file) => {
-      setEmailProposal(file);
-      setShowEmailModal(true);
-    }}
-    onSignClick={(file) => handleSignProposal(file)}
-  />
-)}
+        {/* PROPOSALS TAB */}
+        {!isRestrictedUser && activeTab === "proposals" && (
+          <ProposalsTabWithDelete 
+            user={user}
+            onViewClick={(file) => viewProposal(file)}
+            onDownloadClick={(file) => downloadFile(file)}
+            onShareClick={(file) => {
+              setEmailProposal(file);
+              setShowEmailModal(true);
+            }}
+            onSignClick={(file) => handleSignProposal(file)}
+          />
+        )}
 
         {/* SIGNED PROPOSALS TAB */}
-        {activeTab === "signed" && (
+        {!isRestrictedUser && activeTab === "signed" && (
           <SignedProposalsTab user={user} />
         )}
 
-        {activeTab === "feedback" && (
+        {/* FEEDBACK TAB */}
+        {!isRestrictedUser && activeTab === "feedback" && (
           <ClientFeedbackTab currentUser={user} />
         )}
         
@@ -2293,13 +3335,13 @@ export default function Dashboard() {
                   <option value="week">This Week</option>
                   <option value="month">This Month</option>
                 </select>
-                {selectedViews.length > 0 && (
+                {canDeleteData && selectedViews.length > 0 && (
                   <button onClick={() => { setDeleteType("views"); setShowDeleteModal(true); }}
                     style={{ padding: "8px 12px", background: "#d32f2f", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                     <MdDelete size={18} /> Delete ({selectedViews.length})
                   </button>
                 )}
-                {getFilteredViews().length > 0 && (
+                {canDeleteData && getFilteredViews().length > 0 && (
                   <button onClick={() => { setDeleteType("filteredViews"); setShowDeleteModal(true); }}
                     style={{ padding: "8px 12px", background: "#ff9800", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                     <MdDelete size={18} /> Delete {getFilteredViews().length}
@@ -2337,7 +3379,7 @@ export default function Dashboard() {
               boxShadow: "0 6px 20px rgba(15, 23, 42, 0.05)"
             }}>
               <div style={{ marginBottom: 16 }}>
-                <h3 style={{ margin: 0, fontSize: 18, color: "#0f172a" }}>Who’s viewing right now</h3>
+                <h3 style={{ margin: 0, fontSize: 18, color: "#0f172a" }}>Who's viewing right now</h3>
                 <p style={{ margin: "6px 0 0 0", fontSize: 13, color: "#64748b" }}>
                   Clients with activity in the last 60 seconds appear here.
                 </p>
@@ -2449,11 +3491,13 @@ export default function Dashboard() {
                 <thead>
                   <tr style={{ background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)", color: "#fff" }}>
                     <th style={{ padding: "12px 6px", width: "5%" }}>
-                      <input
-                        type="checkbox"
-                        onChange={(e) => selectAllViews(e.target.checked)}
-                        checked={selectedViews.length === views.length && views.length > 0}
-                      />
+                      {canDeleteData && (
+                        <input
+                          type="checkbox"
+                          onChange={(e) => selectAllViews(e.target.checked)}
+                          checked={selectedViews.length === views.length && views.length > 0}
+                        />
+                      )}
                     </th>
                     <th style={{ padding: "12px 6px", width: "30%" }}>File</th>
                     <th style={{ padding: "12px 6px", width: "30%" }}>Viewer Email</th>
@@ -2465,43 +3509,47 @@ export default function Dashboard() {
                   {paginatedViews.map((v, i) => (
                     <tr key={i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
                       <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedViews.includes(v.id)}
-                          onChange={() => toggleViewSelection(v.id)}
-                        />
-                       </td>
+                        {canDeleteData && (
+                          <input
+                            type="checkbox"
+                            checked={selectedViews.includes(v.id)}
+                            onChange={() => toggleViewSelection(v.id)}
+                          />
+                        )}
+                        </td>
                       <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "left" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <MdDescription color="#1976D2" />
                           <span>{v.fileName || "N/A"}</span>
                         </div>
-                       </td>
+                        </td>
                       <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
                         {v.viewerEmail || "Anonymous"}
-                       </td>
+                        </td>
                       <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
                         {v.viewedAt ? new Date(v.viewedAt).toLocaleString() : "Loading"}
-                       </td>
+                        </td>
                       <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                        <button
-                          onClick={() => handleDeleteView(v.id, v.fileName)}
-                          style={{
-                            padding: "6px 10px",
-                            background: "#d32f2f",
-                            color: "#fff",
-                            border: "none",
-                            borderRadius: 4,
-                            cursor: "pointer",
-                            fontSize: "12px",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4
-                          }}
-                        >
-                          <MdDelete size={14} /> Delete
-                        </button>
-                       </td>
+                        {canDeleteData && (
+                          <button
+                            onClick={() => handleDeleteView(v.id, v.fileName)}
+                            style={{
+                              padding: "6px 10px",
+                              background: "#d32f2f",
+                              color: "#fff",
+                              border: "none",
+                              borderRadius: 4,
+                              cursor: "pointer",
+                              fontSize: "12px",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4
+                            }}
+                          >
+                            <MdDelete size={14} /> Delete
+                          </button>
+                        )}
+                        </td>
                     </tr>
                   ))}
                   {paginatedViews.length === 0 && (
@@ -2612,7 +3660,7 @@ export default function Dashboard() {
         )}
 
         {/* ENGAGEMENT TAB */}
-        {activeTab === "engagement" && (
+        {!isRestrictedUser && activeTab === "engagement" && (
           <>
             <div style={{
               display: "flex",
@@ -2650,7 +3698,7 @@ export default function Dashboard() {
                   <option value="month">This Month</option>
                 </select>
 
-                {selectedSessions.length > 0 && (
+                {canDeleteData && selectedSessions.length > 0 && (
                   <button
                     onClick={() => {
                       setDeleteType("sessions");
@@ -2676,7 +3724,7 @@ export default function Dashboard() {
                   </button>
                 )}
 
-                {getFilteredSessions().length > 0 && (
+                {canDeleteData && getFilteredSessions().length > 0 && (
                   <button
                     onClick={() => {
                       setDeleteType("filteredSessions");
@@ -2788,11 +3836,13 @@ export default function Dashboard() {
                       whiteSpace: "nowrap",
                       width: "5%"
                     }}>
-                      <input
-                        type="checkbox"
-                        onChange={(e) => selectAllSessions(e.target.checked)}
-                        checked={selectedSessions.length === sessions.length && sessions.length > 0}
-                      />
+                      {canDeleteData && (
+                        <input
+                          type="checkbox"
+                          onChange={(e) => selectAllSessions(e.target.checked)}
+                          checked={selectedSessions.length === sessions.length && sessions.length > 0}
+                        />
+                      )}
                     </th>
                     <th style={{
                       padding: "12px 6px",
@@ -2907,11 +3957,13 @@ export default function Dashboard() {
                           wordBreak: "break-word",
                           width: "5%"
                         }}>
-                          <input
-                            type="checkbox"
-                            checked={selectedSessions.includes(s.id)}
-                            onChange={() => toggleSessionSelection(s.id)}
-                          />
+                          {canDeleteData && (
+                            <input
+                              type="checkbox"
+                              checked={selectedSessions.includes(s.id)}
+                              onChange={() => toggleSessionSelection(s.id)}
+                            />
+                          )}
                         </td>
                         <td style={{
                           padding: "10px 6px",
@@ -2995,25 +4047,27 @@ export default function Dashboard() {
                           verticalAlign: "middle",
                           wordBreak: "break-word",
                         }}>
-                          <button
-                            onClick={() => handleDeleteSession(s.id, proposalName)}
-                            style={{
-                              padding: "6px 10px",
-                              background: "#d32f2f",
-                              color: "#fff",
-                              border: "none",
-                              borderRadius: 4,
-                              cursor: "pointer",
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: 4,
-                              fontSize: "12px",
-                              whiteSpace: "nowrap"
-                            }}
-                          >
-                            <MdDelete size={14} />
-                            <span>Delete</span>
-                          </button>
+                          {canDeleteData && (
+                            <button
+                              onClick={() => handleDeleteSession(s.id, proposalName)}
+                              style={{
+                                padding: "6px 10px",
+                                background: "#d32f2f",
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: 4,
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                fontSize: "12px",
+                                whiteSpace: "nowrap"
+                              }}
+                            >
+                              <MdDelete size={14} />
+                              <span>Delete</span>
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -3179,7 +4233,64 @@ export default function Dashboard() {
         )}
 
         {/* NEW ANALYTICS TAB - Page View Tracking */}
-        {activeTab === "analytics" && <ProposalAnalyticsTab />}
+        {!isRestrictedUser && activeTab === "analytics" && (
+          <div style={{
+            background: "#fff",
+            borderRadius: "16px",
+            padding: "24px",
+            marginTop: "20px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+            minHeight: "calc(100vh - 200px)",
+            overflow: "visible"
+          }}>
+            <ProposalAnalyticsTab />
+          </div>
+        )}
+
+        {/* PROFILE TAB */}
+        {activeTab === "profile" && (
+          <div style={{
+            background: "#fff",
+            borderRadius: "16px",
+            padding: "0px",
+            marginTop: "0px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+            minHeight: "calc(100vh - 200px)",
+            overflow: "visible"
+          }}>
+            <UserProfile />
+          </div>
+        )}
+
+        {/* USERS TAB - SuperAdmin Only */}
+        {canAccessUsersTab && activeTab === "users" && (
+          <div style={{
+            background: "#fff",
+            borderRadius: "16px",
+            padding: "0px",
+            marginTop: "0px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+            minHeight: "calc(100vh - 200px)",
+            overflow: "visible"
+          }}>
+            <UserManagement />
+          </div>
+        )}
+
+        {/* USERS ACTIVITY TAB - Admin Only */}
+        {canAccessUserActivity && activeTab === "user-activity" && (
+          <div style={{
+            background: "transparent",
+            borderRadius: "0px",
+            padding: "0px",
+            marginTop: "0px",
+            boxShadow: "none",
+            minHeight: "calc(100vh - 200px)",
+            overflow: "visible"
+          }}>
+            <UsersActivityTab />
+          </div>
+        )}
 
         {/* Share Modal */}
         <ShareModal
@@ -3195,12 +4306,18 @@ export default function Dashboard() {
       </div>
 
       {/* Admin Discussion Dashboard */}
-      {showAdminDiscussionDashboard && user && (
+      {showAdminDiscussionDashboard && user && canAccessDiscussions && (
         <AdminDiscussionDashboard
           userId={user.uid}
           userEmail={user.email}
-          userRole="admin"
+          userRole={role || "user"}
           onClose={() => setShowAdminDiscussionDashboard(false)}
+          onDiscussionSeen={(discussionId, lastSeenMs) => {
+            setLastSeenByDiscussion(prev => ({
+              ...prev,
+              [discussionId]: lastSeenMs
+            }));
+          }}
         />
       )}
     </div>

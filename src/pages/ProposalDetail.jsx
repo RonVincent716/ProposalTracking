@@ -22,6 +22,7 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { MdEdit, MdFileUpload, MdLogout, MdDescription, MdArrowBack, MdCheckCircle, MdDashboard, MdVisibility } from "react-icons/md";
 import emailjs from "@emailjs/browser";
+import { ActivityLogger } from "../utils/activityLogger";
 import ProposalReviewPanel from "../Components/ProposalReviewPanel";
 import HighlightButton from "../Components/HighlightButton";
 import DiscussionPanel from "../Components/DiscussionPanel";
@@ -57,6 +58,7 @@ export default function ProposalDetail() {
   const [deviceInfo, setDeviceInfo] = useState({});
   const [location, setLocation] = useState(null);
   const [scrollDepth, setScrollDepth] = useState(0);
+  const [sessionReady, setSessionReady] = useState(false);
   const [userDisplayName, setUserDisplayName] = useState("");
   const [pageTrackingStatus, setPageTrackingStatus] = useState("");
   const [highlightModeActive, setHighlightModeActive] = useState(false);
@@ -134,6 +136,7 @@ export default function ProposalDetail() {
         location: location || null,
         status: document.hidden ? "background" : "active",
         lastActive: serverTimestamp(),
+        lastActiveClient: Date.now(),
         ...overrides
       };
 
@@ -576,6 +579,7 @@ export default function ProposalDetail() {
 
       sessionId.current = session.id;
       activeViewerDocId.current = session.id;
+      setSessionReady(true);
       await syncActiveViewer(
         {
           currentPage: 1,
@@ -669,7 +673,7 @@ export default function ProposalDetail() {
 
   // Heartbeat update every 30 seconds
   useEffect(() => {
-    if (!sessionId.current) return;
+    if (!sessionReady || !sessionId.current) return;
 
     heartbeatInterval.current = setInterval(async () => {
       if (!isTabActive.current) return;
@@ -696,9 +700,9 @@ export default function ProposalDetail() {
     }, 30000);
 
     return () => clearInterval(heartbeatInterval.current);
-  }, [sessionId.current, scrollDepth]);
+  }, [sessionReady, userEmail, viewerName]);
 
-  // Final save when user leaves
+  // Final save when user leaves (run once on unload/unmount only)
   useEffect(() => {
     const saveSession = async () => {
       if (!sessionId.current) return;
@@ -706,7 +710,7 @@ export default function ProposalDetail() {
       // Save final page time
       const finalTime = (Date.now() - pageStartTime.current) / 1000;
       if (finalTime > 0.5) {
-        await trackPageTime(pageNumber, finalTime);
+        await trackPageTime(currentPageRef.current, finalTime);
       }
       
       const duration = Date.now() - startTime.current;
@@ -716,19 +720,23 @@ export default function ProposalDetail() {
         pagesViewed: pagesArray,
         pageCount: pagesArray.length,
         duration,
-        scrollDepth: Math.round(scrollDepth),
+        scrollDepth: Math.round(currentScrollDepthRef.current),
         endedAt: serverTimestamp(),
       });
       await clearActiveViewer();
       console.log(`💾 Final session saved: ${pagesArray.length} pages viewed`);
     };
 
-    window.addEventListener("beforeunload", saveSession);
-    return () => {
-      saveSession();
-      window.removeEventListener("beforeunload", saveSession);
+    const handleBeforeUnload = () => {
+      void saveSession();
     };
-  }, [scrollDepth, pageNumber]);
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      void saveSession();
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, []);
 
   const handleDownload = async () => {
     try {
@@ -757,12 +765,21 @@ export default function ProposalDetail() {
   };
 
   const handleLogout = async () => {
+    // Log logout activity before signing out
+    if (auth.currentUser) {
+      await ActivityLogger.logLogout(auth.currentUser.email);
+    }
     await auth.signOut();
     navigate("/login");
   };
 
   const handleGoBack = () => {
-    navigate(-1);
+    // Navigate to the appropriate dashboard based on user role
+    if (userRole === 'client') {
+      navigate("/client-dashboard");
+    } else {
+      navigate("/dashboard");
+    }
   };
 
   if (checkingAuth || loading) {

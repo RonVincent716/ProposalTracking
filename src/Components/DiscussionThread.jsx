@@ -1,6 +1,6 @@
 // src/Components/DiscussionThread.jsx
 import { useState, useRef, useEffect } from 'react';
-import { MdSend, MdClose, MdCheckCircle, MdMoreVert } from 'react-icons/md';
+import { MdSend, MdCheckCircle } from 'react-icons/md';
 import { formatRelativeTime } from '../utils/highlightUtils';
 
 const DiscussionThread = ({
@@ -9,38 +9,41 @@ const DiscussionThread = ({
   onAddMessage,
   onResolve,
   userRole,
-  userId,
-  onClose,
   onExpand,
-  onCollapse
+  onCollapse,
+  forceExpanded = false
 }) => {
   const [replyText, setReplyText] = useState('');
   const [isExpanded, setIsExpanded] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef(null);
 
-  // Load/unload messages when expanding/collapsing
+  const viewerIsAdmin = userRole === 'admin' || userRole === 'superadmin';
+  const expanded = forceExpanded || isExpanded;
+  const messageCount = messages?.length || 0;
+  const isResolved = discussion.status === 'resolved';
+
   useEffect(() => {
-    if (isExpanded && onExpand) {
+    if (expanded && onExpand) {
       onExpand(discussion.id);
-    } else if (!isExpanded && onCollapse) {
+    } else if (!expanded && onCollapse) {
       onCollapse(discussion.id);
     }
-  }, [isExpanded, discussion.id, onExpand, onCollapse]);
+  }, [expanded, discussion.id, onExpand, onCollapse]);
 
-  // Auto-scroll to latest message
   useEffect(() => {
-    if (isExpanded && messagesEndRef.current) {
+    if (expanded && messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, isExpanded]);
+  }, [messages, expanded]);
 
   const handleSendMessage = async () => {
-    if (!replyText.trim()) return;
+    const cleanText = replyText.trim();
+    if (!cleanText) return;
 
     setIsSending(true);
     try {
-      await onAddMessage(discussion.id, replyText);
+      await onAddMessage(discussion.id, cleanText);
       setReplyText('');
     } catch (err) {
       console.error('Error sending message:', err);
@@ -54,142 +57,163 @@ const DiscussionThread = ({
     if (window.confirm('Mark this discussion as resolved?')) {
       try {
         await onResolve(discussion.id);
-      } catch (err) {
+      } catch {
         alert('Failed to resolve discussion');
       }
     }
   };
 
-  const messageCount = messages?.length || 0;
-  const isResolved = discussion.status === 'resolved';
+  const getInitials = (nameOrEmail) => {
+    if (!nameOrEmail) return 'U';
+    const parts = String(nameOrEmail).split(/[.@\s_-]+/).filter(Boolean);
+    if (parts.length === 0) return 'U';
+    if (parts.length === 1) return parts[0][0]?.toUpperCase() || 'U';
+    return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
+  };
+
+  const getMessageOwner = (message) => {
+    const messageFromAdmin = message.senderRole === 'admin';
+    const isOutgoing = viewerIsAdmin ? messageFromAdmin : !messageFromAdmin;
+    const displayName = message.senderName || message.senderEmail || (messageFromAdmin ? 'Admin' : 'Client');
+
+    return {
+      isOutgoing,
+      displayName,
+      avatar: getInitials(displayName)
+    };
+  };
 
   return (
     <div style={{ ...styles.container, ...(isResolved ? styles.containerResolved : {}) }}>
-      {/* Header - Always Visible */}
       <div
         style={styles.header}
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={() => {
+          if (!forceExpanded) setIsExpanded((prev) => !prev);
+        }}
       >
         <div style={styles.headerLeft}>
-          {/* Color indicator */}
           <div
             style={{
               ...styles.colorIndicator,
-              backgroundColor: discussion.highlightColor
+              backgroundColor: discussion.highlightColor || '#FCD34D'
             }}
           />
-          
-          {/* Highlighted text preview */}
           <div style={styles.headerInfo}>
             <div style={styles.highlightText}>
-              "{discussion.highlightedText?.substring(0, 60)}
-              {discussion.highlightedText?.length > 60 ? '...' : ''}"
+              "{discussion.highlightedText?.substring(0, 72)}
+              {discussion.highlightedText?.length > 72 ? '...' : ''}"
             </div>
             <div style={styles.headerMeta}>
-              Page {discussion.pageNumber} • {messageCount} message{messageCount !== 1 ? 's' : ''} •{' '}
+              Page {discussion.pageNumber} | {messageCount} message{messageCount !== 1 ? 's' : ''} |{' '}
               {formatRelativeTime(discussion.createdAt)}
             </div>
           </div>
         </div>
 
-        {/* Status badge */}
         <div style={styles.headerRight}>
           {isResolved && (
             <span style={styles.resolvedBadge}>
-              <MdCheckCircle size={16} style={{ marginRight: '4px' }} />
+              <MdCheckCircle size={14} />
               Resolved
             </span>
           )}
-          <span style={styles.expandIcon}>
-            {isExpanded ? '▼' : '▶'}
-          </span>
+          {!forceExpanded && <span style={styles.expandIcon}>{expanded ? 'v' : '>'}</span>}
         </div>
       </div>
 
-      {/* Expanded content */}
-      {isExpanded && (
+      {expanded && (
         <div style={styles.expandedContent}>
-          {/* Context */}
           <div style={styles.contextSection}>
-            <div style={styles.contextLabel}>Context:</div>
-            <div style={styles.contextText}>{discussion.context || 'No additional context'}</div>
+            <div style={styles.contextLabel}>Selected text context</div>
+            <div style={styles.contextText}>{discussion.context || 'No additional context provided.'}</div>
           </div>
 
-          {/* Messages */}
           <div style={styles.messagesContainer}>
             {messageCount === 0 ? (
-              <div style={styles.noMessages}>No messages yet. Be the first to reply!</div>
+              <div style={styles.noMessages}>No replies yet. Start the conversation.</div>
             ) : (
-              messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  style={{
-                    ...styles.message,
-                    ...(msg.senderRole === 'admin' ? styles.messageAdmin : styles.messageClient)
-                  }}
-                >
-                  <div style={styles.messageHeader}>
-                    <span style={styles.senderName}>{msg.senderName}</span>
-                    <span style={styles.senderRole}>
-                      {msg.senderRole === 'admin' ? '👨‍💼 Admin' : '👤 Client'}
-                    </span>
-                    <span style={styles.messageTime}>
-                      {formatRelativeTime(msg.timestamp)}
-                    </span>
+              messages.map((msg) => {
+                const owner = getMessageOwner(msg);
+
+                return (
+                  <div
+                    key={msg.id}
+                    style={{
+                      ...styles.messageRow,
+                      ...(owner.isOutgoing ? styles.messageRowOutgoing : styles.messageRowIncoming)
+                    }}
+                  >
+                    {!owner.isOutgoing && (
+                      <div style={{ ...styles.avatar, ...styles.avatarIncoming }}>{owner.avatar}</div>
+                    )}
+
+                    <div
+                      style={{
+                        ...styles.messageBubble,
+                        ...(owner.isOutgoing ? styles.messageBubbleOutgoing : styles.messageBubbleIncoming)
+                      }}
+                    >
+                      <div style={styles.messageHeader}>
+                        <span style={styles.senderName}>{owner.displayName}</span>
+                        <span style={styles.messageTime}>{formatRelativeTime(msg.timestamp)}</span>
+                      </div>
+                      <div style={styles.messageBody}>{msg.message}</div>
+                    </div>
+
+                    {owner.isOutgoing && (
+                      <div style={{ ...styles.avatar, ...styles.avatarOutgoing }}>{owner.avatar}</div>
+                    )}
                   </div>
-                  <div style={styles.messageBody}>{msg.message}</div>
-                </div>
-              ))
+                );
+              })
             )}
+
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Reply input (not for resolved discussions) */}
           {!isResolved && (
             <div style={styles.replySection}>
-              <input
-                type="text"
-                placeholder="Type your reply..."
+              <textarea
+                rows={2}
+                placeholder="Write a friendly reply..."
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter' && !isSending) {
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !isSending) {
+                    e.preventDefault();
                     handleSendMessage();
                   }
                 }}
                 style={styles.replyInput}
                 disabled={isSending}
               />
+
               <button
                 onClick={handleSendMessage}
                 style={{
                   ...styles.sendButton,
-                  ...(isSending ? styles.sendButtonDisabled : {})
+                  ...(isSending || !replyText.trim() ? styles.sendButtonDisabled : {})
                 }}
                 disabled={isSending || !replyText.trim()}
+                title="Send message"
               >
                 <MdSend size={18} />
               </button>
             </div>
           )}
 
-          {/* Admin actions */}
-          {userRole === 'admin' && !isResolved && (
+          {viewerIsAdmin && !isResolved && (
             <div style={styles.adminActions}>
-              <button
-                onClick={handleResolve}
-                style={styles.resolveButton}
-              >
-                <MdCheckCircle size={16} style={{ marginRight: '6px' }} />
+              <button onClick={handleResolve} style={styles.resolveButton}>
+                <MdCheckCircle size={16} />
                 Mark as Resolved
               </button>
             </div>
           )}
 
-          {/* Client info */}
           <div style={styles.clientInfo}>
-            <div style={styles.clientInfoLabel}>From:</div>
-            <div>{discussion.clientName}</div>
+            <div style={styles.clientInfoLabel}>Client</div>
+            <div>{discussion.clientName || discussion.clientEmail?.split('@')[0] || 'Client'}</div>
             <div style={styles.clientEmail}>{discussion.clientEmail}</div>
           </div>
         </div>
@@ -200,31 +224,25 @@ const DiscussionThread = ({
 
 const styles = {
   container: {
-    background: '#ffffff',
-    borderWidth: '1px',
-    borderStyle: 'solid',
-    borderColor: '#e0e0e0',
-    borderRadius: '8px',
+    background: '#FFFFFF',
+    border: '1px solid #E2E8F0',
+    borderRadius: '12px',
     marginBottom: '12px',
     overflow: 'hidden',
     transition: 'all 0.2s ease',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+    boxShadow: '0 2px 8px rgba(15, 23, 42, 0.05)'
   },
   containerResolved: {
-    opacity: 0.7,
-    borderColor: '#d0d0d0'
+    opacity: 0.85
   },
   header: {
-    padding: '12px 14px',
-    background: '#fafafa',
+    padding: '14px 16px',
+    background: '#F8FAFC',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     cursor: 'pointer',
-    transition: 'background 0.2s ease',
-    ':hover': {
-      background: '#f5f5f5'
-    }
+    borderBottom: '1px solid #EDF2F7'
   },
   headerLeft: {
     display: 'flex',
@@ -236,10 +254,9 @@ const styles = {
   colorIndicator: {
     width: '12px',
     height: '12px',
-    borderRadius: '50%',
-    flexShrink: 0,
+    borderRadius: '999px',
     marginTop: '4px',
-    opacity: 0.8
+    flexShrink: 0
   },
   headerInfo: {
     flex: 1,
@@ -247,15 +264,15 @@ const styles = {
   },
   highlightText: {
     fontSize: '13px',
-    fontWeight: '500',
-    color: '#333',
+    fontWeight: '600',
+    color: '#1E293B',
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis'
   },
   headerMeta: {
     fontSize: '11px',
-    color: '#888',
+    color: '#64748B',
     marginTop: '4px'
   },
   headerRight: {
@@ -267,100 +284,134 @@ const styles = {
   resolvedBadge: {
     display: 'flex',
     alignItems: 'center',
+    gap: '4px',
     fontSize: '11px',
-    color: '#10B981',
-    background: '#D1F2EB',
+    color: '#059669',
+    background: '#D1FAE5',
     padding: '4px 8px',
-    borderRadius: '4px',
-    fontWeight: '500'
+    borderRadius: '999px',
+    fontWeight: 600
   },
   expandIcon: {
     fontSize: '12px',
-    color: '#888',
-    transition: 'transform 0.2s ease'
+    color: '#64748B',
+    fontWeight: 700
   },
   expandedContent: {
-    padding: '16px 14px',
-    borderTop: '1px solid #e0e0e0',
-    background: '#fafafa'
+    padding: '14px',
+    background: 'linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)'
   },
   contextSection: {
-    marginBottom: '16px',
-    padding: '12px',
-    background: '#ffffff',
-    borderRadius: '6px',
-    borderWidth: '1px',
-    borderStyle: 'solid',
-    borderColor: '#e0e0e0'
+    marginBottom: '12px',
+    padding: '10px 12px',
+    background: '#FFFFFF',
+    borderRadius: '10px',
+    border: '1px solid #E2E8F0'
   },
   contextLabel: {
-    fontSize: '11px',
-    fontWeight: '600',
-    color: '#666',
+    fontSize: '10px',
+    fontWeight: 700,
+    color: '#64748B',
     textTransform: 'uppercase',
-    marginBottom: '6px'
+    letterSpacing: '0.03em',
+    marginBottom: '4px'
   },
   contextText: {
     fontSize: '12px',
-    color: '#555',
-    lineHeight: '1.4',
-    maxHeight: '60px',
-    overflow: 'auto',
+    color: '#334155',
+    lineHeight: 1.45,
     fontStyle: 'italic'
   },
   messagesContainer: {
-    maxHeight: '300px',
+    maxHeight: '330px',
     overflowY: 'auto',
     marginBottom: '12px',
-    paddingRight: '6px'
+    padding: '8px',
+    background: '#FFFFFF',
+    borderRadius: '12px',
+    border: '1px solid #E2E8F0'
   },
-  message: {
-    marginBottom: '12px',
-    padding: '10px 12px',
-    borderRadius: '6px',
-    fontSize: '13px'
+  noMessages: {
+    textAlign: 'center',
+    padding: '22px 12px',
+    color: '#64748B',
+    fontSize: '12px',
+    background: '#F8FAFC',
+    borderRadius: '8px'
   },
-  messageClient: {
-    background: '#f0fdf4',
-    borderLeft: '3px solid #10B981'
+  messageRow: {
+    display: 'flex',
+    alignItems: 'flex-end',
+    gap: '8px',
+    marginBottom: '10px'
   },
-  messageAdmin: {
-    background: '#eff6ff',
-    borderLeft: '3px solid #3b82f6'
+  messageRowIncoming: {
+    justifyContent: 'flex-start'
+  },
+  messageRowOutgoing: {
+    justifyContent: 'flex-end'
+  },
+  avatar: {
+    width: '24px',
+    height: '24px',
+    borderRadius: '999px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '10px',
+    fontWeight: 700,
+    flexShrink: 0
+  },
+  avatarIncoming: {
+    background: '#E2E8F0',
+    color: '#334155'
+  },
+  avatarOutgoing: {
+    background: '#DBEAFE',
+    color: '#1D4ED8'
+  },
+  messageBubble: {
+    maxWidth: '76%',
+    borderRadius: '14px',
+    padding: '8px 10px',
+    fontSize: '13px',
+    lineHeight: 1.45,
+    boxShadow: '0 1px 3px rgba(15, 23, 42, 0.08)'
+  },
+  messageBubbleIncoming: {
+    background: '#F1F5F9',
+    color: '#0F172A',
+    borderBottomLeftRadius: '4px'
+  },
+  messageBubbleOutgoing: {
+    background: 'linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%)',
+    color: '#0F172A',
+    borderBottomRightRadius: '4px'
   },
   messageHeader: {
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: '8px',
-    marginBottom: '6px',
-    fontSize: '11px'
+    marginBottom: '4px'
   },
   senderName: {
-    fontWeight: '600',
-    color: '#333'
-  },
-  senderRole: {
-    fontSize: '10px',
-    color: '#666'
+    fontSize: '11px',
+    fontWeight: 600,
+    color: '#334155',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap'
   },
   messageTime: {
     fontSize: '10px',
-    color: '#999',
-    marginLeft: 'auto'
+    color: '#64748B',
+    flexShrink: 0
   },
   messageBody: {
-    color: '#333',
-    lineHeight: '1.4',
-    wordBreak: 'break-word'
-  },
-  noMessages: {
-    textAlign: 'center',
-    padding: '20px 12px',
-    color: '#888',
-    fontSize: '12px',
-    fontStyle: 'italic',
-    background: '#ffffff',
-    borderRadius: '4px'
+    color: '#1E293B',
+    wordBreak: 'break-word',
+    whiteSpace: 'pre-wrap'
   },
   replySection: {
     display: 'flex',
@@ -369,79 +420,69 @@ const styles = {
   },
   replyInput: {
     flex: 1,
-    padding: '8px 12px',
-    borderWidth: '1px',
-    borderStyle: 'solid',
-    borderColor: '#e0e0e0',
-    borderRadius: '6px',
+    padding: '10px 12px',
+    border: '1px solid #CBD5E1',
+    borderRadius: '10px',
     fontSize: '13px',
     fontFamily: 'inherit',
-    transition: 'border-color 0.2s ease',
-    outline: 'none'
+    outline: 'none',
+    resize: 'none',
+    lineHeight: 1.4
   },
   sendButton: {
-    padding: '8px 12px',
-    background: '#3b82f6',
-    color: 'white',
+    width: '42px',
+    height: '42px',
+    borderRadius: '10px',
     border: 'none',
-    borderRadius: '6px',
+    background: 'linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%)',
+    color: '#FFFFFF',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    transition: 'background 0.2s ease',
-    ':hover': {
-      background: '#2563eb'
-    }
+    flexShrink: 0
   },
   sendButtonDisabled: {
-    background: '#d0d0d0',
+    background: '#CBD5E1',
     cursor: 'not-allowed'
   },
   adminActions: {
-    padding: '12px',
-    background: '#ffffff',
-    borderRadius: '6px',
     marginBottom: '12px'
   },
   resolveButton: {
     width: '100%',
     padding: '10px',
     background: '#10B981',
-    color: 'white',
+    color: '#FFFFFF',
     border: 'none',
-    borderRadius: '6px',
+    borderRadius: '10px',
     fontSize: '13px',
-    fontWeight: '500',
+    fontWeight: 600,
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    transition: 'background 0.2s ease',
-    ':hover': {
-      background: '#059669'
-    }
+    gap: '6px'
   },
   clientInfo: {
     padding: '10px 12px',
-    background: '#ffffff',
-    borderRadius: '6px',
+    background: '#FFFFFF',
+    borderRadius: '10px',
+    border: '1px solid #E2E8F0',
     fontSize: '12px',
-    color: '#666',
-    borderTopWidth: '1px',
-    borderTopStyle: 'solid',
-    borderTopColor: '#e0e0e0'
+    color: '#334155'
   },
   clientInfoLabel: {
     fontSize: '10px',
-    fontWeight: '600',
+    fontWeight: 700,
     textTransform: 'uppercase',
-    color: '#888',
+    letterSpacing: '0.03em',
+    color: '#64748B',
     marginBottom: '4px'
   },
   clientEmail: {
     fontSize: '11px',
-    color: '#999'
+    color: '#64748B'
   }
 };
 

@@ -1,8 +1,35 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function hasRoleDoc() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUserRole() {
+      return hasRoleDoc()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : "user";
+    }
+
+    function isAdminOrHigher() {
+      return currentUserRole() in ["admin", "superadmin"];
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (request.auth.uid == userId || isAdminOrHigher());
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdminOrHigher());
+      allow delete: if isAdminOrHigher();
+    }
+
     match /{document=**} {
-      allow read, write: if true;
+      allow read, create, update: if isAuthenticated();
+      allow delete: if isAdminOrHigher();
     }
   }
 }

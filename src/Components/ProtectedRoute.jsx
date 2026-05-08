@@ -1,25 +1,52 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { auth } from "../firebase";
+import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 
-export default function ProtectedRoute({ children }) {
-
+export default function ProtectedRoute({
+  children,
+  allowedRoles = null,
+  redirectTo = "/login",
+  forbiddenRedirectTo = "/login"
+}) {
   const [user, setUser] = useState(null);
+  const [isAuthorized, setIsAuthorized] = useState(true);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      const resolvedUser = currentUser || auth.currentUser;
 
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (!resolvedUser) {
+        setUser(null);
+        setIsAuthorized(false);
+        setLoading(false);
+        return;
+      }
 
-      setUser(currentUser);
-      setLoading(false);
+      setUser(resolvedUser);
 
+      if (!Array.isArray(allowedRoles) || allowedRoles.length === 0) {
+        setIsAuthorized(true);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const userDoc = await getDoc(doc(db, "users", resolvedUser.uid));
+        const role = userDoc.exists() ? (userDoc.data().role || "user") : "user";
+        setIsAuthorized(allowedRoles.includes(role));
+      } catch (error) {
+        console.error("ProtectedRoute role check error:", error);
+        setIsAuthorized(false);
+      } finally {
+        setLoading(false);
+      }
     });
 
     return () => unsubscribe();
-
-  }, []);
+  }, [allowedRoles]);
 
   if (loading) return (
     <div style={loaderContainer}>
@@ -34,7 +61,9 @@ export default function ProtectedRoute({ children }) {
     </div>
   );
 
-  if (!user) return <Navigate to="/login" />;
+  if (!user) return <Navigate to={redirectTo} replace />;
+
+  if (!isAuthorized) return <Navigate to={forbiddenRedirectTo} replace />;
 
   return children;
 

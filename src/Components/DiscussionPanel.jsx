@@ -4,6 +4,7 @@ import { MdClose, MdRefresh, MdFilter } from 'react-icons/md';
 import { useProposalDiscussions } from '../hooks/useProposalDiscussions';
 import { getSelectedTextData, highlightTextInDOM, getColorForDiscussion, generateHighlightId } from '../utils/highlightUtils';
 import DiscussionThread from './DiscussionThread';
+import { ActivityLogger } from '../utils/activityLogger';
 
 const DiscussionPanel = ({
   isOpen,

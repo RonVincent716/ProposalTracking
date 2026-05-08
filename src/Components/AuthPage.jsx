@@ -1,8 +1,10 @@
 // src/components/AuthPage.jsx
 import { useState } from "react";
-import { auth } from "../firebase"; // make sure you have your firebase.js initialized
+import { auth, db } from "../firebase"; // make sure you have your firebase.js initialized
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
+import { ActivityLogger } from "../utils/activityLogger";
 
 export default function AuthPage() {
   const [email, setEmail] = useState("");
@@ -21,12 +23,26 @@ export default function AuthPage() {
     try {
       if (isLogin) {
         // Login
-        await signInWithEmailAndPassword(auth, email, password);
-        navigate("/upload"); // redirect to your upload page
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        // Log login activity
+        await ActivityLogger.logLogin(userCredential.user.email);
+        navigate("/dashboard"); // redirect to dashboard
       } else {
         // Sign Up
-        await createUserWithEmailAndPassword(auth, email, password);
-        navigate("/upload"); // redirect after signup
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        
+        // Create user document in Firestore with default role
+        await setDoc(doc(db, "users", userCredential.user.uid), {
+          email: email,
+          role: "user", // Default role for new users
+          createdAt: new Date().toISOString(),
+          uid: userCredential.user.uid
+        });
+        
+        // Log login activity for new user
+        await ActivityLogger.logLogin(userCredential.user.email);
+        
+        navigate("/dashboard"); // redirect after signup
       }
     } catch (error) {
       console.error(error);

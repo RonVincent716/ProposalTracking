@@ -11,6 +11,7 @@ import {
   MdContentCopy
 } from "react-icons/md";
 import emailjs from '@emailjs/browser';
+import { ActivityLogger } from "../utils/activityLogger";
 
 // EmailJS Configuration - Replace with your actual credentials
 const EMAILJS_CONFIG = {
@@ -93,6 +94,9 @@ const ShareModal = ({ isOpen, onClose, proposal, user }) => {
       } catch (err) {
         console.error("Error saving email record:", err);
       }
+
+      // Log the email share activity
+      await ActivityLogger.logEmailShare(proposal.name, recipientEmail, recipientName);
 
       setEmailSent(true);
       

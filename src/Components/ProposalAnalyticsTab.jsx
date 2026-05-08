@@ -119,13 +119,18 @@ export default function ProposalAnalyticsTab() {
           const pageNum = record.pageNumber;
           const sessionId = record.sessionId || record.id;
           const timeSpent = record.timeSpentSeconds || 0;
+          const action = record.action || "page_time";
+          const key = `${sessionId}_${pageNum}`;
           
-          if (record.action === "page_time" || timeSpent > 0) {
-            const key = `${sessionId}_${pageNum}`;
-            if (!sessionPageMap.has(key)) {
-              sessionPageMap.set(key, { sessionId, pageNum, timeSpent: 0 });
-            }
-            const sessionPage = sessionPageMap.get(key);
+          if (!sessionPageMap.has(key)) {
+            sessionPageMap.set(key, { sessionId, pageNum, timeSpent: 0, viewed: false });
+          }
+
+          const sessionPage = sessionPageMap.get(key);
+          if (action === "page_view" || action === "page_time" || timeSpent > 0) {
+            sessionPage.viewed = true;
+          }
+          if (action === "page_time" || timeSpent > 0) {
             sessionPage.timeSpent += timeSpent;
             totalTimeSpent += timeSpent;
           }
@@ -133,7 +138,7 @@ export default function ProposalAnalyticsTab() {
         
         const uniquePages = new Set();
         sessionPageMap.forEach(sessionPage => {
-          if (sessionPage.timeSpent > 0) uniquePages.add(sessionPage.pageNum);
+          if (sessionPage.viewed) uniquePages.add(sessionPage.pageNum);
         });
         
         const viewsQuery = query(collection(db, "proposalViews"), where("fileName", "==", fileName));
@@ -213,11 +218,13 @@ export default function ProposalAnalyticsTab() {
         
         const key = `${sessionId}_${pageNum}`;
         if (!sessionPageMap.has(key)) {
-          sessionPageMap.set(key, { sessionId, pageNum, timeSpent: 0, counted: false });
+          sessionPageMap.set(key, { sessionId, pageNum, timeSpent: 0, viewed: false });
         }
         const sessionPage = sessionPageMap.get(key);
+        if (action === "page_view" || action === "page_time" || timeSpent > 0) {
+          sessionPage.viewed = true;
+        }
         if (timeSpent > 0) sessionPage.timeSpent += timeSpent;
-        if (action === "page_time" || timeSpent > 0) sessionPage.counted = true;
         
         if (!pageSessionDetails.has(pageNum)) {
           pageSessionDetails.set(pageNum, []);
@@ -252,7 +259,7 @@ export default function ProposalAnalyticsTab() {
       
       const pageMap = new Map();
       sessionPageMap.forEach(sessionPage => {
-        if (sessionPage.counted && sessionPage.timeSpent > 0) {
+        if (sessionPage.viewed) {
           const pageNum = sessionPage.pageNum;
           if (!pageMap.has(pageNum)) {
             pageMap.set(pageNum, { 

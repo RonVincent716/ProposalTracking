@@ -27,6 +27,7 @@ import {
   MdInfo
 } from "react-icons/md";
 import emailjs from '@emailjs/browser';
+import { ActivityLogger } from '../utils/activityLogger';
 
 // EmailJS Configuration 
 const EMAILJS_CONFIG = {
@@ -200,6 +201,9 @@ export default function ProposalUploader() {
             uploadedAt: serverTimestamp(),
             size: file.size
           });
+
+          // Log upload activity
+          await ActivityLogger.logUpload(file.name, file.size, file.type);
         } catch (err) {
           console.error("Error saving to Firestore:", err);
         }
@@ -288,6 +292,9 @@ export default function ProposalUploader() {
         status: "pending",
         viewCount: 0
       });
+
+      // Log share activity
+      await ActivityLogger.logShare(uploadedFileInfo?.path, uploadedFileInfo?.name, [recipientEmail]);
 
       // Send email via EmailJS
       const templateParams = {

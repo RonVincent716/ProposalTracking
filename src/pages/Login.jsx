@@ -1,15 +1,17 @@
 // src/pages/Login.jsx
 import { useState, useEffect } from "react";
-import { auth } from "../firebase";
+import { auth, db } from "../firebase";
 import {
   signInWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithPopup,
   onAuthStateChanged,
 } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 import { useNavigate, Link } from "react-router-dom";
 import { FcGoogle } from "react-icons/fc";
 import { MdOutlineEmail, MdLock, MdLogin, MdPersonAdd, MdDashboard } from "react-icons/md";
+import { ActivityLogger } from "../utils/activityLogger";
 
 
 export default function Login() {       
@@ -20,21 +22,38 @@ export default function Login() {
 
   const navigate = useNavigate();
 
+  const redirectByRole = async (user) => {
+    try {
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      const role = userDoc.exists() ? (userDoc.data().role || "user") : "user";
+      if (role === "client") {
+        navigate("/client-dashboard");
+      } else {
+        navigate("/dashboard");
+      }
+    } catch (error) {
+      console.error("Role redirect error:", error);
+      navigate("/dashboard");
+    }
+  };
+
   // Redirect if already logged in
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (user) navigate("/dashboard");
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user) await redirectByRole(user);
     });
     return () => unsub();
-  }, [navigate]);
+  }, []);
 
   // Email/password login
   const handleLogin = async () => {
     setError("");
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      navigate("/dashboard");
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      // Log login activity
+      await ActivityLogger.logLogin(userCredential.user.email);
+      await redirectByRole(userCredential.user);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -47,10 +66,13 @@ export default function Login() {
     setError("");
     setLoading(true);
     const provider = new GoogleAuthProvider();
+    // Force account selection screen every time
+    provider.setCustomParameters({ prompt: 'select_account' });
     try {
       const result = await signInWithPopup(auth, provider);
-      // User info: result.user
-      navigate("/dashboard");
+      // Log login activity
+      await ActivityLogger.logLogin(result.user.email);
+      await redirectByRole(result.user);
     } catch (err) {
       console.error("Google Sign-In Error:", err);
       setError(err.message || "Google Sign-In failed");

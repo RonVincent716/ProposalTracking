@@ -10,7 +10,8 @@ import {
   getDocs, 
   deleteDoc, 
   doc, 
-  writeBatch 
+  writeBatch,
+  addDoc
 } from "firebase/firestore";
 import { 
   MdDescription, 
@@ -28,9 +29,12 @@ import {
   MdRefresh,
   MdInfo,
   MdCheckBox,
-  MdCheckBoxOutlineBlank
+  MdCheckBoxOutlineBlank,
+  MdMoreVert,
+  MdBlockFlipped
 } from "react-icons/md";
 import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
+import { usePermissions } from "../utils/permissions";
 
 export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadClick, onShareClick, onSignClick }) {
   const [files, setFiles] = useState([]);
@@ -40,6 +44,10 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
   const [proposalsPerPage] = useState(10);
   const [signedProposals, setSignedProposals] = useState([]);
   const [views, setViews] = useState([]);
+  const [rejectedProposals, setRejectedProposals] = useState([]);
+  
+  // Permission system
+  const { role } = usePermissions();
   
   // Selection states
   const [selectedProposals, setSelectedProposals] = useState([]);
@@ -52,14 +60,28 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
   const [deleteSuccess, setDeleteSuccess] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
   const [isBulkDelete, setIsBulkDelete] = useState(false);
+  
+  // Dropdown menu states
+  const [openDropdownId, setOpenDropdownId] = useState(null);
+  const canDeleteProposals = role === "admin" || role === "superadmin";
 
   useEffect(() => {
     if (user) {
       loadProposals();
       loadSignedProposals();
       loadViews();
+      loadRejectedProposals();
     }
   }, [user]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setOpenDropdownId(null);
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
 
   const loadProposals = async () => {
     setLoading(true);
@@ -67,7 +89,6 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
       const proposalsRef = ref(storage, 'proposals');
       const fileList = await listAll(proposalsRef);
       setFiles(fileList.items);
-      // Reset selections when loading new data
       setSelectedProposals([]);
       setSelectAll(false);
     } catch (error) {
@@ -108,22 +129,63 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     }
   };
 
+  const loadRejectedProposals = async () => {
+    try {
+      const rejectedQuery = query(collection(db, "rejectedProposals"));
+      const snapshot = await getDocs(rejectedQuery);
+      const rejectedData = [];
+      snapshot.forEach(doc => {
+        rejectedData.push(doc.data());
+      });
+      setRejectedProposals(rejectedData);
+    } catch (error) {
+      console.error("Error loading rejected proposals:", error);
+    }
+  };
+
   const getViewCount = (fileName) => {
     return views.filter(v => v.fileName === fileName).length;
   };
 
-  // Filter proposals based on search
+  const getProposalStatus = (fileName) => {
+    const isRejected = rejectedProposals.some(p => p.proposalName === fileName || p.fileName === fileName);
+    if (isRejected) return 'rejected';
+    
+    const isSigned = signedProposals.some(p => p.proposalName === fileName || p.proposalPath?.includes(fileName));
+    if (isSigned) return 'signed';
+    
+    const viewCount = getViewCount(fileName);
+    if (viewCount > 0) return 'viewed';
+    
+    return 'pending';
+  };
+
+  const markProposalAsRejected = async (file) => {
+    try {
+      await addDoc(collection(db, "rejectedProposals"), {
+        proposalName: file.name,
+        fileName: file.name,
+        filePath: `proposals/${file.name}`,
+        rejectedAt: new Date(),
+        rejectedBy: user?.email
+      });
+      await loadRejectedProposals();
+      alert(`${file.name} marked as rejected`);
+    } catch (error) {
+      console.error("Error marking proposal as rejected:", error);
+      alert("Failed to mark proposal as rejected");
+    }
+  };
+
   const filteredProposals = files.filter(file =>
     file.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // Pagination
   const indexOfLastProposal = currentPage * proposalsPerPage;
   const indexOfFirstProposal = indexOfLastProposal - proposalsPerPage;
   const currentProposals = filteredProposals.slice(indexOfFirstProposal, indexOfLastProposal);
   const totalPages = Math.ceil(filteredProposals.length / proposalsPerPage);
 
-  // Handle select individual proposal
   const handleSelectProposal = (fileName) => {
     if (selectedProposals.includes(fileName)) {
       setSelectedProposals(selectedProposals.filter(name => name !== fileName));
@@ -132,15 +194,12 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     }
   };
 
-  // Handle select all on current page
   const handleSelectAllOnPage = () => {
     if (selectAll) {
-      // Deselect all on current page
       const currentPageNames = currentProposals.map(p => p.name);
       setSelectedProposals(selectedProposals.filter(name => !currentPageNames.includes(name)));
       setSelectAll(false);
     } else {
-      // Select all on current page
       const currentPageNames = currentProposals.map(p => p.name);
       const newSelected = [...new Set([...selectedProposals, ...currentPageNames])];
       setSelectedProposals(newSelected);
@@ -148,30 +207,38 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     }
   };
 
-  // Handle select all proposals (all pages)
   const handleSelectAllProposals = () => {
     if (selectedProposals.length === filteredProposals.length) {
-      // Deselect all
       setSelectedProposals([]);
       setSelectAll(false);
     } else {
-      // Select all
       const allProposalNames = filteredProposals.map(p => p.name);
       setSelectedProposals(allProposalNames);
       setSelectAll(true);
     }
   };
 
-  // Delete single proposal
   const handleDeleteClick = (file) => {
+    // Check if user has delete permissions
+    if (!canDeleteProposals) {
+      alert("Only Admins and SuperAdmins can delete proposals");
+      return;
+    }
+    
     setProposalToDelete(file);
     setIsBulkDelete(false);
     setShowDeleteModal(true);
     setDeleteError(null);
+    setOpenDropdownId(null);
   };
 
-  // Delete multiple selected proposals
   const handleBulkDeleteClick = () => {
+    // Check if user has delete permissions
+    if (!canDeleteProposals) {
+      alert("Only Admins and SuperAdmins can delete proposals");
+      return;
+    }
+    
     if (selectedProposals.length === 0) {
       alert("Please select at least one proposal to delete");
       return;
@@ -181,33 +248,28 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     setDeleteError(null);
   };
 
-  // Delete single proposal
   const deleteSingleProposal = async (file) => {
     const fileName = file.name;
     const filePath = `proposals/${fileName}`;
     
     console.log("Deleting proposal:", fileName);
     
-    // 1. Delete from Firebase Storage
     const storageRef = ref(storage, filePath);
     await deleteObject(storageRef);
     console.log("✅ Deleted from storage:", filePath);
     
-    // 2. Delete from Firestore proposals collection
     const proposalsQuery = query(
       collection(db, "proposals"),
       where("filePath", "==", filePath)
     );
     const proposalsSnapshot = await getDocs(proposalsQuery);
     
-    // 3. Delete from sharedProposals
     const sharedQuery = query(
       collection(db, "sharedProposals"),
       where("filePath", "==", filePath)
     );
     const sharedSnapshot = await getDocs(sharedQuery);
     
-    // 4. Delete from proposalPageTracking
     const trackingQuery = query(
       collection(db, "proposalPageTracking"),
       where("proposalId", "==", filePath)
@@ -220,7 +282,6 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     );
     const trackingAltSnapshot = await getDocs(trackingAltQuery);
     
-    // 5. Delete from proposalViews
     const viewsQuery = query(
       collection(db, "proposalViews"),
       where("proposalId", "==", filePath)
@@ -233,14 +294,12 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     );
     const viewsAltSnapshot = await getDocs(viewsAltQuery);
     
-    // 6. Delete from proposalSessions
     const sessionsQuery = query(
       collection(db, "proposalSessions"),
       where("filePath", "==", filePath)
     );
     const sessionsSnapshot = await getDocs(sessionsQuery);
     
-    // Use batch delete
     const batch = writeBatch(db);
     
     proposalsSnapshot.forEach(doc => batch.delete(doc.ref));
@@ -255,7 +314,6 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     console.log("✅ Deleted all related Firestore records for:", fileName);
   };
 
-  // Delete multiple proposals
   const deleteMultipleProposals = async () => {
     const filesToDelete = files.filter(file => selectedProposals.includes(file.name));
     const results = { success: [], failed: [] };
@@ -273,14 +331,17 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     return results;
   };
 
-  // Confirm delete
   const confirmDelete = async () => {
+    if (!canDeleteProposals) {
+      setDeleteError("Only Admins and SuperAdmins can delete proposals");
+      return;
+    }
+
     setIsDeleting(true);
     setDeleteError(null);
     
     try {
       if (isBulkDelete) {
-        // Bulk delete
         const results = await deleteMultipleProposals();
         
         if (results.failed.length === 0) {
@@ -289,19 +350,15 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
           setDeleteSuccess(`Deleted ${results.success.length} proposal${results.success.length !== 1 ? 's' : ''}, failed to delete ${results.failed.length}`);
         }
         
-        // Clear selections
         setSelectedProposals([]);
         setSelectAll(false);
       } else {
-        // Single delete
         await deleteSingleProposal(proposalToDelete);
         setDeleteSuccess(`Successfully deleted "${proposalToDelete.name}"`);
       }
       
-      // Refresh the proposals list
       await loadProposals();
       
-      // Auto-hide success message and close modal
       setTimeout(() => {
         setDeleteSuccess(null);
         setShowDeleteModal(false);
@@ -326,7 +383,6 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
 
   const goToPage = (page) => {
     setCurrentPage(page);
-    // Reset page selection when changing page
     setSelectAll(false);
   };
 
@@ -344,6 +400,90 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     }
   };
 
+  const toggleDropdown = (e, fileId) => {
+    e.stopPropagation();
+    setOpenDropdownId(openDropdownId === fileId ? null : fileId);
+  };
+
+  const handleDropdownAction = (e, action, file) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    
+    switch(action) {
+      case 'share':
+        onShareClick?.(file);
+        break;
+      case 'sign':
+        onSignClick?.(file);
+        break;
+      case 'delete':
+        handleDeleteClick(file);
+        break;
+      default:
+        break;
+    }
+  };
+
+  // ========== CLEAN BUTTON STYLES ==========
+  
+  const primaryButtonStyle = (color) => ({
+    padding: "7px 14px",
+    background: `${color}0D`,
+    color: color,
+    border: `1px solid ${color}20`,
+    borderRadius: "20px",
+    cursor: "pointer",
+    fontSize: "12px",
+    fontWeight: "500",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+    fontFamily: "'Inter', system-ui, sans-serif",
+  });
+
+  const threeDotButtonStyle = {
+    width: "34px",
+    height: "34px",
+    padding: "0",
+    background: "#F8FAFC",
+    color: "#64748B",
+    border: "1px solid #E2E8F0",
+    borderRadius: "10px",
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "all 0.2s ease",
+  };
+
+  const dropdownMenuStyle = {
+    position: "absolute",
+    top: "40px",
+    right: "0",
+    background: "#fff",
+    borderRadius: "12px",
+    boxShadow: "0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.02)",
+    border: "1px solid #E2E8F0",
+    minWidth: "160px",
+    zIndex: 100,
+    overflow: "hidden",
+    animation: "dropdownFadeIn 0.2s ease",
+  };
+
+  const dropdownItemStyle = (color) => ({
+    padding: "10px 16px",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    cursor: "pointer",
+    fontSize: "13px",
+    fontWeight: "500",
+    color: color,
+    transition: "all 0.2s ease",
+    borderBottom: "1px solid #F1F5F9",
+  });
+
   if (loading) {
     return (
       <div style={loadingContainer}>
@@ -353,8 +493,8 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
           .proposals-spinner {
             width: 40px;
             height: 40px;
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #00D4FF;
+            border: 3px solid #e2e8f0;
+            border-top: 3px solid #00D4FF;
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 0 auto 15px;
@@ -362,6 +502,16 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
           @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
+          }
+          @keyframes dropdownFadeIn {
+            from {
+              opacity: 0;
+              transform: translateY(-10px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
           }
         `}</style>
       </div>
@@ -377,14 +527,14 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
           Uploaded Proposals
         </h2>
         <div style={headerButtonsStyle}>
-          {selectedProposals.length > 0 && (
+          {selectedProposals.length > 0 && canDeleteProposals && (
             <button onClick={handleBulkDeleteClick} style={bulkDeleteButtonStyle}>
-              <MdDelete size={18} />
-              Delete Selected ({selectedProposals.length})
+              <MdDelete size={16} />
+              Delete ({selectedProposals.length})
             </button>
           )}
           <button onClick={loadProposals} style={refreshButtonStyle} title="Refresh">
-            <MdRefresh size={18} />
+            <MdRefresh size={16} />
             Refresh
           </button>
         </div>
@@ -393,7 +543,7 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
       {/* Search Bar */}
       <div style={searchContainerStyle}>
         <div style={searchWrapperStyle}>
-          <MdSearch size={18} color="#999" />
+          <MdSearch size={18} color="#94A3B8" />
           <input
             type="text"
             placeholder="Search proposals by name..."
@@ -462,14 +612,14 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
               <th style={thStyle}>Status</th>
               <th style={thStyle}>Views</th>
               <th style={thStyle}>Actions</th>
-            </tr>
+             </tr>
           </thead>
           <tbody>
             {currentProposals.length === 0 ? (
               <tr>
                 <td colSpan="5" style={emptyCellStyle}>
                   <div style={emptyStateStyle}>
-                    <MdDescription size={48} color="#ccc" />
+                    <MdDescription size={48} color="#CBD5E1" />
                     <p>No proposals found</p>
                     <p style={emptyHintStyle}>Upload your first proposal using the Upload tab</p>
                   </div>
@@ -477,11 +627,11 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
               </tr>
             ) : (
               currentProposals.map((file, index) => {
-                const isSigned = signedProposals.some(p => 
-                  p.proposalName === file.name || p.proposalPath?.includes(file.name)
-                );
+                const status = getProposalStatus(file.name);
+                const isSigned = status === 'signed';
                 const viewCount = getViewCount(file.name);
                 const isSelected = selectedProposals.includes(file.name);
+                const fileId = file.name.replace(/[^a-zA-Z0-9]/g, '_');
                 
                 return (
                   <tr key={index} style={index % 2 === 0 ? rowEvenStyle : rowOddStyle}>
@@ -499,51 +649,132 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
                       </div>
                     </td>
                     <td style={tdStyle}>
-                      <ProposalStatusBadge status={isSigned ? "signed" : "pending"} size="small" />
+                      <ProposalStatusBadge status={status} size="small" />
                     </td>
                     <td style={tdStyle}>
                       <div style={viewCountStyle}>
-                        <MdVisibility size={14} color="#666" />
+                        <MdVisibility size={14} color="#94A3B8" />
                         <span>{viewCount}</span>
                       </div>
                     </td>
                     <td style={tdStyle}>
                       <div style={actionsStyle}>
+                        {/* PRIMARY BUTTONS - Always visible */}
                         <button
                           onClick={() => onViewClick?.(file)}
-                          style={actionButtonStyle("#2196F3")}
+                          style={primaryButtonStyle("#3B82F6")}
                           title="View Proposal"
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "#3B82F6";
+                            e.currentTarget.style.color = "#fff";
+                            e.currentTarget.style.borderColor = "#3B82F6";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "#3B82F60D";
+                            e.currentTarget.style.color = "#3B82F6";
+                            e.currentTarget.style.borderColor = "#3B82F620";
+                          }}
                         >
                           <MdVisibility size={14} /> View
                         </button>
+                        
                         <button
                           onClick={() => onDownloadClick?.(file)}
-                          style={actionButtonStyle("#4CAF50")}
+                          style={primaryButtonStyle("#10B981")}
                           title="Download"
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "#10B981";
+                            e.currentTarget.style.color = "#fff";
+                            e.currentTarget.style.borderColor = "#10B981";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "#10B9810D";
+                            e.currentTarget.style.color = "#10B981";
+                            e.currentTarget.style.borderColor = "#10B98120";
+                          }}
                         >
                           <MdFileUpload size={14} /> Download
                         </button>
-                        <button
-                          onClick={() => onShareClick?.(file)}
-                          style={actionButtonStyle("#FF9800")}
-                          title="Share with Client"
-                        >
-                          <MdEmail size={14} /> Share
-                        </button>
-                        <button
-                          onClick={() => onSignClick?.(file)}
-                          style={actionButtonStyle("#10B981")}
-                          title="Sign Proposal"
-                        >
-                          <MdEdit size={14} /> Sign
-                        </button>
-                        <button
-                          onClick={() => handleDeleteClick(file)}
-                          style={actionButtonStyle("#DC2626")}
-                          title="Delete Proposal"
-                        >
-                          <MdDelete size={14} /> Delete
-                        </button>
+
+                        {/* 3-DOT DROPDOWN MENU */}
+                        <div style={{ position: "relative" }}>
+                          <button
+                            onClick={(e) => toggleDropdown(e, fileId)}
+                            style={threeDotButtonStyle}
+                            title="More actions"
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = "#F1F5F9";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = "#F8FAFC";
+                            }}
+                          >
+                            <MdMoreVert size={18} />
+                          </button>
+                          
+                          {openDropdownId === fileId && (
+                            <div style={dropdownMenuStyle}>
+                              <div
+                                onClick={(e) => handleDropdownAction(e, 'share', file)}
+                                style={dropdownItemStyle("#F59E0B")}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = "#FFFBEB";
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = "#fff";
+                                }}
+                              >
+                                <MdEmail size={16} />
+                                Share with Client
+                              </div>
+                              <div
+                                onClick={(e) => handleDropdownAction(e, 'sign', file)}
+                                style={dropdownItemStyle("#8B5CF6")}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = "#F5F3FF";
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = "#fff";
+                                }}
+                              >
+                                <MdEdit size={16} />
+                                Sign Proposal
+                              </div>
+                              <div
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenDropdownId(null);
+                                  markProposalAsRejected(file);
+                                }}
+                                style={dropdownItemStyle("#EF4444")}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = "#FEF2F2";
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = "#fff";
+                                }}
+                              >
+                                <MdBlockFlipped size={16} />
+                                Reject Proposal
+                              </div>
+                              {canDeleteProposals && (
+                                <div
+                                  onClick={(e) => handleDropdownAction(e, 'delete', file)}
+                                  style={{ ...dropdownItemStyle("#DC2626"), borderBottom: "none" }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = "#FEF2F2";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = "#fff";
+                                  }}
+                                >
+                                  <MdDelete size={16} />
+                                  Delete Proposal
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -687,15 +918,28 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
+        @keyframes dropdownFadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(-10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
       `}</style>
     </div>
   );
 }
 
-// Styles
+// ========== STYLES ==========
+
 const containerStyle = {
-  padding: "20px",
-  fontFamily: "'Inter', system-ui, sans-serif",
+  padding: "24px",
+  fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+  background: "#f8fafc",
+  borderRadius: "20px",
 };
 
 const loadingContainer = {
@@ -711,50 +955,55 @@ const headerStyle = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "center",
-  marginBottom: "20px",
+  marginBottom: "24px",
   flexWrap: "wrap",
-  gap: "10px",
+  gap: "12px",
 };
 
 const headerButtonsStyle = {
   display: "flex",
-  gap: "10px",
+  gap: "12px",
   alignItems: "center",
 };
 
 const titleStyle = {
   display: "flex",
   alignItems: "center",
-  gap: "10px",
-  fontSize: "20px",
+  gap: "12px",
+  fontSize: "22px",
   fontWeight: "600",
   margin: 0,
+  color: "#1E293B",
 };
 
 const refreshButtonStyle = {
   padding: "8px 16px",
   background: "#fff",
-  border: "1px solid #ddd",
-  borderRadius: "8px",
+  border: "1px solid #E2E8F0",
+  borderRadius: "10px",
   cursor: "pointer",
   display: "flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "8px",
   fontSize: "13px",
+  fontWeight: "500",
+  color: "#475569",
+  transition: "all 0.2s ease",
 };
 
 const bulkDeleteButtonStyle = {
   padding: "8px 16px",
-  background: "#DC2626",
-  color: "#fff",
-  border: "none",
-  borderRadius: "8px",
+  background: "#FEF2F2",
+  color: "#DC2626",
+  border: "1px solid #FEE2E2",
+  borderRadius: "10px",
   cursor: "pointer",
   display: "flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "8px",
   fontSize: "13px",
   fontWeight: "500",
+  transition: "all 0.2s ease",
 };
 
 const searchContainerStyle = {
@@ -763,19 +1012,20 @@ const searchContainerStyle = {
   justifyContent: "space-between",
   marginBottom: "20px",
   flexWrap: "wrap",
-  gap: "15px",
+  gap: "16px",
 };
 
 const searchWrapperStyle = {
   display: "flex",
   alignItems: "center",
   flex: 1,
-  maxWidth: "400px",
+  maxWidth: "380px",
   background: "#fff",
-  border: "1px solid #e0e0e0",
-  borderRadius: "8px",
-  padding: "8px 12px",
-  gap: "8px",
+  border: "1px solid #E2E8F0",
+  borderRadius: "12px",
+  padding: "8px 14px",
+  gap: "10px",
+  transition: "all 0.2s ease",
 };
 
 const searchInputStyle = {
@@ -784,62 +1034,66 @@ const searchInputStyle = {
   outline: "none",
   fontSize: "14px",
   background: "transparent",
+  color: "#1E293B",
 };
 
 const clearSearchStyle = {
   background: "none",
   border: "none",
   cursor: "pointer",
-  color: "#999",
+  color: "#94A3B8",
   fontSize: "14px",
 };
 
 const resultCountStyle = {
   fontSize: "13px",
-  color: "#666",
+  color: "#64748B",
+  fontWeight: "500",
 };
 
 const selectAllContainerStyle = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "center",
-  marginBottom: "15px",
-  padding: "8px 12px",
-  background: "#f8f9fa",
-  borderRadius: "8px",
-  border: "1px solid #e0e0e0",
+  marginBottom: "16px",
+  padding: "10px 16px",
+  background: "#fff",
+  borderRadius: "12px",
+  border: "1px solid #E2E8F0",
 };
 
 const selectAllLeftStyle = {
   display: "flex",
-  gap: "15px",
+  gap: "16px",
 };
 
 const selectButtonStyle = {
   display: "flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "8px",
   background: "none",
   border: "none",
   cursor: "pointer",
   fontSize: "13px",
-  color: "#666",
-  padding: "4px 8px",
-  borderRadius: "4px",
-  transition: "all 0.2s",
+  fontWeight: "500",
+  color: "#475569",
+  padding: "6px 12px",
+  borderRadius: "8px",
+  transition: "all 0.2s ease",
 };
 
 const selectedCountStyle = {
   fontSize: "13px",
   color: "#DC2626",
-  fontWeight: "500",
+  fontWeight: "600",
 };
 
 const tableContainerStyle = {
   overflowX: "auto",
-  borderRadius: "12px",
-  border: "1px solid #e0e0e0",
+  borderRadius: "16px",
+  border: "1px solid #E2E8F0",
   background: "#fff",
+  boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
 };
 
 const tableStyle = {
@@ -849,31 +1103,32 @@ const tableStyle = {
 };
 
 const headerRowStyle = {
-  background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
+  background: "linear-gradient(135deg, #1E293B 0%, #0F172A 100%)",
   color: "#fff",
 };
 
 const thStyle = {
-  padding: "14px 12px",
+  padding: "14px 16px",
   textAlign: "left",
   fontWeight: "600",
+  fontSize: "13px",
 };
 
 const checkboxThStyle = {
-  padding: "14px 12px",
+  padding: "14px 16px",
   textAlign: "center",
-  width: "40px",
+  width: "44px",
 };
 
 const checkboxTdStyle = {
-  padding: "12px",
+  padding: "14px 16px",
   textAlign: "center",
-  width: "40px",
+  width: "44px",
 };
 
 const tdStyle = {
-  padding: "12px",
-  borderBottom: "1px solid #e0e0e0",
+  padding: "14px 16px",
+  borderBottom: "1px solid #F1F5F9",
 };
 
 const rowEvenStyle = {
@@ -881,45 +1136,35 @@ const rowEvenStyle = {
 };
 
 const rowOddStyle = {
-  background: "#f9f9f9",
+  background: "#F8FAFC",
 };
 
 const fileNameStyle = {
   display: "flex",
   alignItems: "center",
-  gap: "10px",
+  gap: "12px",
 };
 
 const fileNameTextStyle = {
   wordBreak: "break-all",
   fontSize: "13px",
+  fontWeight: "500",
+  color: "#1E293B",
 };
 
 const viewCountStyle = {
   display: "flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "8px",
+  color: "#64748B",
 };
 
 const actionsStyle = {
   display: "flex",
-  gap: "6px",
+  gap: "8px",
   flexWrap: "wrap",
-};
-
-const actionButtonStyle = (color) => ({
-  padding: "6px 12px",
-  background: color,
-  color: "#fff",
-  border: "none",
-  borderRadius: "6px",
-  cursor: "pointer",
-  fontSize: "11px",
-  display: "inline-flex",
   alignItems: "center",
-  gap: "4px",
-  transition: "all 0.2s",
-});
+};
 
 const emptyCellStyle = {
   padding: "60px",
@@ -930,8 +1175,8 @@ const emptyStateStyle = {
   display: "flex",
   flexDirection: "column",
   alignItems: "center",
-  gap: "10px",
-  color: "#999",
+  gap: "12px",
+  color: "#94A3B8",
 };
 
 const emptyHintStyle = {
@@ -944,51 +1189,56 @@ const paginationStyle = {
   justifyContent: "center",
   alignItems: "center",
   gap: "12px",
-  marginTop: "20px",
+  marginTop: "24px",
   flexWrap: "wrap",
 };
 
 const paginationButtonStyle = (disabled) => ({
   padding: "8px 16px",
-  borderRadius: "6px",
-  border: "1px solid #ddd",
-  background: disabled ? "#f5f5f5" : "#fff",
-  color: disabled ? "#ccc" : "#1976D2",
+  borderRadius: "10px",
+  border: "1px solid #E2E8F0",
+  background: disabled ? "#F1F5F9" : "#fff",
+  color: disabled ? "#CBD5E1" : "#3B82F6",
   cursor: disabled ? "not-allowed" : "pointer",
   fontSize: "13px",
+  fontWeight: "500",
+  transition: "all 0.2s ease",
 });
 
 const pageNumbersStyle = {
   display: "flex",
-  gap: "5px",
+  gap: "6px",
 };
 
 const pageNumberStyle = (active) => ({
-  width: "36px",
-  height: "36px",
-  borderRadius: "6px",
+  width: "38px",
+  height: "38px",
+  borderRadius: "10px",
   border: "none",
-  background: active ? "linear-gradient(135deg, #1976D2 0%, #2196F3 100%)" : "#fff",
-  color: active ? "#fff" : "#666",
+  background: active ? "linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)" : "#fff",
+  color: active ? "#fff" : "#475569",
   cursor: "pointer",
   fontSize: "13px",
+  fontWeight: "500",
+  transition: "all 0.2s ease",
+  boxShadow: active ? "0 2px 8px rgba(59, 130, 246, 0.3)" : "none",
 });
 
 const toastSuccessStyle = {
   position: "fixed",
-  bottom: "20px",
-  right: "20px",
+  bottom: "24px",
+  right: "24px",
   background: "#fff",
-  color: "#333",
+  color: "#1E293B",
   padding: "12px 20px",
-  borderRadius: "8px",
+  borderRadius: "12px",
   display: "flex",
   alignItems: "center",
-  gap: "10px",
-  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+  gap: "12px",
+  boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
   zIndex: 2001,
   animation: "fadeIn 0.3s ease",
-  border: "1px solid #10B981",
+  border: "1px solid #D1FAE5",
 };
 
 // Modal styles
@@ -1008,7 +1258,7 @@ const modalOverlay = {
 
 const deleteModalStyle = {
   background: "#fff",
-  borderRadius: "16px",
+  borderRadius: "20px",
   width: "90%",
   maxWidth: "500px",
   maxHeight: "80vh",
@@ -1021,7 +1271,7 @@ const deleteModalHeaderStyle = {
   display: "flex",
   alignItems: "center",
   gap: "12px",
-  padding: "20px",
+  padding: "20px 24px",
   background: "#FEF2F2",
   borderBottom: "1px solid #FEE2E2",
   position: "sticky",
@@ -1033,6 +1283,7 @@ const deleteModalTitleStyle = {
   margin: 0,
   flex: 1,
   fontSize: "18px",
+  fontWeight: "600",
   color: "#DC2626",
 };
 
@@ -1040,35 +1291,35 @@ const deleteModalCloseStyle = {
   background: "none",
   border: "none",
   cursor: "pointer",
-  color: "#999",
+  color: "#94A3B8",
   padding: "4px",
 };
 
 const deleteModalBodyStyle = {
-  padding: "20px",
+  padding: "24px",
 };
 
 const deleteProposalNameStyle = {
-  background: "#f5f5f5",
+  background: "#F8FAFC",
   padding: "12px",
-  borderRadius: "8px",
+  borderRadius: "12px",
   margin: "12px 0",
   wordBreak: "break-all",
   fontSize: "14px",
 };
 
 const deleteProposalListStyle = {
-  background: "#f5f5f5",
+  background: "#F8FAFC",
   padding: "12px",
-  borderRadius: "8px",
+  borderRadius: "12px",
   margin: "12px 0",
   maxHeight: "200px",
   overflowY: "auto",
 };
 
 const deleteProposalItemStyle = {
-  padding: "6px 8px",
-  borderBottom: "1px solid #e0e0e0",
+  padding: "8px 12px",
+  borderBottom: "1px solid #E2E8F0",
   fontSize: "12px",
   wordBreak: "break-all",
 };
@@ -1077,7 +1328,7 @@ const deleteMoreStyle = {
   padding: "8px",
   textAlign: "center",
   fontSize: "12px",
-  color: "#666",
+  color: "#64748B",
   fontStyle: "italic",
 };
 
@@ -1085,24 +1336,24 @@ const deleteWarningStyle = {
   display: "flex",
   alignItems: "center",
   gap: "8px",
-  marginTop: "15px",
-  marginBottom: "10px",
+  marginTop: "16px",
+  marginBottom: "12px",
   fontSize: "13px",
   color: "#F59E0B",
 };
 
 const deleteListStyle = {
-  margin: "10px 0 0 20px",
+  margin: "12px 0 0 20px",
   fontSize: "12px",
-  color: "#666",
-  lineHeight: "1.6",
+  color: "#64748B",
+  lineHeight: "1.7",
 };
 
 const deleteErrorStyle = {
-  marginTop: "15px",
-  padding: "10px",
+  marginTop: "16px",
+  padding: "12px",
   background: "#FEF2F2",
-  borderRadius: "8px",
+  borderRadius: "10px",
   color: "#DC2626",
   fontSize: "12px",
   display: "flex",
@@ -1113,8 +1364,8 @@ const deleteErrorStyle = {
 const deleteModalFooterStyle = {
   display: "flex",
   gap: "12px",
-  padding: "20px",
-  borderTop: "1px solid #e0e0e0",
+  padding: "20px 24px",
+  borderTop: "1px solid #E2E8F0",
   justifyContent: "flex-end",
   position: "sticky",
   bottom: 0,
@@ -1123,14 +1374,17 @@ const deleteModalFooterStyle = {
 
 const cancelButtonStyle = {
   padding: "10px 20px",
-  background: "#f5f5f5",
-  border: "1px solid #ddd",
-  borderRadius: "8px",
+  background: "#fff",
+  border: "1px solid #E2E8F0",
+  borderRadius: "10px",
   cursor: "pointer",
   display: "flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "8px",
   fontSize: "14px",
+  fontWeight: "500",
+  color: "#475569",
+  transition: "all 0.2s ease",
 };
 
 const confirmButtonStyle = {
@@ -1138,10 +1392,12 @@ const confirmButtonStyle = {
   background: "#DC2626",
   color: "#fff",
   border: "none",
-  borderRadius: "8px",
+  borderRadius: "10px",
   cursor: "pointer",
   display: "flex",
   alignItems: "center",
-  gap: "6px",
+  gap: "8px",
   fontSize: "14px",
+  fontWeight: "500",
+  transition: "all 0.2s ease",
 };
