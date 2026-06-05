@@ -65,7 +65,10 @@ export const ActivityTypes = {
   SEND_MESSAGE: 'send_message',
   ACCESS_ADMIN: 'access_admin',
   PROFILE_UPDATE: 'profile_update',
-  EMAIL_SHARE: 'email_share'
+  EMAIL_SHARE: 'email_share',
+  ARCHIVE: 'archive',
+  RESTORE: 'restore',
+  FOLLOW_UP: 'follow_up'
 };
 
 /**
@@ -135,6 +138,41 @@ export const ActivityLogger = {
       documentId,
       documentName,
       deleteTime: new Date().toISOString()
+    });
+  },
+
+  /**
+   * Log document archive
+   */
+  logArchive: async (documentId, documentName) => {
+    await logActivityToFirestore(ActivityTypes.ARCHIVE, {
+      documentId,
+      documentName,
+      archiveTime: new Date().toISOString()
+    });
+  },
+
+  /**
+   * Log document restore
+   */
+  logRestore: async (documentId, documentName) => {
+    await logActivityToFirestore(ActivityTypes.RESTORE, {
+      documentId,
+      documentName,
+      restoreTime: new Date().toISOString()
+    });
+  },
+
+  /**
+   * Log proposal follow-up reminders
+   */
+  logFollowUp: async (documentId, documentName, recipientEmail, reason = null) => {
+    await logActivityToFirestore(ActivityTypes.FOLLOW_UP, {
+      documentId,
+      documentName,
+      recipientEmail,
+      reason,
+      followUpTime: new Date().toISOString()
     });
   },
 

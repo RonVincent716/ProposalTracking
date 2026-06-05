@@ -335,14 +335,14 @@ export default function ClientFeedbackTab({ currentUser }) {
               <span>No client feedback found for this filter.</span>
             </div>
           ) : (
-            filteredFeedback.map((entry) => {
+            filteredFeedback.map((entry, index) => {
               const badgeStyles = getStatusStyles(entry.adminStatus || "pending_review");
               const isSelected = entry.id === selectedFeedback?.id;
               const progress = ((entry.totalApproved || 0) / ((entry.totalApproved || 0) + (entry.totalDisputed || 0) || 1)) * 100;
 
               return (
                 <button
-                  key={entry.id}
+                  key={`feedback-entry-${entry.id || entry.filePath || index}-${index}`}
                   onClick={() => setSelectedFeedbackId(entry.id)}
                   style={{
                     ...styles.feedbackCard,

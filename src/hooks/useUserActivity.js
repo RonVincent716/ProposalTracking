@@ -108,19 +108,17 @@ export const useUserActivity = () => {
     }
   }, []);
 
-  // Get activity statistics
-  const getActivityStats = useCallback(async (timeRange = 'week') => {
+  // Get activity statistics for a selected date range
+  const getActivityStats = useCallback(async (startDate, endDate) => {
     try {
-      const now = new Date();
-      let startDate = new Date();
-
-      if (timeRange === 'day') startDate.setDate(now.getDate() - 1);
-      else if (timeRange === 'week') startDate.setDate(now.getDate() - 7);
-      else if (timeRange === 'month') startDate.setMonth(now.getMonth() - 1);
+      const start = startDate ? new Date(startDate) : new Date(Date.now() - (7 * 24 * 60 * 60 * 1000));
+      const end = endDate ? new Date(endDate) : new Date();
+      end.setHours(23, 59, 59, 999);
 
       const q = query(
         collection(db, 'userActivities'),
-        where('createdAt', '>=', startDate),
+        where('createdAt', '>=', start),
+        where('createdAt', '<=', end),
         orderBy('createdAt', 'desc')
       );
 

@@ -44,9 +44,17 @@ import {
   MdSearch,
   MdFilterList,
   MdForum,
-  MdNotifications
+  MdNotifications,
+  MdRateReview
 } from "react-icons/md";
 import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
+
+const toDateOrNull = (value) => {
+  if (!value) return null;
+  if (typeof value?.toDate === "function") return value.toDate();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
 
 export default function ClientDashboard() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -70,9 +78,15 @@ export default function ClientDashboard() {
     pending: 0
   });
   const [adminReplies, setAdminReplies] = useState([]);
+  const [followUpReminders, setFollowUpReminders] = useState([]);
+  const [feedbackRecords, setFeedbackRecords] = useState([]);
   const [unreadRepliesCount, setUnreadRepliesCount] = useState(0);
+  const [unreadReminderCount, setUnreadReminderCount] = useState(0);
   const [proposalsLoaded, setProposalsLoaded] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [selectedFeedbackId, setSelectedFeedbackId] = useState(null);
+  const [proposalVersionsMap, setProposalVersionsMap] = useState({});
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -94,14 +108,17 @@ export default function ClientDashboard() {
         await Promise.all([
           loadClientProposals(user),
           loadRecentlyViewed(user),
-          loadSignedProposalsData(user)
+          loadSignedProposalsData(user),
+          loadProposalVersions(user)
         ]);
         
-        // Set up real-time listener for admin replies
+        // Set up real-time listeners
         const repliesUnsubscribe = await loadAdminReplies(user);
+        const remindersUnsubscribe = loadFollowUpReminders(user);
         
         // Store unsubscribe function for cleanup
         user.repliesUnsubscribe = repliesUnsubscribe;
+        user.remindersUnsubscribe = remindersUnsubscribe;
       } catch (error) {
         console.error("Error checking user:", error);
         navigate("/client-login");
@@ -114,6 +131,9 @@ export default function ClientDashboard() {
       unsubscribe();
       if (currentUser?.repliesUnsubscribe) {
         currentUser.repliesUnsubscribe();
+      }
+      if (currentUser?.remindersUnsubscribe) {
+        currentUser.remindersUnsubscribe();
       }
     };
   }, [navigate]);
@@ -131,6 +151,37 @@ export default function ClientDashboard() {
     }
   }, [adminReplies, proposalsLoaded]);
 
+  useEffect(() => {
+    if (!proposalsLoaded) return;
+
+    setProposals((currentProposals) =>
+      currentProposals.map((proposal) => {
+        const latestVersion = proposalVersionsMap[proposal.filePath] || null;
+        const latestVersionNumber = latestVersion?.versionNumber || 1;
+        const lastSeenVersionNumber = getLastSeenVersionNumber(proposal.filePath);
+
+        return {
+          ...proposal,
+          latestVersionNumber,
+          latestVersionLabel: latestVersion?.versionLabel || `v${latestVersionNumber}`,
+          latestVersionNotes: latestVersion?.notes || "",
+          latestVersionUploadedAt: latestVersion?.uploadedAt || null,
+          hasNewVersion: latestVersionNumber > lastSeenVersionNumber
+        };
+      })
+    );
+  }, [proposalVersionsMap, proposalsLoaded]);
+
+  useEffect(() => {
+    if (!feedbackRecords.length) {
+      setSelectedFeedbackId(null);
+      return;
+    }
+    if (!feedbackRecords.some((entry) => entry.id === selectedFeedbackId)) {
+      setSelectedFeedbackId(feedbackRecords[0].id);
+    }
+  }, [feedbackRecords, selectedFeedbackId]);
+
   const refreshDashboard = async () => {
     if (!currentUser) return;
     setRefreshing(true);
@@ -138,7 +189,8 @@ export default function ClientDashboard() {
       await Promise.all([
         loadClientProposals(currentUser),
         loadRecentlyViewed(currentUser),
-        loadSignedProposalsData(currentUser)
+        loadSignedProposalsData(currentUser),
+        loadProposalVersions(currentUser)
       ]);
     } catch (error) {
       console.error("Error refreshing dashboard:", error);
@@ -179,23 +231,43 @@ export default function ClientDashboard() {
       
       const unsubscribe = onSnapshot(feedbackQuery, (snapshot) => {
         const replies = [];
+        const feedbackEntries = [];
         let unreadCount = 0;
         
         snapshot.forEach(doc => {
           const data = doc.data();
-          const hasAdminReplies = data.items?.some(item => item.adminReply && item.adminReply.trim());
+          const feedbackItems = Array.isArray(data.items) ? data.items : [];
+          const adminReplyItems = feedbackItems.filter(item => item.adminReply && item.adminReply.trim());
+          const hasAdminReplies = adminReplyItems.length > 0;
+          const lastClientView = toDateOrNull(data.clientLastViewedRepliesAt);
+          const lastAdminUpdate =
+            toDateOrNull(data.lastUpdated) ||
+            toDateOrNull(data.updatedAt) ||
+            toDateOrNull(data.createdAt) ||
+            new Date();
+          const isUnread = hasAdminReplies && (!lastClientView || lastAdminUpdate > lastClientView);
+
+          feedbackEntries.push({
+            id: doc.id,
+            proposalId: data.proposalId,
+            proposalName: data.proposalName || "Proposal Feedback",
+            filePath: data.filePath,
+            adminStatus: data.adminStatus || "pending_review",
+            overallComment: data.overallComment || "",
+            totalApproved: data.totalApproved || 0,
+            totalDisputed: data.totalDisputed || 0,
+            totalSections: data.totalSections || feedbackItems.length,
+            lastUpdated: lastAdminUpdate,
+            isUnread,
+            items: feedbackItems
+          });
           
           if (hasAdminReplies) {
-            // Check if client has seen these replies
-            const lastClientView = data.clientLastViewedRepliesAt;
-            const lastAdminUpdate = data.lastUpdated?.toDate?.() || new Date(data.lastUpdated);
-            
-            const isUnread = !lastClientView || 
-              (lastAdminUpdate && lastAdminUpdate > lastClientView.toDate?.());
-            
             if (isUnread) {
               unreadCount++;
             }
+
+            const latestReply = adminReplyItems[adminReplyItems.length - 1];
             
             replies.push({
               id: doc.id,
@@ -204,12 +276,16 @@ export default function ClientDashboard() {
               filePath: data.filePath,
               lastUpdated: lastAdminUpdate,
               isUnread,
-              totalReplies: data.items?.filter(item => item.adminReply && item.adminReply.trim()).length || 0
+              totalReplies: adminReplyItems.length,
+              replyMessage: latestReply?.adminReply || "The admin has responded to your feedback.",
+              repliedAt: toDateOrNull(latestReply?.adminRepliedAt) || lastAdminUpdate
             });
           }
         });
         
+        feedbackEntries.sort((a, b) => (b.lastUpdated?.getTime?.() || 0) - (a.lastUpdated?.getTime?.() || 0));
         setAdminReplies(replies);
+        setFeedbackRecords(feedbackEntries);
         setUnreadRepliesCount(unreadCount);
       });
       
@@ -217,6 +293,88 @@ export default function ClientDashboard() {
     } catch (error) {
       console.error("Error loading admin replies:", error);
       return null;
+    }
+  };
+
+  const loadFollowUpReminders = (user) => {
+    try {
+      const remindersQuery = query(
+        collection(db, "followUpReminders"),
+        where("clientEmail", "==", user.email)
+      );
+
+      return onSnapshot(remindersQuery, (snapshot) => {
+        const reminders = snapshot.docs
+          .map((reminderDoc) => {
+            const data = reminderDoc.data();
+            return {
+              id: reminderDoc.id,
+              ...data,
+              sentAt: toDateOrNull(data.sentAt) || new Date(),
+              clientReadAt: toDateOrNull(data.clientReadAt),
+              isUnread: !data.clientReadAt
+            };
+          })
+          .sort((a, b) => (b.sentAt?.getTime?.() || 0) - (a.sentAt?.getTime?.() || 0));
+
+        setFollowUpReminders(reminders);
+        setUnreadReminderCount(reminders.filter((reminder) => reminder.isUnread).length);
+      });
+    } catch (error) {
+      console.error("Error loading follow-up reminders:", error);
+      return null;
+    }
+  };
+
+  const loadProposalVersions = async () => {
+    try {
+      const versionSnapshot = await getDocs(collection(db, "proposalVersions"));
+      const versionsByProposal = {};
+
+      versionSnapshot.forEach((versionDoc) => {
+        const data = versionDoc.data() || {};
+        const proposalKey = data.proposalId || data.filePath;
+        if (!proposalKey) return;
+
+        const versionNumber = Number(data.versionNumber || 0);
+        const existing = versionsByProposal[proposalKey];
+        if (!existing || versionNumber > existing.versionNumber) {
+          versionsByProposal[proposalKey] = {
+            id: versionDoc.id,
+            versionNumber,
+            versionLabel: data.versionLabel || `v${versionNumber || 1}`,
+            notes: data.notes || "",
+            uploadedAt: data.uploadedAt?.toDate?.() || data.createdAt?.toDate?.() || null,
+            downloadUrl: data.downloadUrl || null,
+            filePath: data.filePath || proposalKey,
+            fileName: data.fileName || data.proposalName || "Proposal"
+          };
+        }
+      });
+
+      setProposalVersionsMap(versionsByProposal);
+    } catch (error) {
+      console.error("Error loading proposal versions:", error);
+    }
+  };
+
+  const getClientVersionKey = (filePath) => `client-last-seen-version:${currentUser?.uid || "guest"}:${filePath}`;
+
+  const getLastSeenVersionNumber = (filePath) => {
+    try {
+      const raw = localStorage.getItem(getClientVersionKey(filePath));
+      const parsed = raw ? Number(raw) : 0;
+      return Number.isFinite(parsed) ? parsed : 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  const markProposalVersionSeen = (filePath, versionNumber) => {
+    try {
+      localStorage.setItem(getClientVersionKey(filePath), String(versionNumber || 0));
+    } catch {
+      // no-op
     }
   };
 
@@ -228,6 +386,37 @@ export default function ClientDashboard() {
     } catch (error) {
       console.error("Error marking replies as read:", error);
     }
+  };
+
+  const markReminderAsRead = async (reminderId) => {
+    try {
+      await updateDoc(doc(db, "followUpReminders", reminderId), {
+        clientReadAt: new Date()
+      });
+    } catch (error) {
+      console.error("Error marking reminder as read:", error);
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    await Promise.all([
+      ...adminReplies
+        .filter((reply) => reply.isUnread)
+        .map((reply) => markRepliesAsRead(reply.id)),
+      ...followUpReminders
+        .filter((reminder) => reminder.isUnread)
+        .map((reminder) => markReminderAsRead(reminder.id))
+    ]);
+  };
+
+  const openFeedbackModal = async () => {
+    setShowFeedbackModal(true);
+    if (!adminReplies.length) return;
+    await Promise.all(
+      adminReplies
+        .filter((reply) => reply.isUnread)
+        .map((reply) => markRepliesAsRead(reply.id))
+    );
   };
 
   const loadClientProposals = async (user) => {
@@ -287,6 +476,11 @@ export default function ClientDashboard() {
           senderDisplay = data.sharedByName;
         }
 
+        const latestVersion = proposalVersionsMap[data.filePath] || null;
+        const latestVersionNumber = latestVersion?.versionNumber || 1;
+        const lastSeenVersionNumber = getLastSeenVersionNumber(data.filePath);
+        const hasNewVersion = latestVersionNumber > lastSeenVersionNumber;
+
         proposalsData.push({
           id: documentSnapshot.id,
           fileName: data.fileName,
@@ -301,6 +495,11 @@ export default function ClientDashboard() {
           signedAt: data.signedAt,
           expiresAt: data.expiresAt?.toDate?.() || null,
           viewCount: data.viewCount || 0,
+          latestVersionNumber,
+          latestVersionLabel: latestVersion?.versionLabel || `v${latestVersionNumber}`,
+          latestVersionNotes: latestVersion?.notes || "",
+          latestVersionUploadedAt: latestVersion?.uploadedAt || null,
+          hasNewVersion,
           hasAdminReplies: adminReplies.some(reply => reply.filePath === data.filePath && reply.totalReplies > 0),
           unreadAdminReplies: adminReplies.some(reply => reply.filePath === data.filePath && reply.isUnread)
         });
@@ -370,6 +569,9 @@ export default function ClientDashboard() {
 
   const handleViewProposal = (proposal) => {
     const encodedPath = btoa(proposal.filePath);
+    if (proposal.latestVersionNumber) {
+      markProposalVersionSeen(proposal.filePath, proposal.latestVersionNumber);
+    }
     
     // Check if this proposal has admin replies and mark them as read
     const feedbackWithReplies = adminReplies.find(reply => reply.filePath === proposal.filePath);
@@ -441,6 +643,24 @@ export default function ClientDashboard() {
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     return diffDays;
   };
+
+  const selectedFeedback =
+    feedbackRecords.find((entry) => entry.id === selectedFeedbackId) || null;
+
+  const formatFeedbackDateTime = (value) => {
+    const date = toDateOrNull(value);
+    return date ? date.toLocaleString() : "N/A";
+  };
+
+  const formatAdminStatus = (status) => {
+    if (!status) return "Pending Review";
+    return status
+      .split("_")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  };
+
+  const unreadNotificationCount = unreadRepliesCount + unreadReminderCount;
 
   const sidebarItems = [
     { id: "dashboard", icon: <MdSpaceDashboard size={20} />, label: "Dashboard", action: () => setActiveTab("dashboard") },
@@ -824,7 +1044,7 @@ export default function ClientDashboard() {
                 }}
               >
                 <MdNotifications size={20} />
-                {unreadRepliesCount > 0 && (
+                {unreadNotificationCount > 0 && (
                   <span style={{
                     position: "absolute",
                     top: "-4px",
@@ -841,7 +1061,20 @@ export default function ClientDashboard() {
                     justifyContent: "center",
                     boxShadow: "0 2px 8px rgba(239, 68, 68, 0.4)",
                   }}>
-                    {unreadRepliesCount}
+                    {unreadNotificationCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={openFeedbackModal}
+                style={feedbackQuickButtonStyle}
+              >
+                <MdRateReview size={16} />
+                Feedback
+                {feedbackRecords.length > 0 && (
+                  <span style={feedbackQuickButtonCountStyle}>
+                    {feedbackRecords.length}
                   </span>
                 )}
               </button>
@@ -878,23 +1111,20 @@ export default function ClientDashboard() {
         </div>
 
         {/* Admin Replies Notification */}
-        {unreadRepliesCount > 0 && (
+        {unreadNotificationCount > 0 && (
           <div style={notificationBannerStyle}>
             <div style={notificationContentStyle}>
-              <MdForum size={20} color="#fff" />
+              <MdNotifications size={20} color="#fff" />
               <div style={notificationTextStyle}>
-                <strong>{unreadRepliesCount} proposal{unreadRepliesCount > 1 ? 's' : ''} with admin replies</strong>
-                <span>The admin has responded to your feedback. Check the proposals below for details.</span>
+                <strong>{unreadNotificationCount} admin notification{unreadNotificationCount > 1 ? 's' : ''}</strong>
+                <span>
+                  {unreadReminderCount > 0
+                    ? "You have proposal reminders from the admin."
+                    : "The admin has responded to your feedback."}
+                </span>
               </div>
               <button 
-                onClick={() => {
-                  // Mark all replies as read
-                  adminReplies.forEach(reply => {
-                    if (reply.isUnread) {
-                      markRepliesAsRead(reply.id);
-                    }
-                  });
-                }}
+                onClick={markAllNotificationsAsRead}
                 style={notificationDismissStyle}
               >
                 <MdCheckCircle size={16} />
@@ -914,6 +1144,142 @@ export default function ClientDashboard() {
         <div style={contentAreaStyle}>
           {renderContent()}
         </div>
+
+        {/* Feedback Modal */}
+        {showFeedbackModal && (
+          <div
+            style={feedbackModalOverlayStyle}
+            onClick={() => setShowFeedbackModal(false)}
+          >
+            <div
+              style={feedbackModalStyle}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={feedbackModalHeaderStyle}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "600", color: "#1e293b" }}>
+                    Feedback Section
+                  </h3>
+                  <p style={{ margin: "6px 0 0 0", color: "#64748b", fontSize: "13px" }}>
+                    View your submitted feedback and admin responses.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowFeedbackModal(false)}
+                  style={feedbackModalCloseButtonStyle}
+                >
+                  <MdClose size={20} />
+                </button>
+              </div>
+
+              <div style={feedbackModalBodyStyle}>
+                {!feedbackRecords.length ? (
+                  <div style={feedbackEmptyStateStyle}>
+                    <MdRateReview size={44} color="#cbd5e1" />
+                    <p style={{ margin: 0, color: "#64748b" }}>
+                      No feedback submitted yet.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div style={feedbackListStyle}>
+                      {feedbackRecords.map((record, recordIndex) => (
+                        <button
+                          key={`feedback-${record.id || record.filePath || recordIndex}-${recordIndex}`}
+                          onClick={() => setSelectedFeedbackId(record.id)}
+                          style={feedbackListItemStyle(selectedFeedbackId === record.id, record.isUnread)}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "flex-start" }}>
+                            <span style={{ fontWeight: "600", color: "#1e293b", textAlign: "left" }}>
+                              {record.proposalName}
+                            </span>
+                            <span style={feedbackStatusPillStyle(record.adminStatus)}>
+                              {formatAdminStatus(record.adminStatus)}
+                            </span>
+                          </div>
+                          <div style={{ marginTop: "8px", fontSize: "12px", color: "#64748b", textAlign: "left" }}>
+                            Updated {formatFeedbackDateTime(record.lastUpdated)}
+                          </div>
+                          <div style={{ marginTop: "8px", fontSize: "12px", color: "#64748b", textAlign: "left" }}>
+                            {record.totalApproved} approved • {record.totalDisputed} for discussion
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div style={feedbackDetailStyle}>
+                      {!selectedFeedback ? (
+                        <div style={feedbackEmptyStateStyle}>
+                          <p style={{ margin: 0, color: "#64748b" }}>
+                            Select feedback to view details.
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          <div style={feedbackDetailHeaderStyle}>
+                            <div>
+                              <h4 style={{ margin: 0, fontSize: "16px", color: "#1e293b" }}>
+                                {selectedFeedback.proposalName}
+                              </h4>
+                              <div style={{ marginTop: "6px", fontSize: "12px", color: "#64748b" }}>
+                                Last updated: {formatFeedbackDateTime(selectedFeedback.lastUpdated)}
+                              </div>
+                            </div>
+                            {selectedFeedback.filePath && (
+                              <button
+                                onClick={() => window.open(`/p/${btoa(selectedFeedback.filePath)}`, "_blank")}
+                                style={feedbackOpenProposalButtonStyle}
+                              >
+                                <MdOpenInNew size={14} />
+                                Open Proposal
+                              </button>
+                            )}
+                          </div>
+
+                          {selectedFeedback.overallComment && (
+                            <div style={feedbackSummaryCardStyle}>
+                              <div style={{ fontWeight: "600", color: "#334155", marginBottom: "6px" }}>
+                                Your Overall Comment
+                              </div>
+                              <div style={{ color: "#475569", fontSize: "13px", lineHeight: "1.5" }}>
+                                {selectedFeedback.overallComment}
+                              </div>
+                            </div>
+                          )}
+
+                          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                            {selectedFeedback.items.map((item, index) => (
+                              <div key={`feedback-item-${selectedFeedback.id || "selected"}-${item.id || item.title || "item"}-${index}`} style={feedbackItemCardStyle}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
+                                  <strong style={{ color: "#1e293b", fontSize: "13px" }}>
+                                    {item.title || `Section ${index + 1}`}
+                                  </strong>
+                                  <span style={feedbackItemStatusStyle(item.clientStatus)}>
+                                    {item.clientStatus === "approved" ? "Approved" : "Needs Discussion"}
+                                  </span>
+                                </div>
+                                {item.clientComment && (
+                                  <p style={{ margin: "8px 0 0 0", fontSize: "13px", color: "#475569", lineHeight: "1.45" }}>
+                                    <strong style={{ color: "#334155" }}>Your note:</strong> {item.clientComment}
+                                  </p>
+                                )}
+                                {item.adminReply && (
+                                  <p style={{ margin: "8px 0 0 0", fontSize: "13px", color: "#0f766e", lineHeight: "1.45" }}>
+                                    <strong style={{ color: "#0f766e" }}>Admin reply:</strong> {item.adminReply}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Notifications Modal */}
         {showNotificationsModal && (
@@ -941,14 +1307,56 @@ export default function ClientDashboard() {
 
               {/* Modal Body */}
               <div style={notificationsModalBodyStyle}>
-                {adminReplies && adminReplies.length > 0 ? (
+                {(adminReplies && adminReplies.length > 0) || followUpReminders.length > 0 ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                    {adminReplies.map((reply, idx) => (
-                      <div key={idx} style={notificationItemStyle(reply.isUnread)}>
+                    {followUpReminders.map((reminder, reminderIndex) => (
+                      <div key={`reminder-${reminder.id || reminderIndex}-${reminderIndex}`} style={notificationItemStyle(reminder.isUnread)}>
                         <div style={notificationItemHeaderStyle}>
-                          <h4 style={{ margin: 0, color: "#1e293b", fontSize: "14px", fontWeight: "600" }}>
-                            {reply.proposalName || "Proposal Update"}
-                          </h4>
+                          <div style={notificationTitleWrapStyle}>
+                            <h4 style={notificationTitleStyle}>
+                              Reminder: {reminder.proposalName || "Proposal"}
+                            </h4>
+                          </div>
+                          {reminder.isUnread && (
+                            <span style={{
+                              width: "8px",
+                              height: "8px",
+                              borderRadius: "50%",
+                              background: "#ef4444",
+                            }} />
+                          )}
+                        </div>
+                        <p style={{ margin: "6px 0", color: "#64748b", fontSize: "13px", lineHeight: "1.4" }}>
+                          The admin sent a reminder to review this proposal.
+                          {reminder.reason ? ` Reason: ${reminder.reason}.` : ""}
+                        </p>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", marginTop: "8px" }}>
+                          <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+                            {reminder.sentAt && new Date(reminder.sentAt).toLocaleString()}
+                          </div>
+                          {reminder.filePath && (
+                            <button
+                              onClick={() => {
+                                markReminderAsRead(reminder.id);
+                                window.open(`/p/${btoa(reminder.filePath)}`, "_blank");
+                              }}
+                              style={feedbackOpenProposalButtonStyle}
+                            >
+                              <MdOpenInNew size={14} />
+                              Open Proposal
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {adminReplies.map((reply, idx) => (
+                      <div key={`admin-reply-${reply.id || reply.filePath || idx}-${idx}`} style={notificationItemStyle(reply.isUnread)}>
+                        <div style={notificationItemHeaderStyle}>
+                          <div style={notificationTitleWrapStyle}>
+                            <h4 style={notificationTitleStyle}>
+                              {reply.proposalName || "Proposal Update"}
+                            </h4>
+                          </div>
                           {reply.isUnread && (
                             <span style={{
                               width: "8px",
@@ -959,10 +1367,12 @@ export default function ClientDashboard() {
                           )}
                         </div>
                         <p style={{ margin: "6px 0", color: "#64748b", fontSize: "13px", lineHeight: "1.4" }}>
-                          {reply.replyMessage || "The admin has responded to your feedback."}
-                        </p>
-                        <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "6px" }}>
-                          {reply.repliedAt && new Date(reply.repliedAt).toLocaleString()}
+                            {reply.replyMessage || "The admin has responded to your feedback."}
+                          </p>
+                        <div style={notificationFooterRowStyle}>
+                          <div style={notificationTimestampStyle}>
+                            {reply.repliedAt && new Date(reply.repliedAt).toLocaleString()}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -976,15 +1386,11 @@ export default function ClientDashboard() {
               </div>
 
               {/* Modal Footer */}
-              {unreadRepliesCount > 0 && adminReplies.length > 0 && (
+              {unreadNotificationCount > 0 && (adminReplies.length > 0 || followUpReminders.length > 0) && (
                 <div style={notificationsModalFooterStyle}>
                   <button
-                    onClick={() => {
-                      adminReplies.forEach(reply => {
-                        if (reply.isUnread) {
-                          markRepliesAsRead(reply.id);
-                        }
-                      });
+                    onClick={async () => {
+                      await markAllNotificationsAsRead();
                       setShowNotificationsModal(false);
                     }}
                     style={{
@@ -1177,6 +1583,12 @@ const ProposalsGrid = ({ proposals, handleViewProposal, handleSignProposal, hand
         <div key={proposal.id || index} style={proposalCardStyle}>
           <div style={cardBadgeStyle}>
             <ProposalStatusBadge status={proposal.status} size="small" />
+            {proposal.hasNewVersion && (
+              <div style={newVersionBadgeStyle}>
+                <MdSchedule size={12} />
+                New version {proposal.latestVersionLabel}
+              </div>
+            )}
             {proposal.hasAdminReplies && (
               <div style={adminReplyBadgeStyle(proposal.unreadAdminReplies)}>
                 <MdForum size={12} />
@@ -1301,6 +1713,12 @@ const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, hand
               <td style={listCellStyle}>
                 <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                   <ProposalStatusBadge status={proposal.status} size="small" />
+                  {proposal.hasNewVersion && (
+                    <div style={newVersionBadgeStyle}>
+                      <MdSchedule size={12} />
+                      New version {proposal.latestVersionLabel}
+                    </div>
+                  )}
                   {proposal.hasAdminReplies && (
                     <div style={adminReplyBadgeStyle(proposal.unreadAdminReplies)}>
                       <MdForum size={10} />
@@ -1888,6 +2306,20 @@ const adminReplyBadgeStyle = (isUnread) => ({
   border: `1px solid ${isUnread ? "#f59e0b" : "#10b981"}`,
 });
 
+const newVersionBadgeStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "4px",
+  padding: "4px 8px",
+  borderRadius: "12px",
+  fontSize: "11px",
+  fontWeight: "600",
+  marginTop: "8px",
+  background: "#eff6ff",
+  color: "#1d4ed8",
+  border: "1px solid #93c5fd",
+};
+
 const cardIconStyle = {
   marginBottom: "20px",
 };
@@ -2199,6 +2631,188 @@ const notificationDismissStyle = {
   transition: "all 0.2s",
 };
 
+const feedbackQuickButtonStyle = {
+  padding: "8px 14px",
+  background: "rgba(255,255,255,0.15)",
+  border: "1px solid rgba(255,255,255,0.3)",
+  borderRadius: "8px",
+  color: "#fff",
+  cursor: "pointer",
+  fontSize: "12px",
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  transition: "all 0.3s ease",
+  backdropFilter: "blur(5px)",
+};
+
+const feedbackQuickButtonCountStyle = {
+  minWidth: "18px",
+  height: "18px",
+  borderRadius: "9px",
+  background: "rgba(255,255,255,0.2)",
+  border: "1px solid rgba(255,255,255,0.25)",
+  fontSize: "11px",
+  fontWeight: "600",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "0 5px",
+};
+
+const feedbackModalOverlayStyle = {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  background: "rgba(0, 0, 0, 0.55)",
+  backdropFilter: "blur(5px)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 2100,
+  padding: "20px",
+};
+
+const feedbackModalStyle = {
+  background: "#fff",
+  borderRadius: "18px",
+  boxShadow: "0 24px 64px rgba(2, 6, 23, 0.25)",
+  width: "100%",
+  maxWidth: "980px",
+  maxHeight: "82vh",
+  overflow: "hidden",
+  display: "flex",
+  flexDirection: "column",
+  animation: "slideUp 0.25s ease",
+};
+
+const feedbackModalHeaderStyle = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: "14px",
+  padding: "20px 22px",
+  borderBottom: "1px solid #e2e8f0",
+};
+
+const feedbackModalCloseButtonStyle = {
+  background: "#f8fafc",
+  border: "1px solid #e2e8f0",
+  color: "#64748b",
+  borderRadius: "8px",
+  width: "34px",
+  height: "34px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  cursor: "pointer",
+};
+
+const feedbackModalBodyStyle = {
+  display: "grid",
+  gridTemplateColumns: "320px minmax(0, 1fr)",
+  gap: "0",
+  minHeight: 0,
+  height: "100%",
+  maxHeight: "calc(82vh - 85px)",
+};
+
+const feedbackListStyle = {
+  borderRight: "1px solid #e2e8f0",
+  background: "#f8fafc",
+  padding: "14px",
+  overflowY: "auto",
+  display: "flex",
+  flexDirection: "column",
+  gap: "10px",
+};
+
+const feedbackListItemStyle = (active, unread) => ({
+  width: "100%",
+  textAlign: "left",
+  borderRadius: "10px",
+  border: active ? "1px solid #6366f1" : `1px solid ${unread ? "#f59e0b" : "#e2e8f0"}`,
+  background: active ? "#eef2ff" : "#fff",
+  padding: "12px",
+  cursor: "pointer",
+});
+
+const feedbackDetailStyle = {
+  padding: "18px",
+  overflowY: "auto",
+  display: "flex",
+  flexDirection: "column",
+  gap: "12px",
+};
+
+const feedbackDetailHeaderStyle = {
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: "12px",
+};
+
+const feedbackStatusPillStyle = (status) => ({
+  fontSize: "11px",
+  fontWeight: "600",
+  borderRadius: "999px",
+  padding: "4px 8px",
+  background: status === "resolved" ? "#ecfdf5" : "#fef3c7",
+  color: status === "resolved" ? "#059669" : "#b45309",
+  border: `1px solid ${status === "resolved" ? "#10b981" : "#f59e0b"}`,
+  whiteSpace: "nowrap",
+});
+
+const feedbackOpenProposalButtonStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "6px",
+  border: "1px solid #cbd5e1",
+  background: "#fff",
+  borderRadius: "8px",
+  color: "#334155",
+  fontSize: "12px",
+  padding: "8px 10px",
+  cursor: "pointer",
+};
+
+const feedbackSummaryCardStyle = {
+  border: "1px solid #e2e8f0",
+  borderRadius: "10px",
+  background: "#f8fafc",
+  padding: "12px",
+};
+
+const feedbackItemCardStyle = {
+  border: "1px solid #e2e8f0",
+  borderRadius: "10px",
+  background: "#fff",
+  padding: "12px",
+};
+
+const feedbackItemStatusStyle = (status) => ({
+  fontSize: "11px",
+  fontWeight: "600",
+  borderRadius: "999px",
+  padding: "4px 8px",
+  background: status === "approved" ? "#ecfdf5" : "#fff7ed",
+  color: status === "approved" ? "#047857" : "#c2410c",
+  border: `1px solid ${status === "approved" ? "#10b981" : "#fb923c"}`,
+  whiteSpace: "nowrap",
+});
+
+const feedbackEmptyStateStyle = {
+  width: "100%",
+  minHeight: "220px",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "10px",
+};
+
 // Notifications Modal Styles
 const notificationsModalOverlayStyle = {
   position: "fixed",
@@ -2254,6 +2868,7 @@ const notificationItemStyle = (isUnread) => ({
   background: isUnread ? "rgba(102, 126, 234, 0.08)" : "#f8fafc",
   border: `1px solid ${isUnread ? "rgba(102, 126, 234, 0.2)" : "#e2e8f0"}`,
   transition: "all 0.2s",
+  overflow: "hidden",
 });
 
 const notificationItemHeaderStyle = {
@@ -2261,4 +2876,34 @@ const notificationItemHeaderStyle = {
   justifyContent: "space-between",
   alignItems: "center",
   gap: "12px",
+  minWidth: 0,
+};
+
+const notificationTitleWrapStyle = {
+  flex: 1,
+  minWidth: 0,
+};
+
+const notificationTitleStyle = {
+  margin: 0,
+  color: "#1e293b",
+  fontSize: "14px",
+  fontWeight: "600",
+  lineHeight: 1.35,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
+const notificationFooterRowStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: "10px",
+  flexWrap: "wrap",
+};
+
+const notificationTimestampStyle = {
+  fontSize: "11px",
+  color: "#94a3b8",
+  minWidth: 0,
 };

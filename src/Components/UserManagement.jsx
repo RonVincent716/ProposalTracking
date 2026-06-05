@@ -27,6 +27,9 @@ export default function UserManagement() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [actionUserId, setActionUserId] = useState(null);
   const [creatingUser, setCreatingUser] = useState(false);
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [showCreateSuccessModal, setShowCreateSuccessModal] = useState(false);
+  const [createdUserInfo, setCreatedUserInfo] = useState(null);
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserName, setNewUserName] = useState("");
@@ -197,8 +200,14 @@ export default function UserManagement() {
         ...prev
       ]);
 
+      setCreatedUserInfo({
+        email,
+        role: newUserRole,
+        status: newUserStatus
+      });
       resetAddUserForm();
-      alert(`User created successfully as ${newUserRole}.`);
+      setShowAddUserModal(false);
+      setShowCreateSuccessModal(true);
     } catch (error) {
       console.error("Error creating user:", error);
       alert(getFriendlyAuthError(error));
@@ -336,60 +345,174 @@ export default function UserManagement() {
 
   return (
     <div className="user-management">
-      <h1>User Management</h1>
-      <p className="management-subtitle">SuperAdmin feature: suspend or reactivate user accounts.</p>
+      <div className="management-header">
+        <div>
+          <h1>User Management</h1>
+          <p className="management-subtitle">SuperAdmin feature: suspend or reactivate user accounts.</p>
+        </div>
+        <button
+          type="button"
+          className="open-add-user-btn"
+          onClick={() => setShowAddUserModal(true)}
+        >
+          Add User
+        </button>
+      </div>
 
-      <form className="add-user-form" onSubmit={addUser}>
-        <h2>Add New User</h2>
-        <div className="add-user-grid">
-          <input
-            type="email"
-            placeholder="Email address"
-            value={newUserEmail}
-            onChange={(e) => setNewUserEmail(e.target.value)}
-            disabled={creatingUser}
-            required
-          />
-          <input
-            type="password"
-            placeholder="Temporary password (min 6 chars)"
-            value={newUserPassword}
-            onChange={(e) => setNewUserPassword(e.target.value)}
-            disabled={creatingUser}
-            minLength={6}
-            required
-          />
-          <input
-            type="text"
-            placeholder="Display name (optional)"
-            value={newUserName}
-            onChange={(e) => setNewUserName(e.target.value)}
-            disabled={creatingUser}
-          />
-          <select
-            value={newUserRole}
-            onChange={(e) => setNewUserRole(e.target.value)}
-            disabled={creatingUser}
-          >
-            <option value="user">User</option>
-            <option value="admin">Admin</option>
-            <option value="superadmin">SuperAdmin</option>
-          </select>
-          <select
-            value={newUserStatus}
-            onChange={(e) => setNewUserStatus(e.target.value)}
-            disabled={creatingUser}
-          >
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-          </select>
+      {showAddUserModal && (
+        <div
+          className="add-user-modal-overlay"
+          onClick={() => !creatingUser && setShowAddUserModal(false)}
+        >
+          <div className="add-user-modal" onClick={(e) => e.stopPropagation()}>
+            <form className="add-user-form" onSubmit={addUser}>
+              <div className="add-user-modal-header">
+                <div>
+                  <h2>Add New User</h2>
+                  <p>Create a new account and assign role and access status.</p>
+                </div>
+                <button
+                  type="button"
+                  className="close-modal-btn"
+                  onClick={() => setShowAddUserModal(false)}
+                  disabled={creatingUser}
+                  aria-label="Close add user modal"
+                >
+                  X
+                </button>
+              </div>
+
+              <div className="add-user-modal-body">
+                <div className="add-user-grid">
+                  <label className="field-group">
+                    <span>Email Address</span>
+                    <input
+                      type="email"
+                      placeholder="user@example.com"
+                      value={newUserEmail}
+                      onChange={(e) => setNewUserEmail(e.target.value)}
+                      disabled={creatingUser}
+                      required
+                      autoFocus
+                    />
+                  </label>
+
+                  <label className="field-group">
+                    <span>Temporary Password</span>
+                    <input
+                      type="password"
+                      placeholder="Minimum 6 characters"
+                      value={newUserPassword}
+                      onChange={(e) => setNewUserPassword(e.target.value)}
+                      disabled={creatingUser}
+                      minLength={6}
+                      required
+                    />
+                  </label>
+
+                  <label className="field-group">
+                    <span>Display Name</span>
+                    <input
+                      type="text"
+                      placeholder="Optional display name"
+                      value={newUserName}
+                      onChange={(e) => setNewUserName(e.target.value)}
+                      disabled={creatingUser}
+                    />
+                  </label>
+
+                  <label className="field-group">
+                    <span>Role</span>
+                    <select
+                      value={newUserRole}
+                      onChange={(e) => setNewUserRole(e.target.value)}
+                      disabled={creatingUser}
+                    >
+                      <option value="user">User</option>
+                      <option value="admin">Admin</option>
+                      <option value="superadmin">SuperAdmin</option>
+                    </select>
+                  </label>
+
+                  <label className="field-group">
+                    <span>Account Status</span>
+                    <select
+                      value={newUserStatus}
+                      onChange={(e) => setNewUserStatus(e.target.value)}
+                      disabled={creatingUser}
+                    >
+                      <option value="active">Active</option>
+                      <option value="suspended">Suspended</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <div className="add-user-actions">
+                <button
+                  type="button"
+                  className="cancel-user-btn"
+                  onClick={() => setShowAddUserModal(false)}
+                  disabled={creatingUser}
+                >
+                  Cancel
+                </button>
+                <button type="submit" disabled={creatingUser} className="create-user-btn">
+                  {creatingUser ? "Creating..." : "Create User"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-        <div className="add-user-actions">
-          <button type="submit" disabled={creatingUser} className="create-user-btn">
-            {creatingUser ? "Creating..." : "Create User"}
-          </button>
+      )}
+
+      {showCreateSuccessModal && (
+        <div
+          className="add-user-modal-overlay success-modal-overlay"
+          onClick={() => setShowCreateSuccessModal(false)}
+        >
+          <div className="success-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="success-modal-icon" aria-hidden="true">OK</div>
+            <h3>User Created Successfully</h3>
+            <p>The account has been created and is ready to use.</p>
+
+            <div className="success-user-details">
+              <div>
+                <span>Email</span>
+                <strong>{createdUserInfo?.email}</strong>
+              </div>
+              <div>
+                <span>Role</span>
+                <strong>{createdUserInfo?.role}</strong>
+              </div>
+              <div>
+                <span>Status</span>
+                <strong>{createdUserInfo?.status}</strong>
+              </div>
+            </div>
+
+            <div className="success-modal-actions">
+              <button
+                type="button"
+                className="cancel-user-btn"
+                onClick={() => setShowCreateSuccessModal(false)}
+              >
+                Done
+              </button>
+              <button
+                type="button"
+                className="create-user-btn"
+                onClick={() => {
+                  setShowCreateSuccessModal(false);
+                  setShowAddUserModal(true);
+                }}
+              >
+                Add Another User
+              </button>
+            </div>
+          </div>
         </div>
-      </form>
+      )}
 
       <div className="management-stats">
         <div className="stat-card">
@@ -488,3 +611,4 @@ export default function UserManagement() {
     </div>
   );
 }
+

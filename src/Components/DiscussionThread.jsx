@@ -16,6 +16,9 @@ const DiscussionThread = ({
   const [replyText, setReplyText] = useState('');
   const [isExpanded, setIsExpanded] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [showResolveModal, setShowResolveModal] = useState(false);
+  const [isResolving, setIsResolving] = useState(false);
+  const [resolveError, setResolveError] = useState('');
   const messagesEndRef = useRef(null);
 
   const viewerIsAdmin = userRole === 'admin' || userRole === 'superadmin';
@@ -54,13 +57,28 @@ const DiscussionThread = ({
   };
 
   const handleResolve = async () => {
-    if (window.confirm('Mark this discussion as resolved?')) {
-      try {
-        await onResolve(discussion.id);
-      } catch {
-        alert('Failed to resolve discussion');
-      }
+    setResolveError('');
+    setShowResolveModal(true);
+  };
+
+  const confirmResolve = async () => {
+    setIsResolving(true);
+    setResolveError('');
+
+    try {
+      await onResolve(discussion.id);
+      setShowResolveModal(false);
+    } catch {
+      setResolveError('Failed to resolve this discussion. Please try again.');
+    } finally {
+      setIsResolving(false);
     }
+  };
+
+  const closeResolveModal = () => {
+    if (isResolving) return;
+    setShowResolveModal(false);
+    setResolveError('');
   };
 
   const getInitials = (nameOrEmail) => {
@@ -215,6 +233,53 @@ const DiscussionThread = ({
             <div style={styles.clientInfoLabel}>Client</div>
             <div>{discussion.clientName || discussion.clientEmail?.split('@')[0] || 'Client'}</div>
             <div style={styles.clientEmail}>{discussion.clientEmail}</div>
+          </div>
+        </div>
+      )}
+
+      {showResolveModal && (
+        <div style={styles.resolveModalOverlay} onClick={closeResolveModal}>
+          <div style={styles.resolveModal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.resolveModalHeader}>
+              <div style={styles.resolveModalTitle}>Mark discussion as resolved?</div>
+              <div style={styles.resolveModalSubtitle}>
+                This will close the thread and show it as resolved for everyone.
+              </div>
+            </div>
+
+            <div style={styles.resolveModalBody}>
+              <div style={styles.resolveContextLabel}>Discussion snippet</div>
+              <div style={styles.resolveContextText}>
+                "{discussion.highlightedText?.substring(0, 140)}
+                {discussion.highlightedText?.length > 140 ? '...' : ''}"
+              </div>
+              {resolveError && <div style={styles.resolveError}>{resolveError}</div>}
+            </div>
+
+            <div style={styles.resolveModalActions}>
+              <button
+                type="button"
+                onClick={closeResolveModal}
+                disabled={isResolving}
+                style={{
+                  ...styles.resolveModalCancelButton,
+                  ...(isResolving ? styles.resolveModalButtonDisabled : {})
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmResolve}
+                disabled={isResolving}
+                style={{
+                  ...styles.resolveModalConfirmButton,
+                  ...(isResolving ? styles.resolveModalButtonDisabled : {})
+                }}
+              >
+                {isResolving ? 'Resolving...' : 'Yes, Mark Resolved'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -483,6 +548,101 @@ const styles = {
   clientEmail: {
     fontSize: '11px',
     color: '#64748B'
+  },
+  resolveModalOverlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(15, 23, 42, 0.56)',
+    backdropFilter: 'blur(3px)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '16px',
+    zIndex: 10000
+  },
+  resolveModal: {
+    width: 'min(100%, 500px)',
+    background: '#FFFFFF',
+    borderRadius: '16px',
+    border: '1px solid #E2E8F0',
+    boxShadow: '0 24px 48px rgba(15, 23, 42, 0.26)',
+    overflow: 'hidden'
+  },
+  resolveModalHeader: {
+    padding: '18px 20px 14px',
+    borderBottom: '1px solid #E2E8F0',
+    background: 'linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 100%)'
+  },
+  resolveModalTitle: {
+    fontSize: '17px',
+    fontWeight: 700,
+    color: '#0F172A'
+  },
+  resolveModalSubtitle: {
+    marginTop: '6px',
+    fontSize: '13px',
+    color: '#475569',
+    lineHeight: 1.45
+  },
+  resolveModalBody: {
+    padding: '14px 20px 6px'
+  },
+  resolveContextLabel: {
+    fontSize: '11px',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+    color: '#64748B',
+    marginBottom: '6px'
+  },
+  resolveContextText: {
+    padding: '10px 12px',
+    borderRadius: '10px',
+    border: '1px solid #E2E8F0',
+    background: '#F8FAFC',
+    color: '#1E293B',
+    fontSize: '13px',
+    lineHeight: 1.45
+  },
+  resolveError: {
+    marginTop: '10px',
+    fontSize: '12px',
+    color: '#B91C1C',
+    background: '#FEF2F2',
+    border: '1px solid #FECACA',
+    padding: '8px 10px',
+    borderRadius: '8px'
+  },
+  resolveModalActions: {
+    padding: '14px 20px 18px',
+    display: 'flex',
+    gap: '10px',
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap'
+  },
+  resolveModalCancelButton: {
+    border: '1px solid #CBD5E1',
+    background: '#FFFFFF',
+    color: '#334155',
+    borderRadius: '10px',
+    padding: '9px 14px',
+    fontSize: '13px',
+    fontWeight: 600,
+    cursor: 'pointer'
+  },
+  resolveModalConfirmButton: {
+    border: '1px solid #059669',
+    background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+    color: '#FFFFFF',
+    borderRadius: '10px',
+    padding: '9px 14px',
+    fontSize: '13px',
+    fontWeight: 700,
+    cursor: 'pointer'
+  },
+  resolveModalButtonDisabled: {
+    opacity: 0.65,
+    cursor: 'not-allowed'
   }
 };
 

@@ -1,5 +1,5 @@
 // src/components/Dashboard.jsx
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { db, storage, auth } from "../firebase";
 import { 
   MdLogout, 
@@ -32,10 +32,14 @@ import {
   MdChat,
   MdNotifications,
   MdNotificationsNone,
+  MdDoneAll,
   MdClear,
   MdVisibilityOff,
   MdGroup,
-  MdTrendingUp
+  MdTrendingUp,
+  MdSettings,
+  MdHelpOutline,
+  MdSwitchAccount
 } from "react-icons/md";
 import { collection, onSnapshot, orderBy, query, deleteDoc, doc, writeBatch, addDoc, serverTimestamp, getDoc, setDoc } from "firebase/firestore";
 import { ref, listAll, getDownloadURL } from "firebase/storage";
@@ -50,11 +54,13 @@ import SignedProposalsTab from "../Components/SignedProposalsTab";
 import ProposalAnalyticsTab from "../Components/ProposalAnalyticsTab";
 import ProposalsTabWithDelete from "../Components/ProposalsTabWithDelete";
 import RealTimeViewTracker from "../Components/RealTimeViewTracker";
-import ClientFeedbackTab from "../Components/ClientFeedbackTab";
+import MyTemplatesTab from "../Components/MyTemplatesTab";
+import FollowUpCenter from "../Components/FollowUpCenter";
 import AdminDiscussionDashboard from "../Components/AdminDiscussionDashboard";
 import UserProfile from "../Components/UserProfile";
 import UserManagement from "../Components/UserManagement";
 import UsersActivityTab from "../Components/UsersActivityTab";
+import PerUserStatsTab from "../Components/PerUserStatsTab";
 import { usePermissions } from "../utils/permissions";
 
 import {
@@ -88,13 +94,26 @@ export default function Dashboard() {
   const [notifications, setNotifications] = useState([]);
   const [readNotificationKeys, setReadNotificationKeys] = useState(new Set());
   const [readNotificationKeysLoaded, setReadNotificationKeysLoaded] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
   const notificationRef = useRef(null);
+  const profileMenuRef = useRef(null);
   const readNotificationKeysRef = useRef(new Set());
   const previousSignedRef = useRef(new Set());
   const previousViewsRef = useRef(new Set());
   
   // Discussion unread count
   const [unreadDiscussionCount, setUnreadDiscussionCount] = useState(0);
+  const [discussionStats, setDiscussionStats] = useState({
+    total: 0,
+    open: 0,
+    resolved: 0
+  });
+  const [orgUserStats, setOrgUserStats] = useState({
+    totalUsers: 0,
+    activeAdmins: 0,
+    pendingRequests: 0,
+    suspendedUsers: 0
+  });
   const [lastSeenByDiscussion, setLastSeenByDiscussion] = useState(() => {
     try {
       const raw = localStorage.getItem(`dashboard-discussion-seen:${user?.uid || ''}`);
@@ -177,6 +196,27 @@ export default function Dashboard() {
   const canAccessUsersTab = can("viewAllUsers");
   const canAccessDiscussions = can("viewAdminDiscussions");
   const canAccessUserActivity = can("viewUserActivity");
+
+  const timestampToMs = (value) => {
+    if (!value) return 0;
+    if (typeof value?.toDate === "function") return value.toDate().getTime();
+    if (value?.seconds) return value.seconds * 1000;
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === "number") return value;
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const getSessionSortTimestamp = (session) =>
+    timestampToMs(
+      session?.lastActiveAt ||
+      session?.lastActivity ||
+      session?.updatedAt ||
+      session?.endTime ||
+      session?.startedAt ||
+      session?.startTime ||
+      session?.createdAt
+    );
   
   /* AUTH CHECK */
   useEffect(()=>{
@@ -192,6 +232,7 @@ export default function Dashboard() {
 
     if (
       isRestrictedUser &&
+      activeTab !== "home" &&
       activeTab !== "upload" &&
       activeTab !== "views" &&
       activeTab !== "profile"
@@ -358,6 +399,88 @@ export default function Dashboard() {
     };
   }, [user, canAccessDiscussions, lastSeenByDiscussion]);
 
+  useEffect(() => {
+    if (!user || !canAccessDiscussions) {
+      setDiscussionStats({ total: 0, open: 0, resolved: 0 });
+      return undefined;
+    }
+
+    const unsubscribe = onSnapshot(
+      collection(db, "proposalDiscussions"),
+      (snapshot) => {
+        let open = 0;
+        let resolved = 0;
+        snapshot.docs.forEach((discussionDoc) => {
+          const status = discussionDoc.data()?.status || "open";
+          if (status === "resolved") {
+            resolved += 1;
+          } else {
+            open += 1;
+          }
+        });
+        setDiscussionStats({
+          total: snapshot.size,
+          open,
+          resolved
+        });
+      },
+      (error) => {
+        console.error("Error loading discussion stats:", error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user, canAccessDiscussions]);
+
+  useEffect(() => {
+    if (!user || role !== "superadmin") {
+      setOrgUserStats({
+        totalUsers: 0,
+        activeAdmins: 0,
+        pendingRequests: 0,
+        suspendedUsers: 0
+      });
+      return undefined;
+    }
+
+    const unsubscribe = onSnapshot(
+      collection(db, "users"),
+      (snapshot) => {
+        let activeAdmins = 0;
+        let pendingRequests = 0;
+        let suspendedUsers = 0;
+
+        snapshot.docs.forEach((userDoc) => {
+          const data = userDoc.data() || {};
+          const normalizedRole = (data.role || "user").toLowerCase();
+          const normalizedStatus = (data.status || "active").toLowerCase();
+
+          if ((normalizedRole === "admin" || normalizedRole === "superadmin") && normalizedStatus !== "suspended") {
+            activeAdmins += 1;
+          }
+          if (normalizedStatus === "pending" || normalizedStatus === "invited") {
+            pendingRequests += 1;
+          }
+          if (normalizedStatus === "suspended") {
+            suspendedUsers += 1;
+          }
+        });
+
+        setOrgUserStats({
+          totalUsers: snapshot.size,
+          activeAdmins,
+          pendingRequests,
+          suspendedUsers
+        });
+      },
+      (error) => {
+        console.error("Error loading organization user stats:", error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user, role]);
+
   /* UPDATED LOGOUT WITH SUCCESS MODAL */
   const handleLogout = async () => {
     try {
@@ -419,6 +542,7 @@ export default function Dashboard() {
         status: "pending",
         viewCount: 0
       });
+      await ActivityLogger.logShare(fullPath, sharingProposal.name, [clientEmail]);
       
       console.log("✅ Added to sharedProposals for:", clientEmail);
       
@@ -484,10 +608,16 @@ export default function Dashboard() {
     const unsub = onSnapshot(
       collection(db,"proposalSessions"),
       (snapshot)=>{
-        const data = snapshot.docs.map(doc=>({
-          id:doc.id,
-          ...doc.data()
-        }));
+        const data = snapshot.docs
+          .map(doc=>({
+            id:doc.id,
+            ...doc.data()
+          }))
+          .sort((a, b) => {
+            const diff = getSessionSortTimestamp(b) - getSessionSortTimestamp(a);
+            if (diff !== 0) return diff;
+            return (b.id || "").localeCompare(a.id || "");
+          });
         setSessions(data);
       }
     );
@@ -596,6 +726,19 @@ export default function Dashboard() {
     }
   }, [showNotifications]);
 
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+        setShowProfileMenu(false);
+      }
+    };
+
+    if (showProfileMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showProfileMenu]);
+
   const buildNotificationKey = (notification) => {
     if (notification.key) return notification.key;
     if (notification.sourceId) return `${notification.type}-${notification.sourceId}`;
@@ -678,6 +821,32 @@ export default function Dashboard() {
       await persistReadNotificationKeys(newReadKeys);
     } catch (error) {
       console.error('Error marking notification as read:', error);
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    const unreadNotifications = notifications.filter((n) => !n.read);
+    if (unreadNotifications.length === 0) return;
+
+    setNotifications((prev) =>
+      prev.map((n) => (n.read ? n : { ...n, read: true }))
+    );
+
+    try {
+      const newReadKeys = new Set(readNotificationKeysRef.current);
+      unreadNotifications.forEach((n) => {
+        if (n.key) {
+          newReadKeys.add(n.key);
+        }
+        if (n.legacyKey) {
+          newReadKeys.add(n.legacyKey);
+        }
+      });
+      readNotificationKeysRef.current = newReadKeys;
+      setReadNotificationKeys(newReadKeys);
+      await persistReadNotificationKeys(newReadKeys);
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
     }
   };
 
@@ -813,6 +982,7 @@ export default function Dashboard() {
     const fullPath = `proposals/${file.name}`;
     const encoded = btoa(fullPath);
     const url = `${window.location.origin}/p/${encoded}`;
+    void ActivityLogger.logDocumentView(fullPath, file.name);
     setViewUrl(url);
     setViewingFile(file);
     setShowViewModal(true);
@@ -830,6 +1000,7 @@ export default function Dashboard() {
     try{
       const url = await getDownloadURL(ref(storage,`proposals/${file.name}`));
       window.open(url,"_blank");
+      await ActivityLogger.logDownload(`proposals/${file.name}`, file.name);
     }catch(error){
       alert(error.message);
     }
@@ -873,8 +1044,9 @@ export default function Dashboard() {
     monthAgo.setMonth(monthAgo.getMonth() - 1);
 
     return sessions.filter(s => {
-      if (!s.startedAt) return false;
-      const sessionDate = new Date(s.startedAt.seconds * 1000);
+      const sessionMs = timestampToMs(s.startedAt || s.startTime || s.createdAt);
+      if (!sessionMs) return false;
+      const sessionDate = new Date(sessionMs);
       
       switch(dateFilter) {
         case "today":
@@ -924,6 +1096,7 @@ export default function Dashboard() {
       if (deleteItem) {
         const collectionName = deleteItem.type === "view" ? "proposalViews" : "proposalSessions";
         await deleteDoc(doc(db, collectionName, deleteItem.id));
+        await ActivityLogger.logDelete(`${collectionName}/${deleteItem.id}`, deleteItem.name);
         setDeleteSuccess(`Successfully deleted ${deleteItem.name}`);
       } else if (deleteType === "views" && selectedViews.length > 0) {
         const batch = writeBatch(db);
@@ -932,6 +1105,7 @@ export default function Dashboard() {
           batch.delete(ref);
         });
         await batch.commit();
+        await ActivityLogger.logDelete("proposalViews/bulk", `Bulk delete ${selectedViews.length} views`);
         setDeleteSuccess(`Successfully deleted ${selectedViews.length} views`);
         setSelectedViews([]);
       } else if (deleteType === "sessions" && selectedSessions.length > 0) {
@@ -941,6 +1115,7 @@ export default function Dashboard() {
           batch.delete(ref);
         });
         await batch.commit();
+        await ActivityLogger.logDelete("proposalSessions/bulk", `Bulk delete ${selectedSessions.length} sessions`);
         setDeleteSuccess(`Successfully deleted ${selectedSessions.length} sessions`);
         setSelectedSessions([]);
       } else if (deleteType === "filteredViews") {
@@ -952,6 +1127,7 @@ export default function Dashboard() {
             batch.delete(ref);
           });
           await batch.commit();
+          await ActivityLogger.logDelete("proposalViews/filtered", `Filtered delete ${filteredViews.length} views`);
           setDeleteSuccess(`Successfully deleted ${filteredViews.length} views`);
         }
       } else if (deleteType === "filteredSessions") {
@@ -963,6 +1139,7 @@ export default function Dashboard() {
             batch.delete(ref);
           });
           await batch.commit();
+          await ActivityLogger.logDelete("proposalSessions/filtered", `Filtered delete ${filteredSessions.length} sessions`);
           setDeleteSuccess(`Successfully deleted ${filteredSessions.length} sessions`);
         }
       }
@@ -995,7 +1172,7 @@ export default function Dashboard() {
     if (!canDeleteData) return;
 
     if (checked) {
-      setSelectedSessions(sessions.map(s => s.id));
+      setSelectedSessions(filteredEngagement.map(s => s.id));
     } else {
       setSelectedSessions([]);
     }
@@ -1050,11 +1227,43 @@ export default function Dashboard() {
 
   const totalViewsPages = Math.ceil(filteredViews.length / viewsPerPage);
 
-  // Filter engagement based on search query
-  const filteredEngagement = sessions.filter(s =>
-    (s.fileName || "").toLowerCase().includes(engagementSearch.toLowerCase()) ||
-    (s.viewerEmail || "").toLowerCase().includes(engagementSearch.toLowerCase())
-  );
+  // Filter + sort engagement (latest activity first)
+  const filteredEngagement = useMemo(() => {
+    const normalizedSearch = engagementSearch.trim().toLowerCase();
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekAgo = new Date(today);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const monthAgo = new Date(today);
+    monthAgo.setMonth(monthAgo.getMonth() - 1);
+
+    return sessions
+      .filter((s) => {
+        const proposalName = (s.fileName || s.proposalName || s.proposal || "").toLowerCase();
+        const viewer = (s.viewerEmail || s.email || s.userEmail || "").toLowerCase();
+        const matchesSearch =
+          !normalizedSearch ||
+          proposalName.includes(normalizedSearch) ||
+          viewer.includes(normalizedSearch);
+
+        if (!matchesSearch) return false;
+        if (dateFilter === "all") return true;
+
+        const sessionMs = timestampToMs(s.startedAt || s.startTime || s.createdAt);
+        if (!sessionMs) return false;
+        const sessionDate = new Date(sessionMs);
+
+        if (dateFilter === "today") return sessionDate >= today;
+        if (dateFilter === "week") return sessionDate >= weekAgo;
+        if (dateFilter === "month") return sessionDate >= monthAgo;
+        return true;
+      })
+      .sort((a, b) => {
+        const diff = getSessionSortTimestamp(b) - getSessionSortTimestamp(a);
+        if (diff !== 0) return diff;
+        return (b.id || "").localeCompare(a.id || "");
+      });
+  }, [sessions, engagementSearch, dateFilter]);
 
   const paginatedEngagement = filteredEngagement.slice(
     (engagementPage - 1) * engagementPerPage,
@@ -1062,6 +1271,16 @@ export default function Dashboard() {
   );
 
   const totalEngagementPages = Math.ceil(filteredEngagement.length / engagementPerPage);
+
+  useEffect(() => {
+    if (totalEngagementPages === 0 && engagementPage !== 1) {
+      setEngagementPage(1);
+      return;
+    }
+    if (totalEngagementPages > 0 && engagementPage > totalEngagementPages) {
+      setEngagementPage(totalEngagementPages);
+    }
+  }, [engagementPage, totalEngagementPages]);
   const activeViewerGroups = Object.values(
     activeViewers.reduce((acc, viewer) => {
       const key = viewer.proposalId || viewer.filePath || viewer.fileName || viewer.id;
@@ -1081,12 +1300,142 @@ export default function Dashboard() {
   const uniqueActiveViewerCount = new Set(
     activeViewers.map((viewer) => viewer.viewerId || viewer.viewerEmail || viewer.id)
   ).size;
+  const unreadNotificationCount = notifications.filter((notification) => !notification.read).length;
+  const signedTodayCount = signedProposals.filter((proposal) => {
+    const signedAt = proposal?.signedAt instanceof Date
+      ? proposal.signedAt
+      : proposal?.signedAt?.toDate?.() || new Date(proposal?.signedAt);
+    if (!(signedAt instanceof Date) || Number.isNaN(signedAt.getTime())) return false;
+    const now = new Date();
+    return (
+      signedAt.getFullYear() === now.getFullYear() &&
+      signedAt.getMonth() === now.getMonth() &&
+      signedAt.getDate() === now.getDate()
+    );
+  }).length;
+  const unsignedProposalCount = Math.max(files.length - signedProposals.length, 0);
+  const totalUniqueViewers = new Set(
+    views
+      .map((view) => view.viewerEmail || view.viewerId)
+      .filter(Boolean)
+  ).size;
+
+  const roleDashboardTitle =
+    role === "superadmin"
+      ? "Superadmin Overview"
+      : role === "admin"
+        ? "Operations Overview"
+        : "Personal Workspace";
+
+  const roleDashboardSubtitle =
+    role === "superadmin"
+      ? "Organization controls, user health, and platform activity in one place."
+      : role === "admin"
+        ? "Execution-focused metrics to manage proposals and discussions quickly."
+        : "Your focused workspace for daily proposal and communication activity.";
+
+  const roleDashboardCards = useMemo(() => {
+    if (role === "superadmin") {
+      return [
+        { key: "users", label: "Total Users", value: orgUserStats.totalUsers, icon: MdGroup, color: "#2563EB" },
+        { key: "admins", label: "Active Admins", value: orgUserStats.activeAdmins, icon: MdPerson, color: "#0EA5E9" },
+        { key: "open-discussions", label: "Open Discussions", value: discussionStats.open, icon: MdChat, color: "#F59E0B" },
+        { key: "suspended", label: "Suspended Accounts", value: orgUserStats.suspendedUsers, icon: MdWarning, color: "#EF4444" },
+        { key: "signed-today", label: "Signed Today", value: signedTodayCount, icon: MdCheckCircleOutline, color: "#10B981" },
+        { key: "alerts", label: "Pending Requests", value: orgUserStats.pendingRequests, icon: MdNotificationsNone, color: "#7C3AED" }
+      ];
+    }
+
+    if (role === "admin") {
+      return [
+        { key: "open-discussions", label: "Open Discussions", value: discussionStats.open, icon: MdChat, color: "#F59E0B" },
+        { key: "unread-messages", label: "Unread Discussion Msg", value: unreadDiscussionCount, icon: MdNotifications, color: "#2563EB" },
+        { key: "pending-sign", label: "Pending Signatures", value: unsignedProposalCount, icon: MdSchedule, color: "#EF4444" },
+        { key: "signed-today", label: "Signed Today", value: signedTodayCount, icon: MdCheckCircleOutline, color: "#10B981" },
+        { key: "active-viewers", label: "Active Viewers", value: uniqueActiveViewerCount, icon: MdRemoveRedEye, color: "#0EA5E9" },
+        { key: "new-notifications", label: "New Notifications", value: unreadNotificationCount, icon: MdNotificationsNone, color: "#7C3AED" }
+      ];
+    }
+
+    return [
+      { key: "my-proposals", label: "Available Proposals", value: files.length, icon: MdDescription, color: "#2563EB" },
+      { key: "views", label: "View Records", value: views.length, icon: MdVisibility, color: "#0EA5E9" },
+      { key: "active-now", label: "Active Live Sessions", value: uniqueActiveViewerCount, icon: MdTimeline, color: "#F59E0B" },
+      { key: "signed", label: "Signed Proposals", value: signedProposals.length, icon: MdCheckCircleOutline, color: "#10B981" },
+      { key: "notifications", label: "Unread Notifications", value: unreadNotificationCount, icon: MdNotifications, color: "#7C3AED" },
+      { key: "unique-viewers", label: "Unique Viewers", value: totalUniqueViewers, icon: MdGroup, color: "#1D4ED8" }
+    ];
+  }, [
+    role,
+    orgUserStats.totalUsers,
+    orgUserStats.activeAdmins,
+    orgUserStats.suspendedUsers,
+    orgUserStats.pendingRequests,
+    discussionStats.open,
+    unreadDiscussionCount,
+    unsignedProposalCount,
+    signedTodayCount,
+    uniqueActiveViewerCount,
+    unreadNotificationCount,
+    files.length,
+    views.length,
+    signedProposals.length,
+    totalUniqueViewers
+  ]);
+
+  const roleQuickActions = useMemo(() => {
+    if (role === "superadmin") {
+      return [
+        { id: "users", label: "Manage Users", icon: MdGroup, action: () => setActiveTab("users"), visible: canAccessUsersTab },
+        { id: "activity", label: "User Activity", icon: MdTrendingUp, action: () => setActiveTab("user-activity"), visible: canAccessUserActivity },
+        { id: "discussions", label: "Open Discussions", icon: MdChat, action: () => setShowAdminDiscussionDashboard(true), visible: canAccessDiscussions },
+        { id: "analytics", label: "View Analytics", icon: MdAnalytics, action: () => setActiveTab("analytics"), visible: true }
+      ].filter((item) => item.visible !== false);
+    }
+
+    if (role === "admin") {
+      return [
+        { id: "discussions", label: "Discussion Center", icon: MdChat, action: () => setShowAdminDiscussionDashboard(true), visible: canAccessDiscussions },
+        { id: "upload", label: "Upload Proposal", icon: MdFileUpload, action: () => setActiveTab("upload"), visible: true },
+        { id: "proposals", label: "Manage Proposals", icon: MdPictureAsPdf, action: () => setActiveTab("proposals"), visible: true },
+        { id: "engagement", label: "Engagement", icon: MdTimeline, action: () => setActiveTab("engagement"), visible: true }
+      ].filter((item) => item.visible !== false);
+    }
+
+    return [
+      { id: "views", label: "Open Live Views", icon: MdRemoveRedEye, action: () => setActiveTab("views"), visible: true },
+      { id: "upload", label: "Upload", icon: MdFileUpload, action: () => setActiveTab("upload"), visible: true },
+      { id: "profile", label: "My Profile", icon: MdPerson, action: () => setActiveTab("profile"), visible: true }
+    ];
+  }, [role, canAccessUsersTab, canAccessUserActivity, canAccessDiscussions]);
+
   const formatActiveLastSeen = (date) => {
     if (!date) return "Just now";
     const diff = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
     if (diff < 5) return "Just now";
     if (diff < 60) return `${diff}s ago`;
     return `${Math.floor(diff / 60)}m ago`;
+  };
+
+  const userDisplayName = user?.displayName || user?.email?.split("@")[0] || "User";
+  const profileMenuItemStyle = {
+    width: "100%",
+    padding: "12px 16px",
+    border: "none",
+    background: "transparent",
+    color: "#0F172A",
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    fontSize: "14px",
+    fontWeight: 500,
+    cursor: "pointer",
+    textAlign: "left",
+    transition: "background 0.2s ease",
+  };
+
+  const handleProfileMenuItemHover = (event, isHovering) => {
+    event.currentTarget.style.background = isHovering ? "#F8FAFC" : "transparent";
   };
 
   if(!authChecked || permissionsLoading) return <div style={{padding:40}}>Loading...</div>;
@@ -1177,6 +1526,7 @@ export default function Dashboard() {
               </button>
             </div>
           </div>
+
         </div>
       )}
 
@@ -1617,6 +1967,7 @@ export default function Dashboard() {
               </>
             )}
           </div>
+
         </div>
       )}
 
@@ -2093,6 +2444,37 @@ export default function Dashboard() {
                   border: "none",
                   borderRadius: 12,
                   cursor: "pointer",
+                  background: activeTab==="follow-ups" 
+                    ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                    : "transparent",
+                  color: activeTab==="follow-ups" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                  gap: 12,
+                  fontSize: sidebarCollapsed ? 0 : 14,
+                  fontWeight: activeTab==="follow-ups" ? 600 : 500,
+                  transition: "all 0.2s ease",
+                  boxShadow: activeTab==="follow-ups" 
+                    ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                    : "none",
+                  border: activeTab==="follow-ups" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  whiteSpace: "nowrap",
+                }} 
+                onClick={()=>setActiveTab("follow-ups")}
+              >
+                <MdSchedule size={sidebarCollapsed ? 22 : 18} />
+                {!sidebarCollapsed && <span>Follow-Ups</span>}
+              </button>
+            )}
+
+            {!isRestrictedUser && (
+              <button 
+                style={{
+                  padding: sidebarCollapsed ? "12px" : "10px 16px",
+                  border: "none",
+                  borderRadius: 12,
+                  cursor: "pointer",
                   background: activeTab==="signed" 
                     ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
                     : "transparent",
@@ -2174,37 +2556,6 @@ export default function Dashboard() {
               <MdRemoveRedEye size={sidebarCollapsed ? 22 : 18} />
               {!sidebarCollapsed && <span>Live Views</span>}
             </button>
-
-            {isRestrictedUser && (
-              <button 
-                style={{
-                  padding: sidebarCollapsed ? "12px" : "10px 16px",
-                  border: "none",
-                  borderRadius: 12,
-                  cursor: "pointer",
-                  background: activeTab==="profile" 
-                    ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
-                    : "transparent",
-                  color: activeTab==="profile" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                  gap: 12,
-                  fontSize: sidebarCollapsed ? 0 : 14,
-                  fontWeight: activeTab==="profile" ? 600 : 500,
-                  transition: "all 0.2s ease",
-                  boxShadow: activeTab==="profile" 
-                    ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
-                    : "none",
-                  border: activeTab==="profile" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
-                  whiteSpace: "nowrap",
-                }} 
-                onClick={()=>setActiveTab("profile")}
-              >
-                <MdPerson size={sidebarCollapsed ? 22 : 18} />
-                {!sidebarCollapsed && <span>My Profile</span>}
-              </button>
-            )}
 
             {canAccessDiscussions && (
               <button 
@@ -2325,27 +2676,27 @@ export default function Dashboard() {
                     border: "none",
                     borderRadius: 12,
                     cursor: "pointer",
-                    background: activeTab==="feedback" 
+                    background: activeTab==="mytemplates" 
                       ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
                       : "transparent",
-                    color: activeTab==="feedback" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                    color: activeTab==="mytemplates" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: sidebarCollapsed ? "center" : "flex-start",
                     gap: 12,
                     fontSize: sidebarCollapsed ? 0 : 14,
-                    fontWeight: activeTab==="feedback" ? 600 : 500,
+                    fontWeight: activeTab==="mytemplates" ? 600 : 500,
                     transition: "all 0.2s ease",
-                    boxShadow: activeTab==="feedback" 
+                    boxShadow: activeTab==="mytemplates" 
                       ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
                       : "none",
-                    border: activeTab==="feedback" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                    border: activeTab==="mytemplates" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
                     whiteSpace: "nowrap",
                   }} 
-                  onClick={()=>setActiveTab("feedback")}
+                  onClick={()=>setActiveTab("mytemplates")}
                 >
-                  <MdInfo size={sidebarCollapsed ? 20 : 16} />
-                  {!sidebarCollapsed && <span>Feedback</span>}
+                  <MdContentCopy size={sidebarCollapsed ? 20 : 16} />
+                  {!sidebarCollapsed && <span>My Templates</span>}
                 </button>
 
                 <button 
@@ -2404,35 +2755,6 @@ export default function Dashboard() {
                 >
                   <MdAnalytics size={sidebarCollapsed ? 20 : 16} />
                   {!sidebarCollapsed && <span>Analytics</span>}
-                </button>
-
-                <button 
-                  style={{
-                    padding: sidebarCollapsed ? "10px" : "10px 16px",
-                    border: "none",
-                    borderRadius: 12,
-                    cursor: "pointer",
-                    background: activeTab==="profile" 
-                      ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
-                      : "transparent",
-                    color: activeTab==="profile" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                    gap: 12,
-                    fontSize: sidebarCollapsed ? 0 : 14,
-                    fontWeight: activeTab==="profile" ? 600 : 500,
-                    transition: "all 0.2s ease",
-                    boxShadow: activeTab==="profile" 
-                      ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
-                      : "none",
-                    border: activeTab==="profile" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
-                    whiteSpace: "nowrap",
-                  }} 
-                  onClick={()=>setActiveTab("profile")}
-                >
-                  <MdPerson size={sidebarCollapsed ? 20 : 16} />
-                  {!sidebarCollapsed && <span>My Profile</span>}
                 </button>
 
                 {canAccessUsersTab && (
@@ -2494,6 +2816,37 @@ export default function Dashboard() {
                 >
                   <MdTrendingUp size={sidebarCollapsed ? 20 : 16} />
                   {!sidebarCollapsed && <span>User Activity</span>}
+                </button>
+                )}
+
+                {canAccessUserActivity && (
+                <button 
+                  style={{
+                    padding: sidebarCollapsed ? "10px" : "10px 16px",
+                    border: "none",
+                    borderRadius: 12,
+                    cursor: "pointer",
+                    background: activeTab==="per-user-stats" 
+                      ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                      : "transparent",
+                    color: activeTab==="per-user-stats" ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    gap: 12,
+                    fontSize: sidebarCollapsed ? 0 : 14,
+                    fontWeight: activeTab==="per-user-stats" ? 600 : 500,
+                    transition: "all 0.2s ease",
+                    boxShadow: activeTab==="per-user-stats" 
+                      ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                      : "none",
+                    border: activeTab==="per-user-stats" ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                    whiteSpace: "nowrap",
+                  }} 
+                  onClick={()=>setActiveTab("per-user-stats")}
+                >
+                  <MdPerson size={sidebarCollapsed ? 20 : 16} />
+                  {!sidebarCollapsed && <span>Per User Stats</span>}
                 </button>
                 )}
               </div>
@@ -2602,23 +2955,6 @@ export default function Dashboard() {
           transition: "all 0.3s ease",
         }}>
           <div style={{
-            width: 48,
-            height: 48,
-            borderRadius: "50%",
-            background: "rgba(255, 255, 255, 0.2)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#fff",
-            fontWeight: "bold",
-            fontSize: 20,
-            boxShadow: "0 4px 12px rgba(255, 255, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.3)",
-            flexShrink: 0,
-            border: "2px solid rgba(255, 255, 255, 0.3)",
-          }}>
-            {user?.email?.charAt(0).toUpperCase() || "A"}
-          </div>
-          <div style={{
             display: "flex",
             flexDirection: "column",
             gap: 2,
@@ -2663,6 +2999,47 @@ export default function Dashboard() {
             Online
           </div>
 
+          {/* ROLE INDICATOR */}
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "8px 14px",
+            background: role === "superadmin" 
+              ? "rgba(239, 68, 68, 0.25)" 
+              : role === "admin" 
+              ? "rgba(168, 85, 247, 0.25)"
+              : "rgba(59, 130, 246, 0.25)",
+            borderRadius: 100,
+            fontSize: 12,
+            fontWeight: 600,
+            color: "#ffffff",
+            border: role === "superadmin"
+              ? "1px solid rgba(239, 68, 68, 0.5)"
+              : role === "admin"
+              ? "1px solid rgba(168, 85, 247, 0.5)"
+              : "1px solid rgba(59, 130, 246, 0.5)",
+            whiteSpace: "nowrap",
+            backdropFilter: "blur(5px)",
+          }}>
+            <span style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: role === "superadmin"
+                ? "#EF4444"
+                : role === "admin"
+                ? "#A855F7"
+                : "#3B82F6",
+              boxShadow: role === "superadmin"
+                ? "0 0 8px #EF4444"
+                : role === "admin"
+                ? "0 0 8px #A855F7"
+                : "0 0 8px #3B82F6",
+            }}></span>
+            {role === "superadmin" ? "Super Admin" : role === "admin" ? "Admin" : "User"}
+          </div>
+
           {/* NOTIFICATION BELL */}
           <div 
             ref={notificationRef}
@@ -2673,7 +3050,10 @@ export default function Dashboard() {
             }}
           >
             <button
-              onClick={() => setShowNotifications(!showNotifications)}
+              onClick={() => {
+                setShowNotifications(!showNotifications);
+                setShowProfileMenu(false);
+              }}
               style={{
                 position: "relative",
                 width: "42px",
@@ -2756,27 +3136,58 @@ export default function Dashboard() {
                     fontWeight: "600",
                     color: "#0F172A"
                   }}>Notifications</span>
-                  {notifications.length > 0 && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <button
+                      onClick={markAllNotificationsAsRead}
+                      disabled={!notifications.some((n) => !n.read)}
+                      style={{
+                        height: "32px",
+                        padding: "0 10px",
+                        background: "#EFF6FF",
+                        border: "1px solid #BFDBFE",
+                        borderRadius: "8px",
+                        cursor: notifications.some((n) => !n.read) ? "pointer" : "not-allowed",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "#2563EB",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        gap: "4px",
+                        opacity: notifications.some((n) => !n.read) ? 1 : 0.45,
+                        transition: "all 0.2s ease"
+                      }}
+                      title="Mark all read"
+                    >
+                      <MdDoneAll size={15} />
+                      Mark all read
+                    </button>
                     <button
                       onClick={clearAllNotifications}
+                      disabled={notifications.length === 0}
                       style={{
-                        width: "32px",
                         height: "32px",
+                        padding: "0 10px",
                         background: "#F8FAFC",
                         border: "1px solid #E2E8F0",
                         borderRadius: "8px",
-                        cursor: "pointer",
+                        cursor: notifications.length > 0 ? "pointer" : "not-allowed",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
                         color: "#64748B",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        gap: "4px",
+                        opacity: notifications.length > 0 ? 1 : 0.45,
                         transition: "all 0.2s ease"
                       }}
                       title="Clear all"
                     >
-                      <MdClear size={16} />
+                      <MdClear size={15} />
+                      Clear all
                     </button>
-                  )}
+                  </div>
                 </div>
 
                 {/* Notification List */}
@@ -2891,6 +3302,185 @@ export default function Dashboard() {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* PROFILE MENU */}
+          <div
+            ref={profileMenuRef}
+            style={{
+              position: "relative",
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <button
+              onClick={() => {
+                setShowProfileMenu(!showProfileMenu);
+                setShowNotifications(false);
+              }}
+              style={{
+                height: "42px",
+                minWidth: "42px",
+                padding: "0 10px",
+                borderRadius: "999px",
+                background: "rgba(255, 255, 255, 0.2)",
+                border: "1px solid rgba(255, 255, 255, 0.35)",
+                color: "#ffffff",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                transition: "all 0.25s ease",
+                backdropFilter: "blur(6px)",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+              }}
+              title="Profile menu"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "rgba(255, 255, 255, 0.28)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "rgba(255, 255, 255, 0.2)";
+              }}
+            >
+              <span style={{
+                width: "28px",
+                height: "28px",
+                borderRadius: "50%",
+                background: "linear-gradient(135deg, #ec4899 0%, #be185d 100%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#fff",
+                fontSize: "14px",
+                fontWeight: "700",
+                boxShadow: "0 4px 10px rgba(236, 72, 153, 0.35)",
+              }}>
+                {userDisplayName?.charAt(0).toUpperCase() || "U"}
+              </span>
+              <MdChevronRight
+                size={16}
+                style={{
+                  transform: showProfileMenu ? "rotate(90deg)" : "rotate(0deg)",
+                  transition: "transform 0.2s ease",
+                  color: "rgba(255,255,255,0.9)",
+                }}
+              />
+            </button>
+
+            {showProfileMenu && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 10px)",
+                  right: 0,
+                  width: "320px",
+                  background: "#ffffff",
+                  border: "1px solid #E2E8F0",
+                  borderRadius: "14px",
+                  boxShadow: "0 24px 40px rgba(15, 23, 42, 0.24)",
+                  overflow: "hidden",
+                  zIndex: 2200,
+                  animation: "scaleIn 0.18s ease",
+                }}
+              >
+                <div style={{ padding: "16px", borderBottom: "1px solid #F1F5F9", display: "flex", gap: "12px", alignItems: "center" }}>
+                  <div style={{
+                    width: "42px",
+                    height: "42px",
+                    borderRadius: "50%",
+                    background: "linear-gradient(135deg, #ec4899 0%, #be185d 100%)",
+                    color: "#fff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontWeight: "700",
+                    fontSize: "16px",
+                  }}>
+                    {userDisplayName?.charAt(0).toUpperCase() || "U"}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: "15px", fontWeight: 700, color: "#0F172A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "230px" }}>
+                      {userDisplayName}
+                    </div>
+                    <div style={{ fontSize: "13px", color: "#64748B", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "230px" }}>
+                      {user?.email}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setActiveTab("profile");
+                    setShowProfileMenu(false);
+                  }}
+                  style={profileMenuItemStyle}
+                  onMouseEnter={(event) => handleProfileMenuItemHover(event, true)}
+                  onMouseLeave={(event) => handleProfileMenuItemHover(event, false)}
+                >
+                  <MdPerson size={18} />
+                  <span>My Profile</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setShowLogoutModal(true);
+                    setShowProfileMenu(false);
+                  }}
+                  style={profileMenuItemStyle}
+                  onMouseEnter={(event) => handleProfileMenuItemHover(event, true)}
+                  onMouseLeave={(event) => handleProfileMenuItemHover(event, false)}
+                >
+                  <MdSwitchAccount size={18} />
+                  <span>Switch account</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setShowLogoutModal(true);
+                    setShowProfileMenu(false);
+                  }}
+                  style={{ ...profileMenuItemStyle, color: "#dc2626" }}
+                  onMouseEnter={(event) => handleProfileMenuItemHover(event, true)}
+                  onMouseLeave={(event) => handleProfileMenuItemHover(event, false)}
+                >
+                  <MdLogout size={18} />
+                  <span>Sign out</span>
+                </button>
+
+                <div style={{ height: "1px", background: "#F1F5F9", margin: "4px 0" }} />
+
+                <button
+                  onClick={() => {
+                    setActiveTab("profile");
+                    setShowProfileMenu(false);
+                  }}
+                  style={profileMenuItemStyle}
+                  onMouseEnter={(event) => handleProfileMenuItemHover(event, true)}
+                  onMouseLeave={(event) => handleProfileMenuItemHover(event, false)}
+                >
+                  <MdSettings size={18} />
+                  <span>Settings</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    if (canAccessDiscussions) {
+                      setShowAdminDiscussionDashboard(true);
+                    } else {
+                      setActiveTab("profile");
+                    }
+                  }}
+                  style={profileMenuItemStyle}
+                  onMouseEnter={(event) => handleProfileMenuItemHover(event, true)}
+                  onMouseLeave={(event) => handleProfileMenuItemHover(event, false)}
+                >
+                  <MdHelpOutline size={18} />
+                  <span>Help</span>
+                </button>
               </div>
             )}
           </div>
@@ -3038,252 +3628,174 @@ export default function Dashboard() {
         `}</style>
 
         {/* DASHBOARD CONTENT */}
-        {!isRestrictedUser && activeTab === "home" && (
+        {activeTab === "home" && (
           <>
-            <h2 style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <MdDashboard size={28} color="#1976D2" />
-              Dashboard Summary
-            </h2>
+            <div style={{
+              background: "linear-gradient(135deg, #FFFFFF 0%, #F8FAFF 100%)",
+              border: "1px solid #E2E8F0",
+              borderRadius: 16,
+              padding: "20px 22px",
+              boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)",
+              marginBottom: 18
+            }}>
+              <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <MdDashboard size={28} color="#1976D2" />
+                {roleDashboardTitle}
+              </h2>
+              <p style={{ margin: "8px 0 0 0", color: "#475569", fontSize: 14 }}>
+                {roleDashboardSubtitle}
+              </p>
+            </div>
 
             <div style={{
-              display: "flex",
-              gap: 16,
-              marginTop: 20,
-              flexWrap: "wrap"
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+              gap: 14,
+              marginBottom: 18
             }}>
-              <div style={{
-                background: "#fff",
-                padding: "20px 16px",
-                borderRadius: 12,
-                flex: "1 1 180px",
-                textAlign: "center",
-                boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-                border: "1px solid #eee",
-                minWidth: "160px",
-              }}>
-                <MdDescription size={32} color="#1976D2" style={{ marginBottom: 10 }} />
-                <h3>Total Proposals</h3>
-                <p style={{ fontSize: 28, fontWeight: "bold", margin: "8px 0 0 0", color: "#333" }}>{files.length}</p>
-              </div>
+              {roleDashboardCards.map((card) => {
+                const CardIcon = card.icon;
+                return (
+                  <div
+                    key={card.key}
+                    style={{
+                      background: "#fff",
+                      borderRadius: 14,
+                      border: "1px solid #E2E8F0",
+                      padding: "16px 14px",
+                      boxShadow: "0 3px 10px rgba(15, 23, 42, 0.06)"
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                      <div style={{ fontSize: 13, color: "#64748B", fontWeight: 600 }}>{card.label}</div>
+                      <CardIcon size={20} color={card.color} />
+                    </div>
+                    <div style={{
+                      marginTop: 8,
+                      fontSize: 28,
+                      fontWeight: 700,
+                      color: "#0F172A",
+                      lineHeight: 1.1
+                    }}>
+                      {card.value}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
 
-              <div style={{
-                background: "#fff",
-                padding: "20px 16px",
-                borderRadius: 12,
-                flex: "1 1 180px",
-                textAlign: "center",
-                boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-                border: "1px solid #eee",
-                minWidth: "160px",
-              }}>
-                <MdRemoveRedEye size={32} color="#4CAF50" style={{ marginBottom: 10 }} />
-                <h3>Total Views</h3>
-                <p style={{ fontSize: 28, fontWeight: "bold", margin: "8px 0 0 0", color: "#333" }}>{views.length}</p>
+            <div style={{
+              background: "#fff",
+              border: "1px solid #E2E8F0",
+              borderRadius: 14,
+              padding: 16,
+              boxShadow: "0 2px 8px rgba(15, 23, 42, 0.05)",
+              marginBottom: 20
+            }}>
+              <h3 style={{ margin: "0 0 12px 0", color: "#0F172A", fontSize: 16 }}>Quick Actions</h3>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {roleQuickActions.map((actionItem) => {
+                  const ActionIcon = actionItem.icon;
+                  return (
+                    <button
+                      key={actionItem.id}
+                      onClick={actionItem.action}
+                      style={{
+                        border: "1px solid #BFDBFE",
+                        background: "linear-gradient(135deg, #EFF6FF 0%, #FFFFFF 100%)",
+                        borderRadius: 10,
+                        padding: "9px 13px",
+                        color: "#1D4ED8",
+                        fontWeight: 600,
+                        fontSize: 13,
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 7
+                      }}
+                    >
+                      <ActionIcon size={16} />
+                      {actionItem.label}
+                    </button>
+                  );
+                })}
               </div>
+            </div>
 
+            {role !== "user" ? (
+              <>
+                <h3 style={{ marginTop: 30, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                  <MdTimeline color="#2196F3" />
+                  Analytics Overview
+                </h3>
+
+                <div style={{
+                  background: "#fff",
+                  borderRadius: 12,
+                  padding: 20,
+                  marginBottom: 24,
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.05)"
+                }}>
+                  <h4 style={{ margin: "0 0 16px 0", color: "#1E293B", fontSize: 16 }}>
+                    Views per Proposal {files.length > 10 && "(Top 10)"}
+                  </h4>
+                  <div style={{ width: "100%", height: 360, minWidth: 0, minHeight: 360 }}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={360}>
+                      <BarChart
+                        data={proposalChartData.length ? proposalChartData : [{ name: "No Data", views: 0 }]}
+                        margin={{ top: 20, right: 20, left: 10, bottom: 60 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" angle={-35} textAnchor="end" height={70} tick={{ fontSize: 12 }} />
+                        <YAxis tick={{ fontSize: 12 }} />
+                        <Tooltip />
+                        <Bar dataKey="views" fill="#2196F3" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div style={{
+                  background: "#fff",
+                  borderRadius: 12,
+                  padding: 20,
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.05)"
+                }}>
+                  <h4 style={{ margin: "0 0 16px 0", color: "#1E293B", fontSize: 16 }}>
+                    Daily View Traffic
+                  </h4>
+                  <div style={{ width: "100%", height: 360, minWidth: 0, minHeight: 360 }}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={360}>
+                      <LineChart
+                        data={dailyChartData.length ? dailyChartData : [{ date: "No Data", views: 0 }]}
+                        margin={{ top: 20, right: 20, left: 10, bottom: 60 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" angle={-35} textAnchor="end" height={70} tick={{ fontSize: 12 }} />
+                        <YAxis tick={{ fontSize: 12 }} />
+                        <Tooltip />
+                        <Line type="monotone" dataKey="views" stroke="#4CAF50" strokeWidth={3} dot={{ r: 3 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </>
+            ) : (
               <div style={{
                 background: "#fff",
-                padding: "20px 16px",
+                border: "1px solid #E2E8F0",
                 borderRadius: 12,
-                flex: "1 1 180px",
-                textAlign: "center",
-                boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-                border: "1px solid #eee",
-                minWidth: "160px",
+                padding: 20,
+                marginTop: 4,
+                boxShadow: "0 2px 8px rgba(0,0,0,0.05)"
               }}>
-                <MdCheckCircleOutline size={32} color="#10B981" style={{ marginBottom: 10 }} />
-                <h3>Signed</h3>
-                <p style={{ fontSize: 28, fontWeight: "bold", margin: "8px 0 0 0", color: "#333" }}>{signedProposals.length}</p>
-              </div>
-
-              <div style={{
-                background: "#fff",
-                padding: "20px 16px",
-                borderRadius: 12,
-                flex: "1 1 180px",
-                textAlign: "center",
-                boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
-                border: "1px solid #eee",
-                minWidth: "160px",
-              }}>
-                <MdAnalytics size={32} color="#FF9800" style={{ marginBottom: 10 }} />
-                <h3>Unique Viewers</h3>
-                <p style={{ fontSize: 28, fontWeight: "bold", margin: "8px 0 0 0", color: "#333" }}>
-                  {new Set(views.filter(v => v.viewerId).map(v => v.viewerId)).size}
+                <h3 style={{ margin: "0 0 10px 0", color: "#0F172A", fontSize: 16 }}>Your Focus Today</h3>
+                <p style={{ margin: 0, color: "#64748B", fontSize: 14, lineHeight: 1.6 }}>
+                  Use your quick actions to upload proposals, review live activity, and keep your profile updated.
+                  This workspace is intentionally simplified for faster daily execution.
                 </p>
               </div>
-            </div>
-
-            {/* FIXED ANALYTICS OVERVIEW SECTION */}
-            <h3 style={{ marginTop: 40, marginBottom: 20, display: "flex", alignItems: "center", gap: 8 }}>
-              <MdTimeline color="#2196F3" />
-              Analytics Overview
-            </h3>
-
-            <div style={{ 
-              marginBottom: 20, 
-              padding: 10, 
-              background: "#f0f0f0", 
-              borderRadius: 8,
-              fontSize: 12,
-              color: "#666"
-            }}>
-              <strong>Debug Info:</strong><br />
-              Total Views: {views.length}<br />
-              Proposals: {files.length}<br />
-              Chart Data Points: {proposalChartData.length}<br />
-              Daily Data Points: {dailyChartData.length}
-            </div>
-
-            {/* First chart - Views per Proposal */}
-            <div style={{ 
-              background: "#fff", 
-              borderRadius: 12, 
-              padding: 20, 
-              marginBottom: 30,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.05)" 
-            }}>
-              <h4 style={{ margin: "0 0 20px 0", color: "#333", fontSize: 16 }}>
-                Views per Proposal {files.length > 10 && "(Top 10)"}
-              </h4>
-              
-              <div style={{ width: "100%", height: 400 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={proposalChartData.length ? proposalChartData : [{ name: "No Data", views: 0 }]}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 70 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="name" 
-                      angle={-45} 
-                      textAnchor="end" 
-                      height={70}
-                      tick={{ fontSize: 12 }}
-                    />
-                    <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip />
-                    <Bar dataKey="views" fill="#2196F3" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              
-              {files.length === 0 && (
-                <p style={{ textAlign: "center", color: "#999", marginTop: 20 }}>No proposals uploaded yet</p>
-              )}
-            </div>
-
-            {/* Second chart - Daily View Traffic */}
-            <div style={{ 
-              background: "#fff", 
-              borderRadius: 12, 
-              padding: 20,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.05)" 
-            }}>
-              <h4 style={{ margin: "0 0 20px 0", color: "#333", fontSize: 16 }}>
-                Daily View Traffic
-              </h4>
-              
-              <div style={{ width: "100%", height: 400 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={dailyChartData.length ? dailyChartData : [{ date: "No Data", views: 0 }]}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 70 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="date" 
-                      angle={-45} 
-                      textAnchor="end" 
-                      height={70}
-                      tick={{ fontSize: 12 }}
-                    />
-                    <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="views" stroke="#4CAF50" strokeWidth={3} dot={{ r: 3 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              
-              {views.length === 0 && (
-                <p style={{ textAlign: "center", color: "#999", marginTop: 20 }}>No view data available yet</p>
-              )}
-            </div>
-
-            {/* Top User Performance */}
-            <h3 style={{ marginTop: 40, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <MdAnalytics color="#FF9800" />
-              Top User Performance
-            </h3>
-
-            <div style={{ marginTop: 20, overflowX: "auto" }}>
-              <table style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                background: "#fff",
-                borderRadius: 8,
-                overflow: "hidden",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-                tableLayout: "fixed",
-                minWidth: "600px"
-              }}>
-                <thead>
-                  <tr style={{
-                    background: "linear-gradient(90deg, #2196F3 0%, #1976D2 100%)",
-                    color: "#fff"
-                  }}>
-                    <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Rank</th>
-                    <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Viewer Email</th>
-                    <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Time Spent</th>
-                    <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Pages</th>
-                    <th style={{ padding: "12px 6px", textAlign: "center", fontSize: "12px" }}>Sessions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(() => {
-                    const userStats = {};
-                    sessions.forEach(s => {
-                      const email = s.viewerEmail || "Anonymous";
-                      if (!userStats[email]) {
-                        userStats[email] = { email, duration: 0, pages: 0, sessions: 0 };
-                      }
-                      userStats[email].duration += (s.duration || 0);
-                      userStats[email].pages += (s.pagesViewed?.length || 0);
-                      userStats[email].sessions += 1;
-                    });
-
-                    return Object.values(userStats)
-                      .sort((a, b) => b.duration - a.duration)
-                      .slice(0, 5)
-                      .map((user, i) => (
-                        <tr key={i} style={i % 2 === 0 ? { background: "#f9f9f9" } : { background: "#fff" }}>
-                          <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                            <div style={{
-                              width: 28, height: 28, borderRadius: "50%",
-                              background: i === 0 ? "#FFD700" : i === 1 ? "#C0C0C0" : i === 2 ? "#CD7F32" : "#e0e0e0",
-                              display: "flex", alignItems: "center", justifyContent: "center",
-                              fontWeight: "bold", fontSize: 14, margin: "0 auto"
-                            }}>{i + 1}</div>
-                          </td>
-                          <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>{user.email}</td>
-                          <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                            {Math.round(user.duration / 1000)} sec
-                          </td>
-                          <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                            {user.pages}
-                          </td>
-                          <td style={{ padding: "10px 6px", border: "1px solid #eee", textAlign: "center" }}>
-                            {user.sessions}
-                          </td>
-                        </tr>
-                      ));
-                  })()}
-                  {sessions.length === 0 && (
-                    <tr><td colSpan={5} style={{ textAlign: "center", padding: 30 }}>No engagement data available</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            )}
           </>
         )}
 
@@ -3317,9 +3829,13 @@ export default function Dashboard() {
           <SignedProposalsTab user={user} />
         )}
 
-        {/* FEEDBACK TAB */}
-        {!isRestrictedUser && activeTab === "feedback" && (
-          <ClientFeedbackTab currentUser={user} />
+        {!isRestrictedUser && activeTab === "follow-ups" && (
+          <FollowUpCenter currentUser={user} />
+        )}
+
+        {/* MY TEMPLATES TAB */}
+        {!isRestrictedUser && activeTab === "mytemplates" && (
+          <MyTemplatesTab currentUser={user} />
         )}
         
         {/* LIVE VIEWS TAB */}
@@ -3840,7 +4356,10 @@ export default function Dashboard() {
                         <input
                           type="checkbox"
                           onChange={(e) => selectAllSessions(e.target.checked)}
-                          checked={selectedSessions.length === sessions.length && sessions.length > 0}
+                          checked={
+                            filteredEngagement.length > 0 &&
+                            filteredEngagement.every((s) => selectedSessions.includes(s.id))
+                          }
                         />
                       )}
                     </th>
@@ -4289,6 +4808,20 @@ export default function Dashboard() {
             overflow: "visible"
           }}>
             <UsersActivityTab />
+          </div>
+        )}
+
+        {canAccessUserActivity && activeTab === "per-user-stats" && (
+          <div style={{
+            background: "transparent",
+            borderRadius: "0px",
+            padding: "0px",
+            marginTop: "0px",
+            boxShadow: "none",
+            minHeight: "calc(100vh - 200px)",
+            overflow: "visible"
+          }}>
+            <PerUserStatsTab />
           </div>
         )}
 

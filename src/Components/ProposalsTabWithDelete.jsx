@@ -11,7 +11,9 @@ import {
   deleteDoc, 
   doc, 
   writeBatch,
-  addDoc
+  addDoc,
+  setDoc,
+  serverTimestamp
 } from "firebase/firestore";
 import { 
   MdDescription, 
@@ -31,10 +33,13 @@ import {
   MdCheckBox,
   MdCheckBoxOutlineBlank,
   MdMoreVert,
-  MdBlockFlipped
+  MdBlockFlipped,
+  MdArchive,
+  MdUnarchive
 } from "react-icons/md";
 import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
 import { usePermissions } from "../utils/permissions";
+import { ActivityLogger } from "../utils/activityLogger";
 
 export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadClick, onShareClick, onSignClick }) {
   const [files, setFiles] = useState([]);
@@ -45,6 +50,8 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
   const [signedProposals, setSignedProposals] = useState([]);
   const [views, setViews] = useState([]);
   const [rejectedProposals, setRejectedProposals] = useState([]);
+  const [archivedProposals, setArchivedProposals] = useState([]);
+  const [archiveView, setArchiveView] = useState("active");
   
   // Permission system
   const { role } = usePermissions();
@@ -71,6 +78,7 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
       loadSignedProposals();
       loadViews();
       loadRejectedProposals();
+      loadArchivedProposals();
     }
   }, [user]);
 
@@ -82,6 +90,12 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!deleteSuccess) return undefined;
+    const timeoutId = setTimeout(() => setDeleteSuccess(null), 3000);
+    return () => clearTimeout(timeoutId);
+  }, [deleteSuccess]);
 
   const loadProposals = async () => {
     setLoading(true);
@@ -143,6 +157,28 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     }
   };
 
+  const loadArchivedProposals = async () => {
+    try {
+      const archivedQuery = query(collection(db, "archivedProposals"));
+      const snapshot = await getDocs(archivedQuery);
+      const archivedData = [];
+      snapshot.forEach((archiveDoc) => {
+        archivedData.push({
+          id: archiveDoc.id,
+          ...archiveDoc.data()
+        });
+      });
+      setArchivedProposals(archivedData);
+    } catch (error) {
+      console.error("Error loading archived proposals:", error);
+    }
+  };
+
+  const getArchiveDocId = (fileName) => encodeURIComponent(fileName);
+
+  const isProposalArchived = (fileName) =>
+    archivedProposals.some((proposal) => proposal.fileName === fileName || proposal.proposalName === fileName);
+
   const getViewCount = (fileName) => {
     return views.filter(v => v.fileName === fileName).length;
   };
@@ -177,7 +213,11 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     }
   };
 
-  const filteredProposals = files.filter(file =>
+  const activeProposals = files.filter((file) => !isProposalArchived(file.name));
+  const archivedFiles = files.filter((file) => isProposalArchived(file.name));
+  const visibleFiles = archiveView === "archived" ? archivedFiles : activeProposals;
+
+  const filteredProposals = visibleFiles.filter(file =>
     file.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -215,6 +255,129 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
       const allProposalNames = filteredProposals.map(p => p.name);
       setSelectedProposals(allProposalNames);
       setSelectAll(true);
+    }
+  };
+
+  const resetSelection = () => {
+    setSelectedProposals([]);
+    setSelectAll(false);
+  };
+
+  const handleArchiveViewChange = (view) => {
+    setArchiveView(view);
+    setCurrentPage(1);
+    resetSelection();
+    setOpenDropdownId(null);
+  };
+
+  const archiveSingleProposal = async (file) => {
+    const fileName = file.name;
+    const filePath = `proposals/${fileName}`;
+
+    await setDoc(doc(db, "archivedProposals", getArchiveDocId(fileName)), {
+      fileName,
+      proposalName: fileName,
+      filePath,
+      archivedAt: serverTimestamp(),
+      archivedBy: user?.email || null,
+      archivedByUid: user?.uid || null
+    }, { merge: true });
+    await ActivityLogger.logArchive(filePath, fileName);
+  };
+
+  const restoreSingleProposal = async (file) => {
+    const fileName = file.name;
+    const filePath = `proposals/${fileName}`;
+
+    await deleteDoc(doc(db, "archivedProposals", getArchiveDocId(fileName)));
+    await ActivityLogger.logRestore(filePath, fileName);
+  };
+
+  const runBulkArchiveAction = async (action) => {
+    const filesToUpdate = files.filter((file) => selectedProposals.includes(file.name));
+    const results = { success: [], failed: [] };
+
+    for (const file of filesToUpdate) {
+      try {
+        if (action === "restore") {
+          await restoreSingleProposal(file);
+        } else {
+          await archiveSingleProposal(file);
+        }
+        results.success.push(file.name);
+      } catch (error) {
+        console.error(`Error ${action === "restore" ? "restoring" : "archiving"} ${file.name}:`, error);
+        results.failed.push(file.name);
+      }
+    }
+
+    return results;
+  };
+
+  const handleArchiveClick = async (file) => {
+    if (!canDeleteProposals) {
+      alert("Only Admins and SuperAdmins can archive proposals");
+      return;
+    }
+
+    try {
+      await archiveSingleProposal(file);
+      await loadArchivedProposals();
+      resetSelection();
+      setDeleteSuccess(`Archived "${file.name}"`);
+    } catch (error) {
+      console.error("Error archiving proposal:", error);
+      alert("Failed to archive proposal");
+    } finally {
+      setOpenDropdownId(null);
+    }
+  };
+
+  const handleRestoreClick = async (file) => {
+    if (!canDeleteProposals) {
+      alert("Only Admins and SuperAdmins can restore proposals");
+      return;
+    }
+
+    try {
+      await restoreSingleProposal(file);
+      await loadArchivedProposals();
+      resetSelection();
+      setDeleteSuccess(`Restored "${file.name}"`);
+    } catch (error) {
+      console.error("Error restoring proposal:", error);
+      alert("Failed to restore proposal");
+    } finally {
+      setOpenDropdownId(null);
+    }
+  };
+
+  const handleBulkArchiveClick = async () => {
+    if (!canDeleteProposals) {
+      alert("Only Admins and SuperAdmins can archive proposals");
+      return;
+    }
+
+    if (selectedProposals.length === 0) {
+      alert(`Please select at least one proposal to ${archiveView === "archived" ? "restore" : "archive"}`);
+      return;
+    }
+
+    const action = archiveView === "archived" ? "restore" : "archive";
+
+    try {
+      const results = await runBulkArchiveAction(action);
+      await loadArchivedProposals();
+      resetSelection();
+      const verb = action === "restore" ? "restored" : "archived";
+      setDeleteSuccess(
+        results.failed.length === 0
+          ? `Successfully ${verb} ${results.success.length} proposal${results.success.length !== 1 ? "s" : ""}`
+          : `${results.success.length} ${verb}, ${results.failed.length} failed`
+      );
+    } catch (error) {
+      console.error(`Error running bulk ${action}:`, error);
+      alert(`Failed to ${action} selected proposals`);
     }
   };
 
@@ -309,8 +472,10 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     viewsSnapshot.forEach(doc => batch.delete(doc.ref));
     viewsAltSnapshot.forEach(doc => batch.delete(doc.ref));
     sessionsSnapshot.forEach(doc => batch.delete(doc.ref));
+    batch.delete(doc(db, "archivedProposals", getArchiveDocId(fileName)));
     
     await batch.commit();
+    await ActivityLogger.logDelete(filePath, fileName);
     console.log("✅ Deleted all related Firestore records for:", fileName);
   };
 
@@ -358,6 +523,7 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
       }
       
       await loadProposals();
+      await loadArchivedProposals();
       
       setTimeout(() => {
         setDeleteSuccess(null);
@@ -415,6 +581,12 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
         break;
       case 'sign':
         onSignClick?.(file);
+        break;
+      case 'archive':
+        handleArchiveClick(file);
+        break;
+      case 'restore':
+        handleRestoreClick(file);
         break;
       case 'delete':
         handleDeleteClick(file);
@@ -528,6 +700,12 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
         </h2>
         <div style={headerButtonsStyle}>
           {selectedProposals.length > 0 && canDeleteProposals && (
+            <button onClick={handleBulkArchiveClick} style={bulkArchiveButtonStyle}>
+              {archiveView === "archived" ? <MdUnarchive size={16} /> : <MdArchive size={16} />}
+              {archiveView === "archived" ? "Restore" : "Archive"} ({selectedProposals.length})
+            </button>
+          )}
+          {selectedProposals.length > 0 && canDeleteProposals && (
             <button onClick={handleBulkDeleteClick} style={bulkDeleteButtonStyle}>
               <MdDelete size={16} />
               Delete ({selectedProposals.length})
@@ -538,6 +716,23 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
             Refresh
           </button>
         </div>
+      </div>
+
+      <div style={archiveTabsStyle}>
+        <button
+          onClick={() => handleArchiveViewChange("active")}
+          style={archiveTabButtonStyle(archiveView === "active")}
+        >
+          Active
+          <span style={archiveTabCountStyle}>{activeProposals.length}</span>
+        </button>
+        <button
+          onClick={() => handleArchiveViewChange("archived")}
+          style={archiveTabButtonStyle(archiveView === "archived")}
+        >
+          Archived
+          <span style={archiveTabCountStyle}>{archivedFiles.length}</span>
+        </button>
       </div>
 
       {/* Search Bar */}
@@ -562,7 +757,7 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
           )}
         </div>
         <div style={resultCountStyle}>
-          {filteredProposals.length} {filteredProposals.length === 1 ? 'proposal' : 'proposals'} found
+          {filteredProposals.length} {archiveView === "archived" ? "archived " : ""}{filteredProposals.length === 1 ? 'proposal' : 'proposals'} found
         </div>
       </div>
 
@@ -621,13 +816,18 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
                   <div style={emptyStateStyle}>
                     <MdDescription size={48} color="#CBD5E1" />
                     <p>No proposals found</p>
-                    <p style={emptyHintStyle}>Upload your first proposal using the Upload tab</p>
+                    <p style={emptyHintStyle}>
+                      {archiveView === "archived"
+                        ? "Archived proposals will appear here"
+                        : "Upload your first proposal using the Upload tab"}
+                    </p>
                   </div>
                 </td>
               </tr>
             ) : (
               currentProposals.map((file, index) => {
-                const status = getProposalStatus(file.name);
+                const isArchived = archiveView === "archived";
+                const status = isArchived ? "archived" : getProposalStatus(file.name);
                 const isSigned = status === 'signed';
                 const viewCount = getViewCount(file.name);
                 const isSelected = selectedProposals.includes(file.name);
@@ -714,49 +914,83 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
                           
                           {openDropdownId === fileId && (
                             <div style={dropdownMenuStyle}>
-                              <div
-                                onClick={(e) => handleDropdownAction(e, 'share', file)}
-                                style={dropdownItemStyle("#F59E0B")}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.background = "#FFFBEB";
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.background = "#fff";
-                                }}
-                              >
-                                <MdEmail size={16} />
-                                Share with Client
-                              </div>
-                              <div
-                                onClick={(e) => handleDropdownAction(e, 'sign', file)}
-                                style={dropdownItemStyle("#8B5CF6")}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.background = "#F5F3FF";
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.background = "#fff";
-                                }}
-                              >
-                                <MdEdit size={16} />
-                                Sign Proposal
-                              </div>
-                              <div
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setOpenDropdownId(null);
-                                  markProposalAsRejected(file);
-                                }}
-                                style={dropdownItemStyle("#EF4444")}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.background = "#FEF2F2";
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.background = "#fff";
-                                }}
-                              >
-                                <MdBlockFlipped size={16} />
-                                Reject Proposal
-                              </div>
+                              {!isArchived && (
+                                <>
+                                  <div
+                                    onClick={(e) => handleDropdownAction(e, 'share', file)}
+                                    style={dropdownItemStyle("#F59E0B")}
+                                    onMouseEnter={(e) => {
+                                      e.currentTarget.style.background = "#FFFBEB";
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.background = "#fff";
+                                    }}
+                                  >
+                                    <MdEmail size={16} />
+                                    Share with Client
+                                  </div>
+                                  <div
+                                    onClick={(e) => handleDropdownAction(e, 'sign', file)}
+                                    style={dropdownItemStyle("#8B5CF6")}
+                                    onMouseEnter={(e) => {
+                                      e.currentTarget.style.background = "#F5F3FF";
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.background = "#fff";
+                                    }}
+                                  >
+                                    <MdEdit size={16} />
+                                    Sign Proposal
+                                  </div>
+                                  <div
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setOpenDropdownId(null);
+                                      markProposalAsRejected(file);
+                                    }}
+                                    style={dropdownItemStyle("#EF4444")}
+                                    onMouseEnter={(e) => {
+                                      e.currentTarget.style.background = "#FEF2F2";
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.background = "#fff";
+                                    }}
+                                  >
+                                    <MdBlockFlipped size={16} />
+                                    Reject Proposal
+                                  </div>
+                                </>
+                              )}
+                              {canDeleteProposals && !isArchived && (
+                                <div
+                                  onClick={(e) => handleDropdownAction(e, 'archive', file)}
+                                  style={dropdownItemStyle("#475569")}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = "#F8FAFC";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = "#fff";
+                                  }}
+                                >
+                                  <MdArchive size={16} />
+                                  Archive Proposal
+                                </div>
+                              )}
+                              {canDeleteProposals && isArchived && (
+                                <div
+                                  onClick={(e) => handleDropdownAction(e, 'restore', file)}
+                                  style={dropdownItemStyle("#059669")}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = "#ECFDF5";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = "#fff";
+                                  }}
+                                >
+                                  <MdUnarchive size={16} />
+                                  Restore Proposal
+                                </div>
+                              )}
                               {canDeleteProposals && (
                                 <div
                                   onClick={(e) => handleDropdownAction(e, 'delete', file)}
@@ -1004,6 +1238,60 @@ const bulkDeleteButtonStyle = {
   fontSize: "13px",
   fontWeight: "500",
   transition: "all 0.2s ease",
+};
+
+const bulkArchiveButtonStyle = {
+  padding: "8px 16px",
+  background: "#F8FAFC",
+  color: "#475569",
+  border: "1px solid #CBD5E1",
+  borderRadius: "10px",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  fontSize: "13px",
+  fontWeight: "500",
+  transition: "all 0.2s ease",
+};
+
+const archiveTabsStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "4px",
+  padding: "4px",
+  marginBottom: "20px",
+  background: "#fff",
+  border: "1px solid #E2E8F0",
+  borderRadius: "12px",
+};
+
+const archiveTabButtonStyle = (active) => ({
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "8px 14px",
+  border: "none",
+  borderRadius: "9px",
+  background: active ? "#1E293B" : "transparent",
+  color: active ? "#fff" : "#64748B",
+  cursor: "pointer",
+  fontSize: "13px",
+  fontWeight: "600",
+  transition: "all 0.2s ease",
+});
+
+const archiveTabCountStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minWidth: "20px",
+  height: "20px",
+  padding: "0 6px",
+  borderRadius: "10px",
+  background: "rgba(148, 163, 184, 0.22)",
+  fontSize: "11px",
+  fontWeight: "700",
 };
 
 const searchContainerStyle = {

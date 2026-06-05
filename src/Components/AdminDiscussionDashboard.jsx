@@ -19,7 +19,15 @@ import {
   MdMarkChatRead,
   MdMarkChatUnread,
   MdVisibility,
-  MdVisibilityOff
+  MdVisibilityOff,
+  MdFilterList,
+  MdSort,
+  MdMoreVert,
+  MdStar,
+  MdStarBorder,
+  MdArchive,
+  MdDeleteOutline,
+  MdLabel
 } from 'react-icons/md';
 import { db } from '../firebase';
 import {
@@ -34,9 +42,9 @@ import {
   getDoc,
   deleteDoc,
   orderBy
-
 } from 'firebase/firestore';
 import DiscussionThread from './DiscussionThread';
+import './AdminDiscussionDashboard.css';
 
 const SEEN_STORAGE_KEY_PREFIX = 'admin-discussion-seen:';
 
@@ -76,6 +84,8 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
   const [searchTerm, setSearchTerm] = useState('');
   const [hoveredDiscussion, setHoveredDiscussion] = useState(null);
   const [showReadStatus, setShowReadStatus] = useState(true);
+  const [sortBy, setSortBy] = useState('latest');
+  const [showFilters, setShowFilters] = useState(false);
 
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -92,6 +102,14 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
   });
 
   const [readNotificationKeys, setReadNotificationKeys] = useState(new Set());
+  const [starredDiscussions, setStarredDiscussions] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`starred-discussions-${userId}`);
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
 
   const notificationRef = useRef(null);
   const hasBootstrappedMessagesRef = useRef(false);
@@ -101,6 +119,11 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
 
   const isAdminUser = userRole === 'admin' || userRole === 'superadmin';
   const effectiveError = !isAdminUser ? 'Only admins can access this dashboard' : error;
+
+  // Save starred discussions to localStorage
+  useEffect(() => {
+    localStorage.setItem(`starred-discussions-${userId}`, JSON.stringify([...starredDiscussions]));
+  }, [starredDiscussions, userId]);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 60000);
@@ -146,7 +169,6 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
     if (knownNotificationKeysRef.current.has(key)) return;
     knownNotificationKeysRef.current.add(key);
 
-    // Check if this notification key has been previously read
     const isAlreadyRead = readNotificationKeys.has(key);
 
     const notifWithId = {
@@ -325,6 +347,19 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
     return undefined;
   }, [showNotifications]);
 
+  const toggleStarred = (discussionId, e) => {
+    e.stopPropagation();
+    setStarredDiscussions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(discussionId)) {
+        newSet.delete(discussionId);
+      } else {
+        newSet.add(discussionId);
+      }
+      return newSet;
+    });
+  };
+
   const markDiscussionAsSeen = useCallback(
     async (discussionId) => {
       if (!discussionId) return;
@@ -336,32 +371,22 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
         [discussionId]: latestClientMs
       }));
 
-      // Notify parent component of discussion being seen
       if (onDiscussionSeen) {
         onDiscussionSeen(discussionId, latestClientMs);
       }
 
-      // Mark all chat notifications for this discussion as read
       const discussionNotifications = notifications.filter((n) => n.discussionId === discussionId);
       
       setNotifications((prev) =>
         prev.map((n) =>
-          n.discussionId === discussionId
-            ? {
-                ...n,
-                read: true
-              }
-            : n
+          n.discussionId === discussionId ? { ...n, read: true } : n
         )
       );
 
-      // Persist read status for discussion notifications
       if (discussionNotifications.some((n) => !n.read)) {
         try {
           const newReadKeys = new Set(readNotificationKeys);
-          discussionNotifications.forEach((n) => {
-            newReadKeys.add(n.key);
-          });
+          discussionNotifications.forEach((n) => newReadKeys.add(n.key));
           setReadNotificationKeys(newReadKeys);
 
           const docRef = doc(db, 'adminNotificationPreferences', userId);
@@ -385,19 +410,10 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
     const notification = notifications.find((n) => n.id === id);
     if (!notification || notification.read) return;
 
-    // Update local state
     setNotifications((prev) =>
-      prev.map((n) =>
-        n.id === id
-          ? {
-              ...n,
-              read: true
-            }
-          : n
-      )
+      prev.map((n) => n.id === id ? { ...n, read: true } : n)
     );
 
-    // Persist to Firestore
     try {
       const newReadKeys = new Set(readNotificationKeys);
       newReadKeys.add(notification.key);
@@ -417,12 +433,39 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
     }
   };
 
+  const markAllNotificationsAsRead = async () => {
+    const unreadNotifications = notifications.filter((n) => !n.read);
+    if (unreadNotifications.length === 0) return;
+
+    setNotifications((prev) =>
+      prev.map((n) => (n.read ? n : { ...n, read: true }))
+    );
+
+    try {
+      const newReadKeys = new Set(readNotificationKeys);
+      unreadNotifications.forEach((n) => {
+        if (n.key) newReadKeys.add(n.key);
+      });
+      setReadNotificationKeys(newReadKeys);
+
+      const docRef = doc(db, 'adminNotificationPreferences', userId);
+      await setDoc(
+        docRef,
+        {
+          readNotificationKeys: Array.from(newReadKeys),
+          lastUpdated: serverTimestamp()
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+    }
+  };
+
   const clearNotification = async (id) => {
     const notification = notifications.find((n) => n.id === id);
-    
     setNotifications((prev) => prev.filter((n) => n.id !== id));
 
-    // Also mark as read when clearing
     if (notification && !notification.read) {
       try {
         const newReadKeys = new Set(readNotificationKeys);
@@ -445,15 +488,12 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
   };
 
   const clearAllNotifications = async () => {
-    // Mark all unread notifications as read
     const unreadNotifications = notifications.filter((n) => !n.read);
     
     if (unreadNotifications.length > 0) {
       try {
         const newReadKeys = new Set(readNotificationKeys);
-        unreadNotifications.forEach((n) => {
-          newReadKeys.add(n.key);
-        });
+        unreadNotifications.forEach((n) => newReadKeys.add(n.key));
         setReadNotificationKeys(newReadKeys);
 
         const docRef = doc(db, 'adminNotificationPreferences', userId);
@@ -520,7 +560,6 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
         const unreadCount = getUnreadCount(messages, seenMs);
         const latestMessage = messages.length ? messages[messages.length - 1] : null;
         
-        // Calculate read percentage
         const totalClientMessages = messages.filter(m => m.senderRole !== 'admin').length;
         const readMessages = totalClientMessages - unreadCount;
         const readPercentage = totalClientMessages > 0 ? (readMessages / totalClientMessages) * 100 : 100;
@@ -530,27 +569,45 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
           unreadCount,
           latestMessage,
           readPercentage,
-          totalClientMessages
+          totalClientMessages,
+          isStarred: starredDiscussions.has(discussion.id)
         };
       }),
-    [allProposalDiscussions, discussionMessages, lastSeenByDiscussion]
+    [allProposalDiscussions, discussionMessages, lastSeenByDiscussion, starredDiscussions]
   );
 
   const filteredDiscussions = useMemo(() => {
+    let filtered = [...discussionsWithMessageState];
+    
     const normalizedSearch = searchTerm.trim().toLowerCase();
-
-    return discussionsWithMessageState.filter((discussion) => {
-      const matchesFilter = selectedFilter === 'all' ? true : discussion.status === selectedFilter;
-      const matchesSearch =
-        normalizedSearch === '' ||
+    if (normalizedSearch) {
+      filtered = filtered.filter((discussion) =>
         discussion.proposalName?.toLowerCase().includes(normalizedSearch) ||
         discussion.clientEmail?.toLowerCase().includes(normalizedSearch) ||
         discussion.highlightedText?.toLowerCase().includes(normalizedSearch) ||
-        discussion.latestMessage?.message?.toLowerCase().includes(normalizedSearch);
-
-      return matchesFilter && matchesSearch;
+        discussion.latestMessage?.message?.toLowerCase().includes(normalizedSearch)
+      );
+    }
+    
+    if (selectedFilter !== 'all') {
+      filtered = filtered.filter((discussion) => discussion.status === selectedFilter);
+    }
+    
+    filtered.sort((a, b) => {
+      if (sortBy === 'latest') {
+        return b.lastActivity - a.lastActivity;
+      } else if (sortBy === 'oldest') {
+        return a.lastActivity - b.lastActivity;
+      } else if (sortBy === 'unread') {
+        return b.unreadCount - a.unreadCount;
+      } else if (sortBy === 'starred') {
+        return (b.isStarred ? 1 : 0) - (a.isStarred ? 1 : 0);
+      }
+      return 0;
     });
-  }, [discussionsWithMessageState, selectedFilter, searchTerm]);
+    
+    return filtered;
+  }, [discussionsWithMessageState, searchTerm, selectedFilter, sortBy]);
 
   const unresolvedCount = discussionsWithMessageState.filter((d) => d.status === 'open').length;
   const newClientMessageCount = discussionsWithMessageState.reduce(
@@ -594,28 +651,21 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
 
   if (selectedDiscussionId && selectedDiscussion) {
     return (
-      <div style={styles.container}>
-        <div style={styles.detailView}>
-          <div style={styles.detailHeader}>
-            <button
-              onClick={() => setSelectedDiscussionId(null)}
-              style={styles.backButton}
-              title="Back to list"
-            >
+      <div className="admin-dashboard">
+        <div className="detail-view">
+          <div className="detail-header">
+            <button onClick={() => setSelectedDiscussionId(null)} className="back-button">
               <MdArrowBack size={20} />
             </button>
-            <div style={styles.detailInfo}>
-              <div style={styles.detailTitle}>{selectedDiscussion.proposalName}</div>
-              <div style={styles.detailMeta}>
-                <span style={styles.detailPage}>Page {selectedDiscussion.pageNumber}</span>
-                <span style={styles.detailEmail}>{selectedDiscussion.clientEmail}</span>
+            <div className="detail-info">
+              <div className="detail-title">{selectedDiscussion.proposalName}</div>
+              <div className="detail-meta">
+                <span className="detail-page">Page {selectedDiscussion.pageNumber}</span>
+                <span className="detail-email">{selectedDiscussion.clientEmail}</span>
               </div>
             </div>
             {selectedDiscussion.status === 'open' && (
-              <button
-                onClick={() => handleResolveDiscussion(selectedDiscussion.id)}
-                style={styles.resolveButton}
-              >
+              <button onClick={() => handleResolveDiscussion(selectedDiscussion.id)} className="resolve-button">
                 <MdDoneAll size={16} />
                 Mark Resolved
               </button>
@@ -637,84 +687,83 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
   }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <div style={styles.headerLeft}>
-          <div style={styles.logoIcon}>
+    <div className="admin-dashboard">
+      <div className="dashboard-header">
+        <div className="header-left">
+          <div className="logo-icon">
             <MdChat size={22} />
           </div>
           <div>
-            <div style={styles.title}>Discussion Center</div>
-            <div style={styles.subtitle}>Friendly chat workspace for client comments</div>
+            <div className="title">Discussion Center</div>
+            <div className="subtitle">Manage client conversations</div>
           </div>
         </div>
 
-        <div style={styles.headerActions}>
+        <div className="header-actions">
           {unresolvedCount > 0 && (
-            <div style={styles.unresolvedBadge}>
-              <MdNotificationsNone size={14} />
-              <span>{unresolvedCount} open</span>
+            <div className="stat-badge open-badge">
+              <span className="badge-dot"></span>
+              <span>{unresolvedCount} Open</span>
             </div>
           )}
 
           {newClientMessageCount > 0 && (
-            <div style={styles.newMessageBadge}>
+            <div className="stat-badge unread-badge">
               <MdMessage size={14} />
-              <span>{newClientMessageCount} new</span>
+              <span>{newClientMessageCount} Unread</span>
             </div>
           )}
 
-          <button
-            onClick={() => setShowReadStatus(!showReadStatus)}
-            style={styles.iconButton}
-            title={showReadStatus ? "Hide read status" : "Show read status"}
-          >
-            {showReadStatus ? <MdVisibility size={20} /> : <MdVisibilityOff size={20} />}
-          </button>
-
-          <div style={styles.notificationContainer} ref={notificationRef}>
+          <div className="notification-container" ref={notificationRef}>
             <button
               onClick={() => setShowNotifications((prev) => !prev)}
-              style={{ ...styles.iconButton, position: 'relative' }}
-              title="Notifications"
+              className="icon-button notification-button"
             >
               {bellBadgeCount > 0 ? (
-                <MdNotifications size={20} color="#F59E0B" />
+                <>
+                  <MdNotifications size={20} />
+                  <span className="notification-badge">{bellBadgeCount > 9 ? '9+' : bellBadgeCount}</span>
+                </>
               ) : (
                 <MdNotificationsNone size={20} />
               )}
-              {bellBadgeCount > 0 && <span style={styles.notificationBadge}>{bellBadgeCount}</span>}
             </button>
 
             {showNotifications && (
-              <div style={styles.notificationPanel}>
-                <div style={styles.notificationHeader}>
-                  <span style={styles.notificationTitle}>Notifications</span>
-                  {notifications.length > 0 && (
+              <div className="notification-panel">
+                <div className="notification-header">
+                  <span className="notification-title">Notifications</span>
+                  <div className="notification-actions">
+                    <button
+                      onClick={markAllNotificationsAsRead}
+                      className="mark-read-btn"
+                      disabled={unreadNotificationCount === 0}
+                    >
+                      <MdDoneAll size={16} />
+                      Mark all read
+                    </button>
                     <button
                       onClick={clearAllNotifications}
-                      style={styles.clearAllButton}
-                      title="Clear all"
+                      className="clear-all-btn"
+                      disabled={notifications.length === 0}
                     >
                       <MdClear size={16} />
+                      Clear all
                     </button>
-                  )}
+                  </div>
                 </div>
 
-                {notifications.length === 0 && signedProposals.length === 0 ? (
-                  <div style={styles.emptyNotifications}>
-                    <MdNotificationsNone size={32} color="#94A3B8" />
-                    <div>All caught up.</div>
+                {notifications.length === 0 ? (
+                  <div className="empty-notifications">
+                    <MdNotificationsNone size={40} color="#CBD5E1" />
+                    <div>All caught up!</div>
                   </div>
                 ) : (
-                  <div style={styles.notificationList}>
-                    {notifications.map((notification) => (
+                  <div className="notification-list">
+                    {notifications.slice(0, 10).map((notification) => (
                       <div
                         key={notification.id}
-                        style={{
-                          ...styles.notificationItem,
-                          ...(notification.read ? styles.notificationItemRead : {})
-                        }}
+                        className={`notification-item ${notification.read ? 'read' : 'unread'}`}
                         onClick={async () => {
                           await markNotificationAsRead(notification.id);
                           if (notification.discussionId) {
@@ -722,265 +771,235 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
                           }
                         }}
                       >
-                        <div style={styles.notificationIcon}>
+                        <div className="notification-icon">
                           {notification.type === 'chat' ? (
-                            <MdMessage size={16} color="#00D4FF" />
-                          ) : notification.type === 'signed' ? (
-                            <MdCheckCircle size={16} color="#10B981" />
+                            <MdMessage size={16} />
                           ) : (
-                            <MdCheck size={16} color="#3B82F6" />
+                            <MdCheckCircle size={16} />
                           )}
                         </div>
-                        <div style={styles.notificationContent}>
-                          <div style={styles.notificationItemTitle}>{notification.title}</div>
-                          <div style={styles.notificationItemMessage}>{notification.message}</div>
-                          {notification.email && <div style={styles.notificationEmail}>{notification.email}</div>}
-                          <div style={styles.notificationTime}>{getTimeAgo(notification.timestamp)}</div>
+                        <div className="notification-content">
+                          <div className="notification-title-text">{notification.title}</div>
+                          <div className="notification-message">{notification.message}</div>
+                          <div className="notification-time">{getTimeAgo(notification.timestamp)}</div>
                         </div>
                         <button
-                          onClick={async (event) => {
-                            event.stopPropagation();
+                          onClick={async (e) => {
+                            e.stopPropagation();
                             await clearNotification(notification.id);
                           }}
-                          style={styles.notificationClose}
-                          title="Dismiss"
+                          className="notification-dismiss"
                         >
                           ×
                         </button>
                       </div>
                     ))}
-
-                    {signedProposals.length > 0 && (
-                      <div style={styles.notificationSection}>
-                        <div style={styles.notificationSectionTitle}>
-                          <MdCheckCircle size={14} color="#10B981" />
-                          Recently Signed Proposals ({signedProposals.length})
-                        </div>
-                        {signedProposals.slice(0, 3).map((proposal) => (
-                          <div key={proposal.id} style={styles.signedProposalItem}>
-                            <div style={styles.signedProposalName}>{proposal.proposalName}</div>
-                            <div style={styles.signedProposalMeta}>
-                              <span>{proposal.signerEmail || proposal.clientEmail}</span>
-                              <span>{getTimeAgo(proposal.signedDate)}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
             )}
           </div>
 
-          <button
-            onClick={handleRefresh}
-            style={styles.iconButton}
-            title="Refresh"
-            disabled={refreshing}
-          >
-            <MdRefresh size={20} style={{ animation: refreshing ? 'spin 0.6s linear infinite' : 'none' }} />
+          <button onClick={handleRefresh} className="icon-button" disabled={refreshing}>
+            <MdRefresh size={20} className={refreshing ? 'spinning' : ''} />
           </button>
 
-          <button onClick={onClose} style={styles.iconButton} title="Close">
+          <button onClick={onClose} className="icon-button close-button">
             <MdClose size={20} />
           </button>
         </div>
       </div>
 
-      <div style={styles.searchContainer}>
-        <MdSearch size={18} color="#94A3B8" />
-        <input
-          type="text"
-          placeholder="Search by proposal, client, or message..."
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          style={styles.searchInput}
-        />
-        {searchTerm && (
-          <button onClick={() => setSearchTerm('')} style={styles.clearSearch}>
-            ×
-          </button>
-        )}
+      <div className="search-section">
+        <div className="search-bar">
+          <MdSearch size={18} className="search-icon" />
+          <input
+            type="text"
+            placeholder="Search discussions..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="search-input"
+          />
+          {searchTerm && (
+            <button onClick={() => setSearchTerm('')} className="clear-search">
+              ×
+            </button>
+          )}
+        </div>
+
+        <button onClick={() => setShowFilters(!showFilters)} className="filter-toggle">
+          <MdFilterList size={18} />
+          <span>Filters</span>
+        </button>
       </div>
 
-      <div style={styles.filterTabs}>
-        {[
-          {
-            key: 'open',
-            label: 'Open',
-            icon: <MdChat size={14} />,
-            count: discussionsWithMessageState.filter((discussion) => discussion.status === 'open').length
-          },
-          {
-            key: 'resolved',
-            label: 'Resolved',
-            icon: <MdCheckCircle size={14} />,
-            count: discussionsWithMessageState.filter((discussion) => discussion.status === 'resolved').length
-          },
-          {
-            key: 'all',
-            label: 'All',
-            icon: <MdMessage size={14} />,
-            count: discussionsWithMessageState.length
-          }
-        ].map((filter) => (
-          <button
-            key={filter.key}
-            onClick={() => setSelectedFilter(filter.key)}
-            style={{
-              ...styles.filterTab,
-              ...(selectedFilter === filter.key ? styles.filterTabActive : {})
-            }}
-          >
-            {filter.icon}
-            {filter.label}
-            {filter.count > 0 && (
-              <span
-                style={{
-                  ...styles.filterCount,
-                  ...(selectedFilter === filter.key ? styles.filterCountActive : {})
-                }}
-              >
-                {filter.count}
-              </span>
-            )}
-          </button>
-        ))}
+      {showFilters && (
+        <div className="filters-panel">
+          <div className="filter-group">
+            <label>Sort by:</label>
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="sort-select">
+              <option value="latest">Latest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="unread">Most unread</option>
+              <option value="starred">Starred first</option>
+            </select>
+          </div>
+          <div className="filter-group">
+            <label>Show read status:</label>
+            <button onClick={() => setShowReadStatus(!showReadStatus)} className="status-toggle">
+              {showReadStatus ? <MdVisibility size={16} /> : <MdVisibilityOff size={16} />}
+              <span>{showReadStatus ? 'Hide' : 'Show'} read status</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="filter-tabs">
+        <button
+          onClick={() => setSelectedFilter('open')}
+          className={`filter-tab ${selectedFilter === 'open' ? 'active' : ''}`}
+        >
+          <span className="tab-dot open"></span>
+          Open
+          <span className="tab-count">{discussionsWithMessageState.filter(d => d.status === 'open').length}</span>
+        </button>
+        <button
+          onClick={() => setSelectedFilter('resolved')}
+          className={`filter-tab ${selectedFilter === 'resolved' ? 'active' : ''}`}
+        >
+          <MdCheckCircle size={12} />
+          Resolved
+          <span className="tab-count">{discussionsWithMessageState.filter(d => d.status === 'resolved').length}</span>
+        </button>
+        <button
+          onClick={() => setSelectedFilter('all')}
+          className={`filter-tab ${selectedFilter === 'all' ? 'active' : ''}`}
+        >
+          <MdMessage size={12} />
+          All
+          <span className="tab-count">{discussionsWithMessageState.length}</span>
+        </button>
       </div>
 
-      <div style={styles.content}>
+      <div className="discussions-content">
         {loading && (
-          <div style={styles.centerMessage}>
-            <div style={styles.spinner} />
+          <div className="loading-state">
+            <div className="loading-spinner"></div>
             <div>Loading discussions...</div>
           </div>
         )}
 
         {effectiveError && (
-          <div style={styles.errorMessage}>
-            <div style={styles.errorIcon}>!</div>
+          <div className="error-state">
+            <div className="error-icon">⚠️</div>
             <div>{effectiveError}</div>
           </div>
         )}
 
         {!loading && !effectiveError && filteredDiscussions.length === 0 && (
-          <div style={styles.centerMessage}>
-            <div style={styles.emptyIcon}>Chat</div>
-            <div style={styles.emptyTitle}>No discussions found</div>
-            <div style={styles.emptyText}>
+          <div className="empty-state">
+            <div className="empty-icon">💬</div>
+            <div className="empty-title">No discussions found</div>
+            <div className="empty-text">
               {searchTerm ? 'Try a different search term' : 'Client comments will appear here'}
             </div>
           </div>
         )}
 
         {!loading && !effectiveError && filteredDiscussions.length > 0 && (
-          <div style={styles.discussionList}>
+          <div className="discussions-list">
             {filteredDiscussions.map((discussion) => (
               <div
                 key={discussion.id}
-                style={{
-                  ...styles.discussionCard,
-                  ...(selectedDiscussionId === discussion.id ? styles.discussionCardActive : {}),
-                  ...(hoveredDiscussion === discussion.id ? styles.discussionCardHover : {}),
-                  ...(discussion.unreadCount > 0 && styles.discussionCardUnread)
-                }}
+                className={`discussion-card ${discussion.unreadCount > 0 ? 'unread' : ''} ${selectedDiscussionId === discussion.id ? 'active' : ''} ${hoveredDiscussion === discussion.id ? 'hovered' : ''}`}
                 onClick={() => handleSelectDiscussion(discussion.id)}
                 onMouseEnter={() => setHoveredDiscussion(discussion.id)}
                 onMouseLeave={() => setHoveredDiscussion(null)}
               >
-                <div style={styles.cardHeader}>
-                  <div style={styles.proposalInfo}>
-                    <div 
-                      style={{
-                        ...styles.proposalIcon,
-                        ...(discussion.unreadCount > 0 && styles.proposalIconUnread)
-                      }}
-                    >
+                <div className="card-header">
+                  <div className="proposal-info">
+                    <div className="proposal-icon">
                       <MdDescription size={16} />
                     </div>
-                    <div style={styles.proposalTextContainer}>
-                      <div style={styles.proposalName}>{discussion.proposalName}</div>
-                      <div style={styles.pageInfo}>Page {discussion.pageNumber}</div>
+                    <div className="proposal-details">
+                      <div className="proposal-name">{discussion.proposalName}</div>
+                      <div className="page-info">Page {discussion.pageNumber}</div>
                     </div>
                   </div>
-
-                  {discussion.status === 'resolved' ? (
-                    <span style={styles.resolvedBadge}>
-                      <MdCheckCircle size={12} />
-                      Resolved
-                    </span>
-                  ) : (
-                    <span style={styles.openBadge}>
-                      <span style={styles.openDot} />
-                      Open
-                    </span>
-                  )}
+                  <div className="card-actions">
+                    <button
+                      onClick={(e) => toggleStarred(discussion.id, e)}
+                      className="star-button"
+                      title={discussion.isStarred ? 'Remove from starred' : 'Add to starred'}
+                    >
+                      {discussion.isStarred ? <MdStar size={16} color="#F59E0B" /> : <MdStarBorder size={16} />}
+                    </button>
+                    {discussion.status === 'resolved' ? (
+                      <span className="status-badge resolved">
+                        <MdCheckCircle size={12} />
+                        Resolved
+                      </span>
+                    ) : (
+                      <span className="status-badge open">
+                        <span className="pulse-dot"></span>
+                        Open
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                <div style={styles.highlightPreview}>
-                  "{discussion.highlightedText?.substring(0, 80)}
-                  {discussion.highlightedText?.length > 80 ? '...' : ''}"
+                <div className="highlight-text">
+                  "{discussion.highlightedText?.substring(0, 100)}
+                  {discussion.highlightedText?.length > 100 ? '...' : ''}"
                 </div>
 
                 {discussion.latestMessage?.message && (
-                  <div style={styles.latestMessagePreview}>
-                    <MdMessage size={12} color="#64748B" />
+                  <div className="latest-message">
+                    <MdMessage size={12} className="message-icon" />
                     <span>{discussion.latestMessage.message.substring(0, 80)}</span>
                   </div>
                 )}
 
-                <div style={styles.cardFooter}>
-                  <div style={styles.clientInfo}>
-                    <MdPerson size={12} color="#94A3B8" />
-                    <span style={styles.clientName}>{discussion.clientEmail?.split('@')[0] || 'Client'}</span>
+                <div className="card-footer">
+                  <div className="client-info">
+                    <MdPerson size={12} />
+                    <span>{discussion.clientEmail?.split('@')[0] || 'Client'}</span>
                   </div>
-                  <div style={styles.clientEmailFull}>
-                    <MdEmail size={12} color="#94A3B8" />
-                    <span style={styles.clientEmailText}>{discussion.clientEmail}</span>
-                  </div>
-                  <div style={styles.messageStats}>
+                  <div className="message-stats">
                     <MdChat size={12} />
-                    <span>{discussion.messageCount || 0}</span>
-                    <span style={styles.timeAgo}>{getTimeAgo(discussion.lastActivity)}</span>
+                    <span>{discussion.messageCount || 0} messages</span>
+                    <span className="time-ago">{getTimeAgo(discussion.lastActivity)}</span>
                   </div>
                 </div>
 
                 {showReadStatus && (
-                  <div style={styles.readStatusContainer}>
-                    <div style={styles.readStatusHeader}>
-                      <div style={styles.readStatusLabel}>
+                  <div className="read-status">
+                    <div className="read-status-header">
+                      <div className="read-status-label">
                         {getReadStatusIcon(discussion)}
-                        <span style={styles.readStatusText}>
-                          {discussion.unreadCount === 0 ? 'All messages read' : `${discussion.unreadCount} unread message${discussion.unreadCount > 1 ? 's' : ''}`}
+                        <span>
+                          {discussion.unreadCount === 0 
+                            ? 'All messages read' 
+                            : `${discussion.unreadCount} unread`}
                         </span>
                       </div>
                       {discussion.totalClientMessages > 0 && (
-                        <span style={styles.readStatusPercentage}>
-                          {Math.round(discussion.readPercentage)}% read
-                        </span>
+                        <span className="read-percentage">{Math.round(discussion.readPercentage)}%</span>
                       )}
                     </div>
-                    <div style={styles.progressBarContainer}>
+                    <div className="progress-bar">
                       <div 
-                        style={{
-                          ...styles.progressBar,
-                          width: `${discussion.readPercentage}%`,
-                          ...(discussion.readPercentage === 100 
-                            ? styles.progressBarComplete 
-                            : discussion.readPercentage > 0 
-                              ? styles.progressBarPartial 
-                              : styles.progressBarEmpty)
-                        }}
+                        className={`progress-fill ${discussion.readPercentage === 100 ? 'complete' : discussion.readPercentage > 0 ? 'partial' : 'empty'}`}
+                        style={{ width: `${discussion.readPercentage}%` }}
                       />
                     </div>
                   </div>
                 )}
 
                 {discussion.unreadCount > 0 && (
-                  <div style={styles.unreadIndicator}>
-                    <div style={styles.unreadDot} />
-                    <span style={styles.unreadCount}>{discussion.unreadCount}</span>
+                  <div className="unread-badge">
+                    <div className="unread-dot"></div>
+                    <span>{discussion.unreadCount}</span>
                   </div>
                 )}
               </div>
@@ -988,847 +1007,8 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
           </div>
         )}
       </div>
-
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-
-        @keyframes slideIn {
-          from {
-            opacity: 0;
-            transform: translateX(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
-
-        @keyframes pulse {
-          0% { transform: scale(1); opacity: 1; }
-          50% { transform: scale(1.2); opacity: 0.7; }
-          100% { transform: scale(1); opacity: 1; }
-        }
-
-        @keyframes shimmer {
-          0% { background-position: -1000px 0; }
-          100% { background-position: 1000px 0; }
-        }
-
-        ::-webkit-scrollbar {
-          width: 6px;
-        }
-
-        ::-webkit-scrollbar-track {
-          background: #F1F5F9;
-          border-radius: 3px;
-        }
-
-        ::-webkit-scrollbar-thumb {
-          background: #CBD5E1;
-          border-radius: 3px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-          background: #94A3B8;
-        }
-      `}</style>
     </div>
   );
-};
-
-const styles = {
-  container: {
-    position: 'fixed',
-    top: 0,
-    right: 0,
-    width: '480px',
-    height: '100vh',
-    background: '#FFFFFF',
-    borderLeft: '1px solid #E2E8F0',
-    boxShadow: '-8px 0 24px rgba(0,0,0,0.08)',
-    display: 'flex',
-    flexDirection: 'column',
-    zIndex: 1000,
-    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    animation: 'slideIn 0.3s ease'
-  },
-  detailView: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%'
-  },
-  detailHeader: {
-    padding: '20px 24px',
-    borderBottom: '1px solid #F1F5F9',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    background: '#FFFFFF',
-    flexShrink: 0
-  },
-  backButton: {
-    width: '36px',
-    height: '36px',
-    padding: 0,
-    background: '#F8FAFC',
-    border: '1px solid #E2E8F0',
-    borderRadius: '10px',
-    cursor: 'pointer',
-    color: '#64748B',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    transition: 'all 0.2s ease',
-    flexShrink: 0,
-    ':hover': {
-      background: '#F1F5F9',
-      transform: 'scale(1.02)'
-    }
-  },
-  detailInfo: {
-    flex: 1,
-    minWidth: 0
-  },
-  detailTitle: {
-    fontSize: '15px',
-    fontWeight: '600',
-    color: '#0F172A',
-    marginBottom: '4px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    maxWidth: '100%'
-  },
-  detailMeta: {
-    display: 'flex',
-    gap: '12px',
-    fontSize: '12px',
-    color: '#64748B',
-    flexWrap: 'wrap'
-  },
-  detailPage: {
-    background: '#F1F5F9',
-    padding: '2px 8px',
-    borderRadius: '4px',
-    flexShrink: 0
-  },
-  detailEmail: {
-    color: '#64748B',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    maxWidth: '200px'
-  },
-  resolveButton: {
-    padding: '8px 16px',
-    background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-    border: 'none',
-    borderRadius: '10px',
-    color: '#FFFFFF',
-    fontSize: '12px',
-    fontWeight: '500',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    transition: 'all 0.2s ease',
-    whiteSpace: 'nowrap',
-    flexShrink: 0,
-    ':hover': {
-      transform: 'translateY(-1px)',
-      boxShadow: '0 4px 12px rgba(16,185,129,0.3)'
-    }
-  },
-  header: {
-    padding: '20px 24px',
-    borderBottom: '1px solid #F1F5F9',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    background: '#FFFFFF',
-    flexShrink: 0
-  },
-  headerLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    minWidth: 0
-  },
-  logoIcon: {
-    width: '40px',
-    height: '40px',
-    background: 'linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)',
-    borderRadius: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: '#FFFFFF',
-    flexShrink: 0
-  },
-  title: {
-    fontSize: '18px',
-    fontWeight: '700',
-    color: '#0F172A',
-    letterSpacing: '-0.3px'
-  },
-  subtitle: {
-    fontSize: '12px',
-    color: '#64748B',
-    marginTop: '2px'
-  },
-  headerActions: {
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'center',
-    flexShrink: 0
-  },
-  unresolvedBadge: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '6px 12px',
-    background: '#FEF2F2',
-    borderRadius: '20px',
-    fontSize: '12px',
-    fontWeight: '600',
-    color: '#DC2626',
-    whiteSpace: 'nowrap'
-  },
-  newMessageBadge: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '6px 12px',
-    background: '#EFF6FF',
-    borderRadius: '20px',
-    fontSize: '12px',
-    fontWeight: '600',
-    color: '#2563EB',
-    whiteSpace: 'nowrap'
-  },
-  iconButton: {
-    width: '36px',
-    height: '36px',
-    padding: 0,
-    background: '#F8FAFC',
-    border: '1px solid #E2E8F0',
-    borderRadius: '10px',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: '#64748B',
-    transition: 'all 0.2s ease',
-    flexShrink: 0,
-    ':hover': {
-      background: '#F1F5F9',
-      transform: 'scale(1.02)'
-    }
-  },
-  searchContainer: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    margin: '16px 20px',
-    padding: '10px 14px',
-    background: '#F8FAFC',
-    border: '1px solid #E2E8F0',
-    borderRadius: '12px',
-    transition: 'all 0.2s ease',
-    flexShrink: 0,
-    ':focus-within': {
-      borderColor: '#00D4FF',
-      boxShadow: '0 0 0 3px rgba(0,212,255,0.1)'
-    }
-  },
-  searchInput: {
-    flex: 1,
-    border: 'none',
-    background: 'transparent',
-    outline: 'none',
-    fontSize: '13px',
-    color: '#0F172A',
-    minWidth: 0,
-    '::placeholder': {
-      color: '#94A3B8'
-    }
-  },
-  clearSearch: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    color: '#94A3B8',
-    fontSize: '14px',
-    padding: '2px',
-    flexShrink: 0,
-    textTransform: 'uppercase',
-    ':hover': {
-      color: '#64748B'
-    }
-  },
-  filterTabs: {
-    display: 'flex',
-    gap: '8px',
-    padding: '0 20px 16px 20px',
-    borderBottom: '1px solid #F1F5F9',
-    flexShrink: 0
-  },
-  filterTab: {
-    flex: 1,
-    padding: '8px 12px',
-    background: 'transparent',
-    border: '1px solid #E2E8F0',
-    borderRadius: '10px',
-    fontSize: '12px',
-    fontWeight: '500',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    color: '#64748B',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '6px',
-    whiteSpace: 'nowrap',
-    ':hover': {
-      background: '#F8FAFC',
-      borderColor: '#CBD5E1'
-    }
-  },
-  filterTabActive: {
-    background: 'linear-gradient(135deg, #00D4FF 0%, #0099CC 100%)',
-    borderColor: '#00D4FF',
-    color: '#FFFFFF'
-  },
-  filterCount: {
-    background: '#E2E8F0',
-    padding: '2px 6px',
-    borderRadius: '10px',
-    fontSize: '10px',
-    fontWeight: '600',
-    color: '#64748B'
-  },
-  filterCountActive: {
-    background: 'rgba(255,255,255,0.25)',
-    color: '#FFFFFF'
-  },
-  content: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '16px 20px'
-  },
-  centerMessage: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100%',
-    minHeight: '300px',
-    textAlign: 'center'
-  },
-  spinner: {
-    width: '40px',
-    height: '40px',
-    border: '3px solid #E2E8F0',
-    borderTopColor: '#00D4FF',
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-    marginBottom: '16px'
-  },
-  errorMessage: {
-    background: '#FEF2F2',
-    border: '1px solid #FEE2E2',
-    borderRadius: '12px',
-    padding: '16px',
-    display: 'flex',
-    gap: '12px',
-    alignItems: 'center',
-    color: '#DC2626',
-    fontSize: '13px'
-  },
-  errorIcon: {
-    fontSize: '20px',
-    fontWeight: 700
-  },
-  emptyIcon: {
-    fontSize: '32px',
-    fontWeight: 600,
-    marginBottom: '16px',
-    color: '#64748B'
-  },
-  emptyTitle: {
-    fontSize: '16px',
-    fontWeight: '600',
-    color: '#0F172A',
-    marginBottom: '8px'
-  },
-  emptyText: {
-    fontSize: '13px',
-    color: '#94A3B8'
-  },
-  discussionList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px'
-  },
-  discussionCard: {
-    position: 'relative',
-    background: '#FFFFFF',
-    border: '1px solid #E2E8F0',
-    borderRadius: '16px',
-    padding: '16px',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease'
-  },
-  discussionCardUnread: {
-    background: 'linear-gradient(135deg, #FFF5F5 0%, #FFFFFF 100%)',
-    borderLeft: '3px solid #EF4444'
-  },
-  discussionCardHover: {
-    transform: 'translateX(-2px)',
-    boxShadow: '0 8px 20px rgba(0,0,0,0.08)',
-    borderColor: '#CBD5E1'
-  },
-  discussionCardActive: {
-    background: 'linear-gradient(135deg, #F0F9FF 0%, #E6F7FF 100%)',
-    borderColor: '#00D4FF',
-    boxShadow: '0 4px 12px rgba(0,212,255,0.15)'
-  },
-  cardHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: '12px',
-    gap: '12px'
-  },
-  proposalInfo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    flex: 1,
-    minWidth: 0
-  },
-  proposalIcon: {
-    width: '32px',
-    height: '32px',
-    background: '#F1F5F9',
-    borderRadius: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: '#3B82F6',
-    flexShrink: 0
-  },
-  proposalIconUnread: {
-    background: '#FEE2E2',
-    color: '#EF4444',
-    animation: 'pulse 2s ease-in-out infinite'
-  },
-  proposalTextContainer: {
-    minWidth: 0,
-    flex: 1
-  },
-  proposalName: {
-    fontSize: '13px',
-    fontWeight: '600',
-    color: '#0F172A',
-    marginBottom: '2px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
-  },
-  pageInfo: {
-    fontSize: '11px',
-    color: '#94A3B8'
-  },
-  resolvedBadge: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px',
-    fontSize: '11px',
-    fontWeight: '500',
-    color: '#10B981',
-    background: '#D1FAE5',
-    padding: '4px 8px',
-    borderRadius: '20px',
-    whiteSpace: 'nowrap',
-    flexShrink: 0
-  },
-  openBadge: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '11px',
-    fontWeight: '500',
-    color: '#F59E0B',
-    background: '#FEF3C7',
-    padding: '4px 10px',
-    borderRadius: '20px',
-    whiteSpace: 'nowrap',
-    flexShrink: 0
-  },
-  openDot: {
-    width: '6px',
-    height: '6px',
-    background: '#F59E0B',
-    borderRadius: '50%',
-    animation: 'pulse 1.5s ease-in-out infinite'
-  },
-  highlightPreview: {
-    fontSize: '12px',
-    color: '#475569',
-    fontStyle: 'italic',
-    lineHeight: '1.5',
-    padding: '10px 0',
-    borderTop: '1px solid #F1F5F9',
-    borderBottom: '1px solid #F1F5F9',
-    marginBottom: '10px',
-    overflow: 'hidden',
-    display: '-webkit-box',
-    WebkitLineClamp: 2,
-    WebkitBoxOrient: 'vertical',
-    wordBreak: 'break-word'
-  },
-  latestMessagePreview: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    marginBottom: '12px',
-    fontSize: '11px',
-    color: '#64748B',
-    overflow: 'hidden'
-  },
-  cardFooter: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: '12px',
-    fontSize: '11px',
-    color: '#94A3B8',
-    marginBottom: '12px'
-  },
-  clientInfo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    flexShrink: 0
-  },
-  clientName: {
-    fontSize: '11px',
-    color: '#64748B'
-  },
-  clientEmailFull: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    minWidth: 0,
-    flex: 1
-  },
-  clientEmailText: {
-    fontSize: '11px',
-    color: '#64748B',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
-  },
-  messageStats: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    flexShrink: 0
-  },
-  timeAgo: {
-    marginLeft: '4px',
-    paddingLeft: '8px',
-    borderLeft: '1px solid #E2E8F0'
-  },
-  readStatusContainer: {
-    marginTop: '8px',
-    padding: '8px',
-    background: '#F8FAFC',
-    borderRadius: '8px',
-    border: '1px solid #E2E8F0'
-  },
-  readStatusHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '6px'
-  },
-  readStatusLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '11px',
-    fontWeight: '500',
-    color: '#475569'
-  },
-  readStatusText: {
-    fontSize: '11px'
-  },
-  readStatusPercentage: {
-    fontSize: '10px',
-    fontWeight: '600',
-    color: '#00D4FF'
-  },
-  progressBarContainer: {
-    width: '100%',
-    height: '4px',
-    background: '#E2E8F0',
-    borderRadius: '2px',
-    overflow: 'hidden'
-  },
-  progressBar: {
-    height: '100%',
-    transition: 'width 0.3s ease',
-    borderRadius: '2px'
-  },
-  progressBarComplete: {
-    background: 'linear-gradient(90deg, #10B981, #34D399)'
-  },
-  progressBarPartial: {
-    background: 'linear-gradient(90deg, #F59E0B, #FBBF24)'
-  },
-  progressBarEmpty: {
-    background: '#EF4444'
-  },
-  unreadIndicator: {
-    position: 'absolute',
-    top: '12px',
-    right: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px'
-  },
-  unreadDot: {
-    width: '8px',
-    height: '8px',
-    background: '#EF4444',
-    borderRadius: '50%',
-    animation: 'pulse 1.5s ease-in-out infinite'
-  },
-  unreadCount: {
-    background: '#EF4444',
-    color: '#FFFFFF',
-    fontSize: '10px',
-    fontWeight: '700',
-    minWidth: '18px',
-    height: '18px',
-    borderRadius: '999px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '0 5px'
-  },
-  notificationContainer: {
-    position: 'relative'
-  },
-  notificationBadge: {
-    position: 'absolute',
-    top: '-6px',
-    right: '-6px',
-    background: '#EF4444',
-    color: '#FFFFFF',
-    borderRadius: '50%',
-    width: '20px',
-    height: '20px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '11px',
-    fontWeight: '700',
-    border: '2px solid #FFFFFF'
-  },
-  notificationPanel: {
-    position: 'absolute',
-    top: '100%',
-    right: 0,
-    width: '380px',
-    maxHeight: '500px',
-    background: '#FFFFFF',
-    border: '1px solid #E2E8F0',
-    borderRadius: '12px',
-    boxShadow: '0 20px 25px rgba(0,0,0,0.15)',
-    zIndex: 2000,
-    marginTop: '8px',
-    display: 'flex',
-    flexDirection: 'column',
-    animation: 'slideIn 0.2s ease'
-  },
-  notificationHeader: {
-    padding: '16px 20px',
-    borderBottom: '1px solid #F1F5F9',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexShrink: 0
-  },
-  notificationTitle: {
-    fontSize: '16px',
-    fontWeight: '600',
-    color: '#0F172A'
-  },
-  clearAllButton: {
-    width: '32px',
-    height: '32px',
-    background: '#F8FAFC',
-    border: '1px solid #E2E8F0',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: '#64748B',
-    transition: 'all 0.2s ease',
-    ':hover': {
-      background: '#F1F5F9',
-      color: '#475569'
-    }
-  },
-  notificationList: {
-    flex: 1,
-    overflowY: 'auto',
-    display: 'flex',
-    flexDirection: 'column'
-  },
-  emptyNotifications: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '40px 20px',
-    color: '#94A3B8',
-    textAlign: 'center',
-    fontSize: '14px'
-  },
-  notificationItem: {
-    padding: '12px 16px',
-    borderBottom: '1px solid #F1F5F9',
-    display: 'flex',
-    gap: '12px',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    background: '#F8FAFC',
-    margin: '0 8px 8px 8px',
-    borderRadius: '8px',
-    position: 'relative',
-    ':hover': {
-      background: '#F1F5F9',
-      transform: 'translateX(-2px)'
-    }
-  },
-  notificationItemRead: {
-    background: '#FFFFFF',
-    opacity: 0.7
-  },
-  notificationIcon: {
-    width: '32px',
-    height: '32px',
-    background: '#F1F5F9',
-    borderRadius: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0
-  },
-  notificationContent: {
-    flex: 1,
-    minWidth: 0
-  },
-  notificationItemTitle: {
-    fontSize: '13px',
-    fontWeight: '600',
-    color: '#0F172A',
-    marginBottom: '2px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    maxWidth: '100%'
-  },
-  notificationItemMessage: {
-    fontSize: '12px',
-    color: '#475569',
-    marginBottom: '4px',
-    overflow: 'hidden',
-    display: '-webkit-box',
-    WebkitLineClamp: 2,
-    WebkitBoxOrient: 'vertical',
-    wordBreak: 'break-word'
-  },
-  notificationEmail: {
-    fontSize: '11px',
-    color: '#94A3B8',
-    marginBottom: '4px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    maxWidth: '100%'
-  },
-  notificationTime: {
-    fontSize: '10px',
-    color: '#94A3B8'
-  },
-  notificationClose: {
-    background: 'none',
-    border: 'none',
-    color: '#94A3B8',
-    fontSize: '14px',
-    fontWeight: 700,
-    cursor: 'pointer',
-    padding: '0 4px',
-    transition: 'color 0.2s ease',
-    textTransform: 'uppercase',
-    ':hover': {
-      color: '#64748B'
-    }
-  },
-  notificationSection: {
-    padding: '12px 16px',
-    borderTop: '1px solid #E2E8F0',
-    background: '#F8FAFC',
-    margin: '0 8px 8px 8px',
-    borderRadius: '8px'
-  },
-  notificationSectionTitle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontSize: '12px',
-    fontWeight: '600',
-    color: '#0F172A',
-    marginBottom: '8px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
-  },
-  signedProposalItem: {
-    padding: '8px 0',
-    borderBottom: '1px solid #E2E8F0',
-    ':last-child': {
-      borderBottom: 'none'
-    }
-  },
-  signedProposalName: {
-    fontSize: '12px',
-    fontWeight: '500',
-    color: '#0F172A',
-    marginBottom: '2px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    maxWidth: '100%'
-  },
-  signedProposalMeta: {
-    fontSize: '10px',
-    color: '#94A3B8',
-    display: 'flex',
-    justifyContent: 'space-between',
-    gap: '4px',
-    alignItems: 'center',
-    flexWrap: 'wrap'
-  }
 };
 
 export default AdminDiscussionDashboard;

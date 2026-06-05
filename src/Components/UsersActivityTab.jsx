@@ -29,6 +29,19 @@ import { UserRoleContext } from '../context/UserRoleContext';
 import { useUserActivity } from '../hooks/useUserActivity';
 import './UsersActivityTab.css';
 
+const toDateInputValue = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getDefaultStartDate = () => {
+  const date = new Date();
+  date.setDate(date.getDate() - 6);
+  return toDateInputValue(date);
+};
+
 /**
  * UsersActivityTab Component
  * Displays real-time user activity logs for admin
@@ -40,11 +53,13 @@ export default function UsersActivityTab() {
   const [filteredActivities, setFilteredActivities] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedActivityType, setSelectedActivityType] = useState('all');
-  const [timeRange, setTimeRange] = useState('week');
+  const [startDate, setStartDate] = useState(getDefaultStartDate);
+  const [endDate, setEndDate] = useState(() => toDateInputValue(new Date()));
   const [stats, setStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [page, setPage] = useState(1);
   const itemsPerPage = 10;
+  const todayDate = toDateInputValue(new Date());
 
   // Check if user is admin
   const isAdmin = role === 'admin' || role === 'superadmin';
@@ -52,7 +67,12 @@ export default function UsersActivityTab() {
   // Fetch activities on mount
   useEffect(() => {
     if (isAdmin) {
-      fetchAllActivities(500);
+      const unsubscribe = fetchAllActivities(500);
+      return () => {
+        if (typeof unsubscribe === 'function') {
+          unsubscribe();
+        }
+      };
     }
   }, [isAdmin, fetchAllActivities]);
 
@@ -72,15 +92,31 @@ export default function UsersActivityTab() {
       filtered = filtered.filter((activity) => activity.activityType === selectedActivityType);
     }
 
+    if (startDate || endDate) {
+      const start = startDate ? new Date(`${startDate}T00:00:00`) : null;
+      const end = endDate ? new Date(`${endDate}T23:59:59.999`) : null;
+
+      filtered = filtered.filter((activity) => {
+        const activityDate = activity.createdAt instanceof Date
+          ? activity.createdAt
+          : activity.createdAt?.toDate?.() || new Date(activity.createdAt);
+
+        if (!(activityDate instanceof Date) || Number.isNaN(activityDate.getTime())) return false;
+        if (start && activityDate < start) return false;
+        if (end && activityDate > end) return false;
+        return true;
+      });
+    }
+
     setFilteredActivities(filtered);
     setPage(1);
-  }, [activities, searchTerm, selectedActivityType]);
+  }, [activities, searchTerm, selectedActivityType, startDate, endDate]);
 
   // Fetch stats
   useEffect(() => {
     const loadStats = async () => {
       setStatsLoading(true);
-      const statsData = await getActivityStats(timeRange);
+      const statsData = await getActivityStats(startDate, endDate);
       setStats(statsData);
       setStatsLoading(false);
     };
@@ -88,7 +124,7 @@ export default function UsersActivityTab() {
     if (isAdmin) {
       loadStats();
     }
-  }, [timeRange, isAdmin, getActivityStats]);
+  }, [startDate, endDate, isAdmin, getActivityStats]);
 
   // Get activity icon and color
   const getActivityIcon = (activityType) => {
@@ -108,6 +144,8 @@ export default function UsersActivityTab() {
         return <MdDelete {...iconProps} style={{ color: '#F44336' }} />;
       case 'share':
         return <MdShare {...iconProps} style={{ color: '#00BCD4' }} />;
+      case 'follow_up':
+        return <MdEmail {...iconProps} style={{ color: '#2563EB' }} />;
       case 'upload':
         return <MdGetApp {...iconProps} style={{ color: '#FF5722' }} />;
       default:
@@ -125,6 +163,7 @@ export default function UsersActivityTab() {
       edit: 'Edit',
       delete: 'Delete',
       share: 'Share',
+      follow_up: 'Follow-Up',
       upload: 'Upload',
       comment: 'Comment',
       review: 'Review',
@@ -144,6 +183,7 @@ export default function UsersActivityTab() {
       edit: 'secondary',
       delete: 'danger',
       share: 'info',
+      follow_up: 'info',
       upload: 'warning',
       comment: 'info',
       review: 'secondary',
@@ -210,6 +250,30 @@ export default function UsersActivityTab() {
     link.click();
   };
 
+  const formatDateLabel = (dateValue) => {
+    if (!dateValue) return 'N/A';
+    const date = new Date(`${dateValue}T00:00:00`);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+  };
+
+  const handleStartDateChange = (value) => {
+    setStartDate(value);
+    if (endDate && value && value > endDate) {
+      setEndDate(value);
+    }
+  };
+
+  const handleEndDateChange = (value) => {
+    setEndDate(value);
+    if (startDate && value && value < startDate) {
+      setStartDate(value);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <div className="users-activity-tab access-denied">
@@ -233,7 +297,7 @@ export default function UsersActivityTab() {
         <div className="header-actions">
           <button
             className="btn btn-secondary"
-            onClick={fetchAllActivities}
+            onClick={() => fetchAllActivities(500)}
             disabled={loading}
             title="Refresh activities"
           >
@@ -297,8 +361,8 @@ export default function UsersActivityTab() {
               <MdAccessTime size={24} />
             </div>
             <div className="stat-content">
-              <span className="stat-value">{timeRange}</span>
-              <span className="stat-label">Time Range</span>
+              <span className="stat-value">{`${formatDateLabel(startDate)} - ${formatDateLabel(endDate)}`}</span>
+              <span className="stat-label">Date Range</span>
             </div>
           </div>
         </div>
@@ -349,6 +413,7 @@ export default function UsersActivityTab() {
             <option value="edit">Edit</option>
             <option value="delete">Delete</option>
             <option value="share">Share</option>
+            <option value="follow_up">Follow-Up</option>
             <option value="upload">Upload</option>
             <option value="comment">Comment</option>
             <option value="review">Review</option>
@@ -356,20 +421,29 @@ export default function UsersActivityTab() {
         </div>
 
         <div className="filter-group">
-          <label htmlFor="time-range" className="filter-label">
+          <label className="filter-label">
             <MdCalendarToday size={16} />
-            Time Range
+            Date Range
           </label>
-          <select
-            id="time-range"
-            value={timeRange}
-            onChange={(e) => setTimeRange(e.target.value)}
-            className="filter-select"
-          >
-            <option value="day">Last 24 Hours</option>
-            <option value="week">Last 7 Days</option>
-            <option value="month">Last 30 Days</option>
-          </select>
+          <div className="date-range-inputs">
+            <input
+              id="start-date"
+              type="date"
+              value={startDate}
+              max={endDate || todayDate}
+              onChange={(e) => handleStartDateChange(e.target.value)}
+              className="filter-select date-input"
+            />
+            <input
+              id="end-date"
+              type="date"
+              value={endDate}
+              min={startDate || undefined}
+              max={todayDate}
+              onChange={(e) => handleEndDateChange(e.target.value)}
+              className="filter-select date-input"
+            />
+          </div>
         </div>
       </div>
 

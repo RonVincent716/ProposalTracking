@@ -211,6 +211,16 @@
   box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
 }
 
+.date-range-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.date-input {
+  width: 100%;
+}
+
 .filter-group {
   position: relative;
 }
@@ -506,6 +516,10 @@
   }
 
   .activity-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .date-range-inputs {
     grid-template-columns: 1fr;
   }
 

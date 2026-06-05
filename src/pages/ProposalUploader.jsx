@@ -202,6 +202,22 @@ export default function ProposalUploader() {
             size: file.size
           });
 
+          await addDoc(collection(db, "proposalVersions"), {
+            proposalId: filePath,
+            proposalName: file.name,
+            fileName: uniqueName,
+            filePath: filePath,
+            versionNumber: 1,
+            versionLabel: "v1",
+            notes: "Initial upload",
+            changeSummary: ["Initial version uploaded"],
+            uploadedBy: user.uid,
+            uploadedByEmail: user.email,
+            uploadedAt: serverTimestamp(),
+            isLatest: true,
+            source: "upload"
+          });
+
           // Log upload activity
           await ActivityLogger.logUpload(file.name, file.size, file.type);
         } catch (err) {

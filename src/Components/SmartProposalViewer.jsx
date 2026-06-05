@@ -17,6 +17,7 @@ import {
 } from "react-icons/md";
 import HighlightButton from "./HighlightButton";
 import DiscussionPanel from "./DiscussionPanel";
+import { ActivityLogger } from "../utils/activityLogger";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -136,6 +137,45 @@ export default function SmartProposalViewer() {
     }
   };
 
+  const getLatestProposalVersion = async (proposalId, filePath) => {
+    const versionQuery = query(
+      collection(db, "proposalVersions"),
+      where("proposalId", "==", proposalId)
+    );
+    const snapshot = await getDocs(versionQuery);
+    const versions = snapshot.docs
+      .map((versionDoc) => ({
+        id: versionDoc.id,
+        ...versionDoc.data()
+      }))
+      .sort((a, b) => (b.versionNumber || 0) - (a.versionNumber || 0));
+
+    const latestVersion = versions[0] || null;
+    if (!latestVersion) {
+      return { url: null, fileName: filePath.split("/").pop(), version: null };
+    }
+
+    if (latestVersion.downloadUrl) {
+      return {
+        url: latestVersion.downloadUrl,
+        fileName: latestVersion.fileName || filePath.split("/").pop(),
+        version: latestVersion
+      };
+    }
+
+    if (latestVersion.filePath) {
+      const versionRef = ref(storage, latestVersion.filePath);
+      const url = await getDownloadURL(versionRef);
+      return {
+        url,
+        fileName: latestVersion.fileName || filePath.split("/").pop(),
+        version: latestVersion
+      };
+    }
+
+    return { url: null, fileName: filePath.split("/").pop(), version: latestVersion };
+  };
+
   const onPageChange = ({ pageNumber }) => {
     setPageNumber(pageNumber);
     pagesViewed.current.add(pageNumber);
@@ -145,18 +185,21 @@ export default function SmartProposalViewer() {
     try {
       const decodedPath = decodePath(encodedPath);
       console.log("Loading proposal from path:", decodedPath);
+      const latestVersion = await getLatestProposalVersion(decodedPath, decodedPath);
       
       const fileRef = ref(storage, decodedPath);
-      const url = await getDownloadURL(fileRef);
+      const url = latestVersion.url || await getDownloadURL(fileRef);
       setFileUrl(url);
 
-      const extractedFileName = decodedPath.split('/').pop();
+      const extractedFileName = latestVersion.fileName || decodedPath.split('/').pop();
       setFileName(extractedFileName);
 
       setProposalData({
         filePath: decodedPath,
         fileName: extractedFileName,
-        url: url
+        url: url,
+        versionId: latestVersion.version?.id || null,
+        versionNumber: latestVersion.version?.versionNumber || null
       });
 
       // Get view count
@@ -233,6 +276,7 @@ export default function SmartProposalViewer() {
         page: "proposal_viewer",
         proposalId: encodedPath
       });
+      await ActivityLogger.logDocumentView(filePath, fileName);
       
       console.log("View tracked for:", fileName);
       
@@ -279,11 +323,16 @@ export default function SmartProposalViewer() {
     navigate(`/sign/${encodedPath}`);
   };
 
-  const handleDownload = () => {
-    const link = document.createElement("a");
-    link.href = fileUrl;
-    link.download = fileName;
-    link.click();
+  const handleDownload = async () => {
+    try {
+      const link = document.createElement("a");
+      link.href = fileUrl;
+      link.download = fileName;
+      link.click();
+      await ActivityLogger.logDownload(proposalData?.filePath || fileName, fileName);
+    } catch (error) {
+      console.error("Download error:", error);
+    }
   };
 
   const handleLogin = () => {

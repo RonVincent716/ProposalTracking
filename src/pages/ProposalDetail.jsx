@@ -23,9 +23,9 @@ import "react-pdf/dist/Page/TextLayer.css";
 import { MdEdit, MdFileUpload, MdLogout, MdDescription, MdArrowBack, MdCheckCircle, MdDashboard, MdVisibility } from "react-icons/md";
 import emailjs from "@emailjs/browser";
 import { ActivityLogger } from "../utils/activityLogger";
-import ProposalReviewPanel from "../Components/ProposalReviewPanel";
 import HighlightButton from "../Components/HighlightButton";
 import DiscussionPanel from "../Components/DiscussionPanel";
+import ProposalVersionHistory from "../Components/ProposalVersionHistory";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -94,6 +94,54 @@ export default function ProposalDetail() {
       return decodedPath;
     }
     return `proposals/${decodedPath}`;
+  };
+
+  const getLatestProposalVersion = async (proposalId, filePath) => {
+    const versionQuery = query(
+      collection(db, "proposalVersions"),
+      where("proposalId", "==", proposalId)
+    );
+    const snapshot = await getDocs(versionQuery);
+    const versions = snapshot.docs
+      .map((versionDoc) => ({
+        id: versionDoc.id,
+        ...versionDoc.data(),
+        uploadedAt: versionDoc.data().uploadedAt?.toDate?.() || versionDoc.data().createdAt?.toDate?.() || null
+      }))
+      .sort((a, b) => (b.versionNumber || 0) - (a.versionNumber || 0));
+
+    const latestVersion = versions[0] || null;
+    if (!latestVersion) {
+      return {
+        url: null,
+        fileName: filePath.split("/").pop(),
+        version: null
+      };
+    }
+
+    if (latestVersion.downloadUrl) {
+      return {
+        url: latestVersion.downloadUrl,
+        fileName: latestVersion.fileName || filePath.split("/").pop(),
+        version: latestVersion
+      };
+    }
+
+    if (latestVersion.filePath) {
+      const versionRef = ref(storage, latestVersion.filePath);
+      const url = await getDownloadURL(versionRef);
+      return {
+        url,
+        fileName: latestVersion.fileName || filePath.split("/").pop(),
+        version: latestVersion
+      };
+    }
+
+    return {
+      url: null,
+      fileName: filePath.split("/").pop(),
+      version: latestVersion
+    };
   };
 
   useEffect(() => {
@@ -517,18 +565,21 @@ export default function ProposalDetail() {
     try {
       const decodedPath = decodePath(path);
       console.log("Final decoded path:", decodedPath);
+      const consistentProposalId = getConsistentProposalId(decodedPath);
+      const latestVersion = await getLatestProposalVersion(consistentProposalId, decodedPath);
       
       const fileRef = ref(storage, decodedPath);
-      const url = await getDownloadURL(fileRef);
+      const url = latestVersion.url || await getDownloadURL(fileRef);
       setFileUrl(url);
 
-      const extractedFileName = decodedPath.split("/").pop();
-      const consistentProposalId = getConsistentProposalId(decodedPath);
+      const extractedFileName = latestVersion.fileName || decodedPath.split("/").pop();
       setFileName(extractedFileName);
       proposalMetaRef.current = {
         proposalId: consistentProposalId,
         fileName: extractedFileName,
-        filePath: decodedPath
+        filePath: decodedPath,
+        versionId: latestVersion.version?.id || null,
+        versionNumber: latestVersion.version?.versionNumber || null
       };
 
       // Check if already signed
@@ -557,6 +608,39 @@ export default function ProposalDetail() {
       };
       
       await addDoc(collection(db, "proposalViews"), viewData);
+      await ActivityLogger.logDocumentView(consistentProposalId, extractedFileName);
+
+      const sharedProposalQuery = query(
+        collection(db, "sharedProposals"),
+        where("filePath", "==", decodedPath),
+        where("clientEmail", "==", user.email)
+      );
+      const sharedProposalSnapshot = await getDocs(sharedProposalQuery);
+      if (!sharedProposalSnapshot.empty) {
+        const sharedProposalDoc = sharedProposalSnapshot.docs[0];
+        await updateDoc(doc(db, "sharedProposals", sharedProposalDoc.id), {
+          viewedAt: serverTimestamp(),
+          lastViewedAt: serverTimestamp(),
+          lastActivity: serverTimestamp(),
+          status: "viewed",
+          viewCount: (sharedProposalDoc.data().viewCount || 0) + 1
+        });
+      } else {
+        await addDoc(collection(db, "sharedProposals"), {
+          fileName: extractedFileName,
+          filePath: decodedPath,
+          clientEmail: user.email,
+          clientName: viewerName || user.displayName || user.email.split('@')[0],
+          clientId: user.uid,
+          viewedAt: serverTimestamp(),
+          lastViewedAt: serverTimestamp(),
+          lastActivity: serverTimestamp(),
+          status: "viewed",
+          source: "direct_link",
+          viewCount: 1,
+          sharedAt: serverTimestamp()
+        });
+      }
 
       // Create session with proper user info
       const session = await addDoc(collection(db, "proposalSessions"), {
@@ -751,6 +835,7 @@ export default function ProposalDetail() {
         viewerName: viewerName,
         downloadedAt: serverTimestamp(),
       });
+      await ActivityLogger.logDownload(proposalMetaRef.current.proposalId || fileName, fileName);
     } catch (error) {
       console.error("Download error:", error);
     }
@@ -929,6 +1014,18 @@ export default function ProposalDetail() {
         </Document>
       </div>
 
+      {userRole !== "client" && (
+        <div style={{ marginTop: "16px" }}>
+          <ProposalVersionHistory
+            proposalId={proposalMetaRef.current.filePath || path}
+            proposalName={fileName}
+            filePath={proposalMetaRef.current.filePath || decodeURIComponent(path || "")}
+            currentVersion="Current"
+            visible={true}
+          />
+        </div>
+      )}
+
       <div style={paginationContainerStyle}>
         <button
           onClick={async () => {
@@ -975,16 +1072,6 @@ export default function ProposalDetail() {
           Next
         </button>
       </div>
-
-      <ProposalReviewPanel
-        proposalId={proposalMetaRef.current.proposalId}
-        proposalName={proposalMetaRef.current.fileName || fileName}
-        filePath={proposalMetaRef.current.filePath}
-        userRole={userRole}
-        clientId={auth.currentUser?.uid || ""}
-        clientEmail={userEmail}
-        clientName={viewerName || userDisplayName || auth.currentUser?.displayName || ""}
-      />
 
       {/* Discussion Panel */}
       <DiscussionPanel

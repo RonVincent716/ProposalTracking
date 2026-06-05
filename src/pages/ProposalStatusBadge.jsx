@@ -5,7 +5,8 @@ import {
   MdCheckCircle, 
   MdEdit,
   MdSchedule,
-  MdCancel
+  MdCancel,
+  MdArchive
 } from "react-icons/md";
 
 export default function ProposalStatusBadge({ status, size = "medium" }) {
@@ -73,6 +74,15 @@ export default function ProposalStatusBadge({ status, size = "medium" }) {
           icon: MdSchedule, 
           label: "Pending",
           description: "Awaiting client action"
+        };
+      case "archived":
+        return {
+          color: "#475569",
+          bg: "#f8fafc",
+          border: "#cbd5e1",
+          icon: MdArchive,
+          label: "Archived",
+          description: "Hidden from active proposals"
         };
       default:
         return { 

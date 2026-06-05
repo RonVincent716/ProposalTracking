@@ -97,6 +97,11 @@ const ShareModal = ({ isOpen, onClose, proposal, user }) => {
 
       // Log the email share activity
       await ActivityLogger.logEmailShare(proposal.name, recipientEmail, recipientName);
+      await ActivityLogger.logShare(
+        proposal.filePath || `proposals/${proposal.name}`,
+        proposal.name,
+        [recipientEmail]
+      );
 
       setEmailSent(true);
       
