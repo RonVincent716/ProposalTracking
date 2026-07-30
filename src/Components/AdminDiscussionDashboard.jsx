@@ -44,6 +44,8 @@ import {
   orderBy
 } from 'firebase/firestore';
 import DiscussionThread from './DiscussionThread';
+import AssessmentDraftsPanel from './AssessmentDraftsPanel';
+import AssessmentDraftEditor from './AssessmentDraftEditor';
 import './AdminDiscussionDashboard.css';
 
 const SEEN_STORAGE_KEY_PREFIX = 'admin-discussion-seen:';
@@ -73,9 +75,11 @@ const getUnreadCount = (messages = [], seenMs = 0) =>
     return toMillis(msg.timestamp) > seenMs ? count + 1 : count;
   }, 0);
 
-const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDiscussionSeen }) => {
+const AdminDiscussionDashboard = ({ userId, userEmail, userRole, initialTab = 'discussions', onClose, onDiscussionSeen }) => {
+  const [activeTab, setActiveTab] = useState(initialTab); // discussions, drafts
   const [selectedFilter, setSelectedFilter] = useState('open');
   const [allProposalDiscussions, setAllProposalDiscussions] = useState([]);
+  const [selectedDraftId, setSelectedDraftId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -129,6 +133,10 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
     const timer = setInterval(() => setNowMs(Date.now()), 60000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   // Load read notification keys from Firestore
   useEffect(() => {
@@ -213,7 +221,15 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
       }
     );
 
-    return () => unsubscribe?.();
+    return () => {
+      try {
+        if (typeof unsubscribe === 'function') {
+          unsubscribe();
+        }
+      } catch (err) {
+        console.error('Error unsubscribing from discussions:', err);
+      }
+    };
   }, [isAdminUser]);
 
   useEffect(() => {
@@ -285,7 +301,15 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
       }
     );
 
-    return () => unsubscribe?.();
+    return () => {
+      try {
+        if (typeof unsubscribe === 'function') {
+          unsubscribe();
+        }
+      } catch (err) {
+        console.error('Error unsubscribing from messages:', err);
+      }
+    };
   }, [isAdminUser, addNotification]);
 
   useEffect(() => {
@@ -329,7 +353,15 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
       }
     );
 
-    return () => unsubscribe?.();
+    return () => {
+      try {
+        if (typeof unsubscribe === 'function') {
+          unsubscribe();
+        }
+      } catch (err) {
+        console.error('Error unsubscribing from signed proposals:', err);
+      }
+    };
   }, [isAdminUser, addNotification]);
 
   useEffect(() => {
@@ -649,43 +681,6 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
     return <MdMarkChatUnread size={14} color="#EF4444" />;
   };
 
-  if (selectedDiscussionId && selectedDiscussion) {
-    return (
-      <div className="admin-dashboard">
-        <div className="detail-view">
-          <div className="detail-header">
-            <button onClick={() => setSelectedDiscussionId(null)} className="back-button">
-              <MdArrowBack size={20} />
-            </button>
-            <div className="detail-info">
-              <div className="detail-title">{selectedDiscussion.proposalName}</div>
-              <div className="detail-meta">
-                <span className="detail-page">Page {selectedDiscussion.pageNumber}</span>
-                <span className="detail-email">{selectedDiscussion.clientEmail}</span>
-              </div>
-            </div>
-            {selectedDiscussion.status === 'open' && (
-              <button onClick={() => handleResolveDiscussion(selectedDiscussion.id)} className="resolve-button">
-                <MdDoneAll size={16} />
-                Mark Resolved
-              </button>
-            )}
-          </div>
-
-          <DiscussionThread
-            discussion={selectedDiscussion}
-            messages={discussionMessages[selectedDiscussionId] || []}
-            onAddMessage={handleAddMessage}
-            onResolve={handleResolveDiscussion}
-            userRole={userRole}
-            userId={userId}
-            forceExpanded
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="admin-dashboard">
       <div className="dashboard-header">
@@ -694,8 +689,8 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
             <MdChat size={22} />
           </div>
           <div>
-            <div className="title">Discussion Center</div>
-            <div className="subtitle">Manage client conversations</div>
+            <div className="title">Messaging</div>
+            <div className="subtitle">Proposal discussions</div>
           </div>
         </div>
 
@@ -854,34 +849,90 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
         </div>
       )}
 
-      <div className="filter-tabs">
+      {/* Main Navigation Tabs */}
+      <div style={styles.mainTabs}>
         <button
-          onClick={() => setSelectedFilter('open')}
-          className={`filter-tab ${selectedFilter === 'open' ? 'active' : ''}`}
+          style={{
+            ...styles.mainTab,
+            ...(activeTab === 'discussions' ? styles.mainTabActive : styles.mainTabInactive)
+          }}
+          onClick={() => {
+            setActiveTab('discussions');
+            setSelectedDraftId(null);
+          }}
         >
-          <span className="tab-dot open"></span>
-          Open
-          <span className="tab-count">{discussionsWithMessageState.filter(d => d.status === 'open').length}</span>
+          <MdChat size={18} />
+          Discussions
         </button>
         <button
-          onClick={() => setSelectedFilter('resolved')}
-          className={`filter-tab ${selectedFilter === 'resolved' ? 'active' : ''}`}
+          style={{
+            ...styles.mainTab,
+            ...(activeTab === 'drafts' ? styles.mainTabActive : styles.mainTabInactive)
+          }}
+          onClick={() => {
+            setActiveTab('drafts');
+            setSelectedDiscussionId(null);
+          }}
         >
-          <MdCheckCircle size={12} />
-          Resolved
-          <span className="tab-count">{discussionsWithMessageState.filter(d => d.status === 'resolved').length}</span>
-        </button>
-        <button
-          onClick={() => setSelectedFilter('all')}
-          className={`filter-tab ${selectedFilter === 'all' ? 'active' : ''}`}
-        >
-          <MdMessage size={12} />
-          All
-          <span className="tab-count">{discussionsWithMessageState.length}</span>
+          <MdDescription size={18} />
+          Assessment Drafts
         </button>
       </div>
 
-      <div className="discussions-content">
+      {/* Drafts Tab */}
+      {activeTab === 'drafts' && !selectedDraftId && (
+        <AssessmentDraftsPanel
+          adminUserId={userId}
+          adminEmail={userEmail}
+          onSelectDraft={setSelectedDraftId}
+          onPublishDraft={(draftId) => {
+            setSelectedDraftId(null);
+          }}
+        />
+      )}
+
+      {activeTab === 'drafts' && selectedDraftId && (
+        <AssessmentDraftEditor
+          draftId={selectedDraftId}
+          adminUserId={userId}
+          adminEmail={userEmail}
+          onBack={() => setSelectedDraftId(null)}
+          onPublish={() => setSelectedDraftId(null)}
+        />
+      )}
+
+      {/* Discussions Tab */}
+      {activeTab === 'discussions' && (
+        <>
+          <div className="filter-tabs">
+            <button
+              onClick={() => setSelectedFilter('open')}
+              className={`filter-tab ${selectedFilter === 'open' ? 'active' : ''}`}
+            >
+              <span className="tab-dot open"></span>
+              Open
+              <span className="tab-count">{discussionsWithMessageState.filter(d => d.status === 'open').length}</span>
+            </button>
+            <button
+              onClick={() => setSelectedFilter('resolved')}
+              className={`filter-tab ${selectedFilter === 'resolved' ? 'active' : ''}`}
+            >
+              <MdCheckCircle size={12} />
+              Resolved
+              <span className="tab-count">{discussionsWithMessageState.filter(d => d.status === 'resolved').length}</span>
+            </button>
+            <button
+              onClick={() => setSelectedFilter('all')}
+              className={`filter-tab ${selectedFilter === 'all' ? 'active' : ''}`}
+            >
+              <MdMessage size={12} />
+              All
+              <span className="tab-count">{discussionsWithMessageState.length}</span>
+            </button>
+          </div>
+
+          <div className={`discussions-content split-layout ${selectedDiscussion ? 'has-chat' : 'no-chat'}`}>
+        <div className="discussions-list-column">
         {loading && (
           <div className="loading-state">
             <div className="loading-spinner"></div>
@@ -1006,9 +1057,88 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, onClose, onDisc
             ))}
           </div>
         )}
+        </div>
+
+        <div className="discussion-chat-column">
+          {selectedDiscussion ? (
+            <div className="chat-panel">
+              <div className="chat-panel-header">
+                <div className="chat-panel-title-group">
+                  <div className="chat-panel-title">{selectedDiscussion.proposalName}</div>
+                  <div className="chat-panel-meta">
+                    <span>Page {selectedDiscussion.pageNumber}</span>
+                    <span>{selectedDiscussion.clientEmail}</span>
+                  </div>
+                </div>
+                <div className="chat-panel-actions">
+                  {selectedDiscussion.status === 'open' && (
+                    <button onClick={() => handleResolveDiscussion(selectedDiscussion.id)} className="chat-resolve-button">
+                      <MdDoneAll size={15} />
+                      <span>Resolve</span>
+                    </button>
+                  )}
+                  <button onClick={() => setSelectedDiscussionId(null)} className="chat-panel-close" title="Close chat panel">
+                    <MdClose size={22} />
+                  </button>
+                </div>
+              </div>
+
+              <DiscussionThread
+                discussion={selectedDiscussion}
+                messages={discussionMessages[selectedDiscussionId] || []}
+                onAddMessage={handleAddMessage}
+                onResolve={handleResolveDiscussion}
+                userRole={userRole}
+                userId={userId}
+                forceExpanded
+              />
+            </div>
+          ) : (
+            <div className="chat-panel empty-chat-panel">
+              <div className="empty-icon">💬</div>
+              <div className="empty-title">Pick a conversation</div>
+              <div className="empty-text">Select a thread on the left to open the chat panel.</div>
+            </div>
+          )}
+        </div>
       </div>
+        </>
+      )}
     </div>
   );
+};
+
+// Styles for main tabs
+const styles = {
+  mainTabs: {
+    display: 'flex',
+    gap: '8px',
+    padding: '12px 16px',
+    borderBottom: '1px solid #e2e8f0',
+    backgroundColor: '#f8fafc'
+  },
+  mainTab: {
+    padding: '8px 16px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '6px',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    transition: 'all 0.2s'
+  },
+  mainTabActive: {
+    backgroundColor: '#0ea5e9',
+    color: '#ffffff',
+    borderColor: '#0ea5e9'
+  },
+  mainTabInactive: {
+    backgroundColor: '#ffffff',
+    color: '#64748b',
+    borderColor: '#e2e8f0'
+  }
 };
 
 export default AdminDiscussionDashboard;

@@ -48,6 +48,7 @@ import {
   MdRateReview
 } from "react-icons/md";
 import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
+import ClientDiscussionCenter from "./ClientDiscussionCenter";
 
 const toDateOrNull = (value) => {
   if (!value) return null;
@@ -500,6 +501,9 @@ export default function ClientDashboard() {
           latestVersionNotes: latestVersion?.notes || "",
           latestVersionUploadedAt: latestVersion?.uploadedAt || null,
           hasNewVersion,
+          approvalStatus: data.approvalStatus || data.reviewStatus || "pending_review",
+          approvalNotes: data.approvalNotes || "",
+          sharingStatus: data.sharingStatus || "not_ready",
           hasAdminReplies: adminReplies.some(reply => reply.filePath === data.filePath && reply.totalReplies > 0),
           unreadAdminReplies: adminReplies.some(reply => reply.filePath === data.filePath && reply.isUnread)
         });
@@ -665,12 +669,23 @@ export default function ClientDashboard() {
   const sidebarItems = [
     { id: "dashboard", icon: <MdSpaceDashboard size={20} />, label: "Dashboard", action: () => setActiveTab("dashboard") },
     { id: "all", icon: <MdFolder size={20} />, label: "All Proposals", action: () => { setActiveTab("all"); setStatusFilter("all"); }, count: proposals.length },
+    { id: "discussions", icon: <MdForum size={20} />, label: "Discussions", action: () => setActiveTab("discussions") },
     { id: "recent", icon: <MdHistory size={20} />, label: "Recently Viewed", action: () => setActiveTab("recent"), count: recentlyViewed.length },
     { id: "pending", icon: <MdPending size={20} />, label: "Pending", action: () => { setActiveTab("all"); setStatusFilter("pending"); }, count: stats.pending },
     { id: "signed", icon: <MdVerified size={20} />, label: "Signed", action: () => { setActiveTab("all"); setStatusFilter("signed"); }, count: stats.signed },
   ];
 
   const renderContent = () => {
+    if (activeTab === "discussions") {
+      return (
+        <ClientDiscussionCenter 
+          userEmail={currentUser?.email} 
+          userId={currentUser?.uid}
+          userName={currentUser?.displayName || currentUser?.email}
+        />
+      );
+    }
+
     if (activeTab === "dashboard") {
       return (
         <div>
@@ -694,19 +709,47 @@ export default function ClientDashboard() {
                   </div>
                   <div style={recentProposalInfoStyle}>
                     <div style={recentProposalNameStyle}>{proposal.fileName}</div>
-                    <div style={recentProposalMetaStyle}>
-                      <span>From: {proposal.senderDisplay || proposal.sharedByEmail || proposal.sharedBy || "Admin"}</span>
-                      <span>•</span>
-                      <span>{proposal.sharedAt.toLocaleDateString()}</span>
-                      {proposal.hasAdminReplies && (
-                        <span style={{ marginLeft: "8px", display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 6px", borderRadius: "8px", fontSize: "10px", fontWeight: "500", background: proposal.unreadAdminReplies ? "#fef3c7" : "#ecfdf5", color: proposal.unreadAdminReplies ? "#d97706" : "#059669" }}>
-                          <MdForum size={10} />
+            <div style={recentProposalMetaStyle}>
+              <span>From: {proposal.senderDisplay || proposal.sharedByEmail || proposal.sharedBy || "Admin"}</span>
+              <span>•</span>
+              <span>{proposal.sharedAt.toLocaleDateString()}</span>
+              <span style={{
+                marginLeft: "8px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                padding: "2px 6px",
+                borderRadius: "8px",
+                fontSize: "10px",
+                fontWeight: "700",
+                background: proposal.approvalStatus === "approved" ? "#ecfdf5" : proposal.approvalStatus === "needs_revision" ? "#fef2f2" : "#fff7ed",
+                color: proposal.approvalStatus === "approved" ? "#047857" : proposal.approvalStatus === "needs_revision" ? "#b91c1c" : "#c2410c"
+              }}>
+                {proposal.approvalStatus === "approved" ? "Approved" : proposal.approvalStatus === "needs_revision" ? "Needs Revision" : "Pending Review"}
+              </span>
+              {proposal.hasAdminReplies && (
+                <span style={{ marginLeft: "8px", display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 6px", borderRadius: "8px", fontSize: "10px", fontWeight: "500", background: proposal.unreadAdminReplies ? "#fef3c7" : "#ecfdf5", color: proposal.unreadAdminReplies ? "#d97706" : "#059669" }}>
+                  <MdForum size={10} />
                           {proposal.unreadAdminReplies ? "New Reply" : "Replied"}
                         </span>
                       )}
                     </div>
                   </div>
                   <ProposalStatusBadge status={proposal.status} size="small" />
+                  <span style={{
+                    marginLeft: "8px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    padding: "2px 6px",
+                    borderRadius: "8px",
+                    fontSize: "10px",
+                    fontWeight: "700",
+                    background: proposal.approvalStatus === "approved" ? "#ecfdf5" : proposal.approvalStatus === "needs_revision" ? "#fef2f2" : "#fff7ed",
+                    color: proposal.approvalStatus === "approved" ? "#047857" : proposal.approvalStatus === "needs_revision" ? "#b91c1c" : "#c2410c"
+                  }}>
+                    {proposal.approvalStatus === "approved" ? "Approved" : proposal.approvalStatus === "needs_revision" ? "Needs Revision" : "Pending Review"}
+                  </span>
                   <button onClick={() => handleViewProposal(proposal)} style={recentProposalButtonStyle}>
                     {proposal.status === "signed" ? "View Signed" : "View"}
                   </button>

@@ -39,9 +39,10 @@ import {
   MdTrendingUp,
   MdSettings,
   MdHelpOutline,
-  MdSwitchAccount
+  MdSwitchAccount,
+  MdRateReview
 } from "react-icons/md";
-import { collection, onSnapshot, orderBy, query, deleteDoc, doc, writeBatch, addDoc, serverTimestamp, getDoc, setDoc } from "firebase/firestore";
+import { collection, onSnapshot, orderBy, query, deleteDoc, doc, writeBatch, addDoc, serverTimestamp, getDoc, setDoc, getDocs, where } from "firebase/firestore";
 import { ref, listAll, getDownloadURL } from "firebase/storage";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 
@@ -57,6 +58,8 @@ import RealTimeViewTracker from "../Components/RealTimeViewTracker";
 import MyTemplatesTab from "../Components/MyTemplatesTab";
 import FollowUpCenter from "../Components/FollowUpCenter";
 import AdminDiscussionDashboard from "../Components/AdminDiscussionDashboard";
+import AssessmentWorkflowPanel from "../Components/AssessmentWorkflowPanel";
+import ClientsTab from "../Components/ClientsTab";
 import UserProfile from "../Components/UserProfile";
 import UserManagement from "../Components/UserManagement";
 import UsersActivityTab from "../Components/UsersActivityTab";
@@ -87,6 +90,7 @@ export default function Dashboard() {
   const [authChecked, setAuthChecked] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showAdminDiscussionDashboard, setShowAdminDiscussionDashboard] = useState(false);
+  const [adminDiscussionInitialTab, setAdminDiscussionInitialTab] = useState('discussions');
   const [showMoreMenuItems, setShowMoreMenuItems] = useState(false);
   
   // Notification system states
@@ -95,6 +99,8 @@ export default function Dashboard() {
   const [readNotificationKeys, setReadNotificationKeys] = useState(new Set());
   const [readNotificationKeysLoaded, setReadNotificationKeysLoaded] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showSwitchAccountPanel, setShowSwitchAccountPanel] = useState(false);
+  const [savedAccounts, setSavedAccounts] = useState([]);
   const notificationRef = useRef(null);
   const profileMenuRef = useRef(null);
   const readNotificationKeysRef = useRef(new Set());
@@ -140,7 +146,16 @@ export default function Dashboard() {
       setLastSeenByDiscussion({});
     }
   }, [user?.uid]);
-  
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("dashboard-saved-accounts");
+      setSavedAccounts(raw ? JSON.parse(raw) : []);
+    } catch {
+      setSavedAccounts([]);
+    }
+  }, []);
+
   // Delete functionality states
   const [selectedViews, setSelectedViews] = useState([]);
   const [selectedSessions, setSelectedSessions] = useState([]);
@@ -160,11 +175,14 @@ export default function Dashboard() {
   // Email Modal States
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailProposal, setEmailProposal] = useState(null);
+  const [showShareReviewModal, setShowShareReviewModal] = useState(false);
+  const [pendingShareReviewProposal, setPendingShareReviewProposal] = useState(null);
 
   // Logout confirmation modal state
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showLogoutSuccess, setShowLogoutSuccess] = useState(false);
   const [showLogoutToast, setShowLogoutToast] = useState(false);
+  const logoutTimersRef = useRef([]);
   
   // View proposal modal state
   const [showViewModal, setShowViewModal] = useState(false);
@@ -196,6 +214,109 @@ export default function Dashboard() {
   const canAccessUsersTab = can("viewAllUsers");
   const canAccessDiscussions = can("viewAdminDiscussions");
   const canAccessUserActivity = can("viewUserActivity");
+
+  const handleRequestShareReview = async (file) => {
+    try {
+      const reviewQuery = query(
+        collection(db, "assessmentDrafts"),
+        where("proposalName", "==", file.name),
+        where("status", "==", "approved")
+      );
+      const reviewSnapshot = await getDocs(reviewQuery);
+      const approvedReview = reviewSnapshot.docs[0]?.data();
+
+      if (approvedReview) {
+        setEmailProposal(file);
+        setShowEmailModal(true);
+        return;
+      }
+    } catch (error) {
+      console.error("Error checking approved assessment review:", error);
+    }
+
+    setPendingShareReviewProposal(file);
+    setShowShareReviewModal(true);
+  };
+
+  const openAssessmentWorkflowForReview = async () => {
+    if (pendingShareReviewProposal) {
+      try {
+        const reviewDraft = {
+          proposalId: `proposals/${pendingShareReviewProposal.name}`,
+          proposalName: pendingShareReviewProposal.name,
+          clientEmail: clientEmail || user?.email || "",
+          clientName: clientName || user?.displayName || user?.email?.split("@")[0] || "Client",
+          companyName: pendingShareReviewProposal.name.replace(/\.pdf$/i, ""),
+          industry: "",
+          companyOverview: "Proposal routed from the Proposals tab for internal review before sharing.",
+          strengths: "Review the proposal against the client context before sending.",
+          gaps: "Confirm the missing details, scope clarity, and recommended next steps.",
+          recommendation: "Review this proposal in the assessment workflow and decide whether it is ready to send or needs revision.",
+          readinessScore: 0,
+          riskLevel: "medium",
+          adminNotes: "Created from the share-review gate.",
+          status: "draft",
+          workflowStage: "review_queue",
+          approvalNotes: "",
+          createdFrom: "proposal_share_request",
+          sourceFilePath: `proposals/${pendingShareReviewProposal.name}`
+        };
+
+        const docRef = await addDoc(collection(db, "assessmentDrafts"), {
+          ...reviewDraft,
+          createdByAdminId: user?.uid || null,
+          createdByAdminEmail: user?.email || null,
+          completionPercentage: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          lastEditedByName: user?.displayName || user?.email?.split("@")[0] || "Admin",
+          lastEditedAt: new Date().toISOString(),
+          draftHistory: [{
+            timestamp: new Date().toISOString(),
+            action: "created_from_share_request",
+            editedBy: user?.email || null
+          }],
+          autoSaveEnabled: true
+        });
+
+        localStorage.setItem("dashboard-pending-assessment-review", JSON.stringify({
+          draftId: docRef.id,
+          proposalName: pendingShareReviewProposal.name,
+          createdAt: Date.now()
+        }));
+      } catch (error) {
+        console.error("Error creating assessment review draft:", error);
+      }
+    }
+
+    setShowShareReviewModal(false);
+    setPendingShareReviewProposal(null);
+    setActiveTab("assessment-workflow");
+  };
+
+  useEffect(() => {
+    if (!user?.email) return;
+
+    try {
+      const raw = localStorage.getItem("dashboard-saved-accounts");
+      const existing = raw ? JSON.parse(raw) : [];
+      const nextAccounts = [
+        {
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName || user.email.split("@")[0] || "User",
+          role: role || "user",
+          updatedAt: Date.now()
+        },
+        ...existing.filter((account) => account.email !== user.email)
+      ].slice(0, 5);
+
+      localStorage.setItem("dashboard-saved-accounts", JSON.stringify(nextAccounts));
+      setSavedAccounts(nextAccounts);
+    } catch (error) {
+      console.error("Error saving account history:", error);
+    }
+  }, [user?.email, user?.uid, user?.displayName, role]);
 
   const timestampToMs = (value) => {
     if (!value) return 0;
@@ -488,19 +609,37 @@ export default function Dashboard() {
       if (user) {
         await ActivityLogger.logLogout(user.email);
       }
-      await signOut(auth);
       setShowLogoutModal(false);
       setShowLogoutSuccess(true);
-      
-      // Auto redirect after 3 seconds
-      setTimeout(() => {
+      logoutTimersRef.current.forEach(clearTimeout);
+      logoutTimersRef.current = [];
+
+      const logoutTimer = setTimeout(async () => {
+        try {
+          await signOut(auth);
+        } catch (logoutError) {
+          console.error("Logout error:", logoutError);
+        }
+      }, 3500);
+
+      const redirectTimer = setTimeout(() => {
         setShowLogoutSuccess(false);
         navigate("/login");
-      }, 3000);
+      }, 6500);
+
+      logoutTimersRef.current.push(logoutTimer, redirectTimer);
     } catch (error) {
+      console.error("Logout error:", error);
       alert(error.message);
     }
   };
+
+  useEffect(() => {
+    return () => {
+      logoutTimersRef.current.forEach(clearTimeout);
+      logoutTimersRef.current = [];
+    };
+  }, []);
 
   /* HANDLE SHARE PROPOSAL (Link Generation) */
   const handleShareProposal = (file) => {
@@ -520,6 +659,24 @@ export default function Dashboard() {
 
     try {
       const fullPath = `proposals/${sharingProposal.name}`;
+      let approvalStatus = "pending_review";
+      let approvalNotes = "";
+
+      try {
+        const reviewQuery = query(
+          collection(db, "assessmentDrafts"),
+          where("proposalName", "==", sharingProposal.name),
+          where("status", "==", "approved")
+        );
+        const reviewSnapshot = await getDocs(reviewQuery);
+        const approvedReview = reviewSnapshot.docs[0]?.data();
+        if (approvedReview) {
+          approvalStatus = "approved";
+          approvalNotes = approvedReview.recommendation || approvedReview.approvalNotes || "";
+        }
+      } catch (error) {
+        console.error("Error loading approval status for share:", error);
+      }
       
       // Encode the path ONLY ONCE
       const encodedPath = btoa(fullPath);
@@ -540,7 +697,10 @@ export default function Dashboard() {
         sharedByEmail: user.email,
         sharedAt: serverTimestamp(),
         status: "pending",
-        viewCount: 0
+        viewCount: 0,
+        approvalStatus,
+        approvalNotes,
+        sharingStatus: approvalStatus === "approved" ? "ready_to_share" : "not_ready"
       });
       await ActivityLogger.logShare(fullPath, sharingProposal.name, [clientEmail]);
       
@@ -1438,9 +1598,35 @@ export default function Dashboard() {
     event.currentTarget.style.background = isHovering ? "#F8FAFC" : "transparent";
   };
 
+  const handleSwitchToAccount = async (account) => {
+    try {
+      localStorage.setItem("preferredLoginEmail", account.email);
+      setShowSwitchAccountPanel(false);
+      setShowProfileMenu(false);
+      await signOut(auth);
+      navigate("/login");
+    } catch (error) {
+      console.error("Switch account error:", error);
+      alert("Unable to switch account right now.");
+    }
+  };
+
+  const handleAddAnotherAccount = async () => {
+    try {
+      localStorage.removeItem("preferredLoginEmail");
+      setShowSwitchAccountPanel(false);
+      setShowProfileMenu(false);
+      await signOut(auth);
+      navigate("/login");
+    } catch (error) {
+      console.error("Switch account error:", error);
+      alert("Unable to open the login page.");
+    }
+  };
+
   if(!authChecked || permissionsLoading) return <div style={{padding:40}}>Loading...</div>;
 
-  if(!user) return <Navigate to="/login"/>
+  if(!user && !showLogoutSuccess) return <Navigate to="/login"/>
 
   return(
     <div style={{display:"flex", height:"100vh", fontFamily:"Arial", overflow:"hidden", maxWidth:"100vw"}}>
@@ -2564,25 +2750,28 @@ export default function Dashboard() {
                   border: "none",
                   borderRadius: 12,
                   cursor: "pointer",
-                  background: showAdminDiscussionDashboard
+                  background: showAdminDiscussionDashboard && adminDiscussionInitialTab === 'discussions'
                     ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
                     : "transparent",
-                  color: showAdminDiscussionDashboard ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                  color: showAdminDiscussionDashboard && adminDiscussionInitialTab === 'discussions' ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: sidebarCollapsed ? "center" : "flex-start",
                   gap: 12,
                   fontSize: sidebarCollapsed ? 0 : 14,
-                  fontWeight: showAdminDiscussionDashboard ? 600 : 500,
+                  fontWeight: showAdminDiscussionDashboard && adminDiscussionInitialTab === 'discussions' ? 600 : 500,
                   transition: "all 0.2s ease",
-                  boxShadow: showAdminDiscussionDashboard
+                  boxShadow: showAdminDiscussionDashboard && adminDiscussionInitialTab === 'discussions'
                     ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
                     : "none",
-                  border: showAdminDiscussionDashboard ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  border: showAdminDiscussionDashboard && adminDiscussionInitialTab === 'discussions' ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
                   whiteSpace: "nowrap",
                   position: "relative"
                 }} 
-                onClick={()=>setShowAdminDiscussionDashboard(true)}
+                onClick={() => {
+                  setAdminDiscussionInitialTab('discussions');
+                  setShowAdminDiscussionDashboard(true);
+                }}
               >
                 <MdChat size={sidebarCollapsed ? 22 : 18} />
                 {!sidebarCollapsed && <span>Discussions</span>}
@@ -2622,7 +2811,74 @@ export default function Dashboard() {
                   </span>
                 )}
               </button>
+
             )}
+
+            {canAccessDiscussions && (
+              <button 
+                style={{
+                  padding: sidebarCollapsed ? "12px" : "10px 16px",
+                  border: "none",
+                  borderRadius: 12,
+                  cursor: "pointer",
+                  background: activeTab === 'assessment-workflow'
+                    ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                    : "transparent",
+                  color: activeTab === 'assessment-workflow' ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                  gap: 12,
+                  fontSize: sidebarCollapsed ? 0 : 14,
+                  fontWeight: activeTab === 'assessment-workflow' ? 600 : 500,
+                  transition: "all 0.2s ease",
+                  boxShadow: activeTab === 'assessment-workflow'
+                    ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                    : "none",
+                  border: activeTab === 'assessment-workflow' ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                  whiteSpace: "nowrap",
+                }} 
+                onClick={() => {
+                  setShowAdminDiscussionDashboard(false);
+                  setActiveTab('assessment-workflow');
+                }}
+              >
+                <MdRateReview size={sidebarCollapsed ? 22 : 18} />
+                {!sidebarCollapsed && <span>Assessment Workflow</span>}
+              </button>
+            )}
+
+            <button 
+              style={{
+                padding: sidebarCollapsed ? "12px" : "10px 16px",
+                border: "none",
+                borderRadius: 12,
+                cursor: "pointer",
+                background: activeTab === 'clients'
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                  : "transparent",
+                color: activeTab === 'clients' ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: 12,
+                fontSize: sidebarCollapsed ? 0 : 14,
+                fontWeight: activeTab === 'clients' ? 600 : 500,
+                transition: "all 0.2s ease",
+                boxShadow: activeTab === 'clients'
+                  ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                  : "none",
+                border: activeTab === 'clients' ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                whiteSpace: "nowrap",
+              }} 
+              onClick={() => {
+                setShowAdminDiscussionDashboard(false);
+                setActiveTab('clients');
+              }}
+            >
+              <MdGroup size={sidebarCollapsed ? 22 : 18} />
+              {!sidebarCollapsed && <span>Clients</span>}
+            </button>
 
             {/* SEE MORE BUTTON */}
             {!isRestrictedUser && (
@@ -3319,6 +3575,7 @@ export default function Dashboard() {
               onClick={() => {
                 setShowProfileMenu(!showProfileMenu);
                 setShowNotifications(false);
+                setShowSwitchAccountPanel(false);
               }}
               style={{
                 height: "42px",
@@ -3426,8 +3683,7 @@ export default function Dashboard() {
 
                 <button
                   onClick={() => {
-                    setShowLogoutModal(true);
-                    setShowProfileMenu(false);
+                    setShowSwitchAccountPanel((open) => !open);
                   }}
                   style={profileMenuItemStyle}
                   onMouseEnter={(event) => handleProfileMenuItemHover(event, true)}
@@ -3437,10 +3693,114 @@ export default function Dashboard() {
                   <span>Switch account</span>
                 </button>
 
+                {showSwitchAccountPanel && (
+                  <div style={{
+                    borderTop: "1px solid #F1F5F9",
+                    borderBottom: "1px solid #F1F5F9",
+                    background: "#F8FAFC",
+                    padding: "12px 0"
+                  }}>
+                    <div style={{
+                      padding: "0 16px 10px 16px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      color: "#64748B",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em"
+                    }}>
+                      Switch account
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px", padding: "0 8px" }}>
+                      {savedAccounts.map((account) => {
+                        const isCurrent = account.email === user?.email;
+                        return (
+                          <button
+                            key={`saved-account-${account.email}`}
+                            onClick={() => !isCurrent && handleSwitchToAccount(account)}
+                            disabled={isCurrent}
+                            style={{
+                              ...profileMenuItemStyle,
+                              background: isCurrent ? "#E0F2FE" : "#fff",
+                              border: "1px solid",
+                              borderColor: isCurrent ? "#7DD3FC" : "#E2E8F0",
+                              borderRadius: "12px",
+                              margin: "0 8px",
+                              cursor: isCurrent ? "default" : "pointer",
+                              color: "#0F172A"
+                            }}
+                            onMouseEnter={(event) => !isCurrent && handleProfileMenuItemHover(event, true)}
+                            onMouseLeave={(event) => !isCurrent && handleProfileMenuItemHover(event, false)}
+                          >
+                            <div style={{
+                              width: 32,
+                              height: 32,
+                              borderRadius: "50%",
+                              background: isCurrent
+                                ? "linear-gradient(135deg, #0EA5E9 0%, #2563EB 100%)"
+                                : "linear-gradient(135deg, #E11D48 0%, #BE185D 100%)",
+                              color: "#fff",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 13,
+                              fontWeight: 700,
+                              flexShrink: 0
+                            }}>
+                              {(account.displayName || account.email || "U").charAt(0).toUpperCase()}
+                            </div>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: "#0F172A" }}>
+                                {account.displayName || account.email.split("@")[0]}
+                              </div>
+                              <div style={{ fontSize: 12, color: "#64748B", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {account.email}
+                              </div>
+                            </div>
+                            {isCurrent ? (
+                              <span style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: "#0369A1",
+                                background: "#E0F2FE",
+                                border: "1px solid #7DD3FC",
+                                borderRadius: 999,
+                                padding: "4px 8px"
+                              }}>
+                                Current
+                              </span>
+                            ) : (
+                              <MdChevronRight size={16} color="#94A3B8" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ padding: "10px 16px 0 16px" }}>
+                      <button
+                        onClick={handleAddAnotherAccount}
+                        style={{
+                          width: "100%",
+                          border: "1px dashed #CBD5E1",
+                          background: "#fff",
+                          color: "#0F172A",
+                          borderRadius: 12,
+                          padding: "10px 12px",
+                          fontSize: 14,
+                          fontWeight: 600,
+                          cursor: "pointer"
+                        }}
+                      >
+                        Add another account
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <button
                   onClick={() => {
                     setShowLogoutModal(true);
                     setShowProfileMenu(false);
+                    setShowSwitchAccountPanel(false);
                   }}
                   style={{ ...profileMenuItemStyle, color: "#dc2626" }}
                   onMouseEnter={(event) => handleProfileMenuItemHover(event, true)}
@@ -3739,8 +4099,8 @@ export default function Dashboard() {
                   <h4 style={{ margin: "0 0 16px 0", color: "#1E293B", fontSize: 16 }}>
                     Views per Proposal {files.length > 10 && "(Top 10)"}
                   </h4>
-                  <div style={{ width: "100%", height: 360, minWidth: 0, minHeight: 360 }}>
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={360}>
+                  <div style={{ width: "100%", height: 360, minWidth: 320, minHeight: 360 }}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={320} minHeight={360} debounce={100}>
                       <BarChart
                         data={proposalChartData.length ? proposalChartData : [{ name: "No Data", views: 0 }]}
                         margin={{ top: 20, right: 20, left: 10, bottom: 60 }}
@@ -3764,8 +4124,8 @@ export default function Dashboard() {
                   <h4 style={{ margin: "0 0 16px 0", color: "#1E293B", fontSize: 16 }}>
                     Daily View Traffic
                   </h4>
-                  <div style={{ width: "100%", height: 360, minWidth: 0, minHeight: 360 }}>
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={360}>
+                  <div style={{ width: "100%", height: 360, minWidth: 320, minHeight: 360 }}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={320} minHeight={360} debounce={100}>
                       <LineChart
                         data={dailyChartData.length ? dailyChartData : [{ date: "No Data", views: 0 }]}
                         margin={{ top: 20, right: 20, left: 10, bottom: 60 }}
@@ -3816,11 +4176,9 @@ export default function Dashboard() {
             user={user}
             onViewClick={(file) => viewProposal(file)}
             onDownloadClick={(file) => downloadFile(file)}
-            onShareClick={(file) => {
-              setEmailProposal(file);
-              setShowEmailModal(true);
-            }}
+            onShareClick={handleRequestShareReview}
             onSignClick={(file) => handleSignProposal(file)}
+            onOpenAssessmentWorkflow={() => setActiveTab("assessment-workflow")}
           />
         )}
 
@@ -4825,16 +5183,154 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* ASSESSMENT WORKFLOW TAB */}
+        {activeTab === 'assessment-workflow' && user && (role === "admin" || role === "superadmin") && (
+          <div style={{
+            background: "transparent",
+            borderRadius: "0px",
+            padding: "0px",
+            marginTop: "0px",
+            boxShadow: "none",
+            minHeight: "calc(100vh - 200px)",
+            overflow: "visible"
+          }}>
+            <AssessmentWorkflowPanel user={user} role={role} />
+          </div>
+        )}
+
+        {activeTab === 'clients' && user && (
+          <div style={{
+            background: "transparent",
+            borderRadius: "0px",
+            padding: "0px",
+            marginTop: "0px",
+            boxShadow: "none",
+            minHeight: "calc(100vh - 200px)",
+            overflow: "visible"
+          }}>
+            <ClientsTab />
+          </div>
+        )}
+
         {/* Share Modal */}
-        <ShareModal
-          isOpen={showEmailModal}
-          onClose={() => {
-            setShowEmailModal(false);
-            setEmailProposal(null);
-          }}
-          proposal={emailProposal}
-          user={user}
-        />
+      <ShareModal
+        isOpen={showEmailModal}
+        onClose={() => {
+          setShowEmailModal(false);
+          setEmailProposal(null);
+        }}
+        proposal={emailProposal}
+        user={user}
+      />
+
+      {showShareReviewModal && pendingShareReviewProposal && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.58)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999,
+          padding: 20
+        }}>
+          <div style={{
+            width: "min(560px, 100%)",
+            background: "#fff",
+            borderRadius: 18,
+            boxShadow: "0 24px 80px rgba(15, 23, 42, 0.25)",
+            border: "1px solid #E2E8F0",
+            padding: 24
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#2563EB", marginBottom: 8 }}>
+                  Internal review required
+                </div>
+                <h3 style={{ margin: 0, fontSize: 22, color: "#0F172A" }}>Wait for admin approval</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setShowShareReviewModal(false);
+                  setPendingShareReviewProposal(null);
+                }}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 12,
+                  border: "1px solid #CBD5E1",
+                  background: "#fff",
+                  color: "#0F172A",
+                  fontSize: 22,
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  cursor: "pointer"
+                }}
+                aria-label="Close review modal"
+              >
+                ×
+              </button>
+            </div>
+
+            <p style={{ margin: "14px 0 0", color: "#475569", lineHeight: 1.7 }}>
+              This proposal has been routed to the assessment workflow first. An admin should review the full details, note what is missing, leave a recommendation, and decide whether it is ready to send or needs revision.
+            </p>
+
+            <div style={{
+              marginTop: 18,
+              background: "#F8FAFC",
+              border: "1px solid #E2E8F0",
+              borderRadius: 14,
+              padding: 16
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
+                Proposal queued for review
+              </div>
+              <div style={{ fontWeight: 700, color: "#0F172A", marginBottom: 6, wordBreak: "break-word" }}>
+                {pendingShareReviewProposal?.name || "Untitled proposal"}
+              </div>
+              <div style={{ color: "#64748B", fontSize: 14 }}>
+                Status: Waiting for approval before client sharing
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22, flexWrap: "wrap" }}>
+              <button
+                onClick={() => {
+                  setShowShareReviewModal(false);
+                  setPendingShareReviewProposal(null);
+                }}
+                style={{
+                  border: "1px solid #CBD5E1",
+                  background: "#fff",
+                  color: "#0F172A",
+                  borderRadius: 12,
+                  padding: "10px 16px",
+                  cursor: "pointer",
+                  fontWeight: 700
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={openAssessmentWorkflowForReview}
+                style={{
+                  border: "none",
+                  background: "linear-gradient(135deg, #2563EB, #4F46E5)",
+                  color: "#fff",
+                  borderRadius: 12,
+                  padding: "10px 16px",
+                  cursor: "pointer",
+                  fontWeight: 800,
+                  boxShadow: "0 10px 18px rgba(37, 99, 235, 0.2)"
+                }}
+              >
+                Open assessment workflow
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
         
       </div>
 
@@ -4844,6 +5340,7 @@ export default function Dashboard() {
           userId={user.uid}
           userEmail={user.email}
           userRole={role || "user"}
+          initialTab={adminDiscussionInitialTab}
           onClose={() => setShowAdminDiscussionDashboard(false)}
           onDiscussionSeen={(discussionId, lastSeenMs) => {
             setLastSeenByDiscussion(prev => ({

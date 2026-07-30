@@ -1,0 +1,72 @@
+/* Assessment Drafts Panel and Editor CSS */
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Scrollbar styling */
+.assessment-drafts-panel,
+.assessment-draft-editor {
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: thin;
+}
+
+.assessment-drafts-panel *::-webkit-scrollbar,
+.assessment-draft-editor *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.assessment-drafts-panel *::-webkit-scrollbar-track,
+.assessment-draft-editor *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.assessment-drafts-panel *::-webkit-scrollbar-thumb,
+.assessment-draft-editor *::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.assessment-drafts-panel *::-webkit-scrollbar-thumb:hover,
+.assessment-draft-editor *::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Input focus states */
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: #0ea5e9 !important;
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.1);
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  background-color: #f1f5f9 !important;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Button hover states */
+button:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Slider styling */
+input[type="range"] {
+  cursor: pointer;
+}
+
+input[type="range"]:disabled {
+  cursor: not-allowed;
+}

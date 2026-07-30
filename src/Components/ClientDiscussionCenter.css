@@ -1,0 +1,38 @@
+/* src/Components/ClientDiscussionCenter.css */
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.client-discussion-center {
+  display: flex;
+  height: 100%;
+  gap: 0;
+}
+
+/* Ensure scrollbars are visible and styled */
+.client-discussion-center *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.client-discussion-center *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.client-discussion-center *::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.client-discussion-center *::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Firefox scrollbar styling */
+.client-discussion-center {
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: thin;
+}

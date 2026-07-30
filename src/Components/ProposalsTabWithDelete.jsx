@@ -35,13 +35,15 @@ import {
   MdMoreVert,
   MdBlockFlipped,
   MdArchive,
-  MdUnarchive
+  MdUnarchive,
+  MdRateReview
 } from "react-icons/md";
 import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
 import { usePermissions } from "../utils/permissions";
 import { ActivityLogger } from "../utils/activityLogger";
+import { useAssessmentDrafts } from "../hooks/useAssessmentDrafts";
 
-export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadClick, onShareClick, onSignClick }) {
+export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadClick, onShareClick, onSignClick, onOpenAssessmentWorkflow }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -51,10 +53,12 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
   const [views, setViews] = useState([]);
   const [rejectedProposals, setRejectedProposals] = useState([]);
   const [archivedProposals, setArchivedProposals] = useState([]);
+  const [sharedReviewStates, setSharedReviewStates] = useState([]);
   const [archiveView, setArchiveView] = useState("active");
   
   // Permission system
   const { role } = usePermissions();
+  const { drafts: assessmentDrafts } = useAssessmentDrafts(user?.uid || "", user?.email || "", true);
   
   // Selection states
   const [selectedProposals, setSelectedProposals] = useState([]);
@@ -79,6 +83,7 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
       loadViews();
       loadRejectedProposals();
       loadArchivedProposals();
+      loadSharedReviewStates();
     }
   }, [user]);
 
@@ -174,6 +179,23 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     }
   };
 
+  const loadSharedReviewStates = async () => {
+    try {
+      const sharedQuery = query(collection(db, "sharedProposals"));
+      const snapshot = await getDocs(sharedQuery);
+      const sharedData = [];
+      snapshot.forEach((sharedDoc) => {
+        sharedData.push({
+          id: sharedDoc.id,
+          ...sharedDoc.data()
+        });
+      });
+      setSharedReviewStates(sharedData);
+    } catch (error) {
+      console.error("Error loading shared review states:", error);
+    }
+  };
+
   const getArchiveDocId = (fileName) => encodeURIComponent(fileName);
 
   const isProposalArchived = (fileName) =>
@@ -225,6 +247,144 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
   const indexOfFirstProposal = indexOfLastProposal - proposalsPerPage;
   const currentProposals = filteredProposals.slice(indexOfFirstProposal, indexOfLastProposal);
   const totalPages = Math.ceil(filteredProposals.length / proposalsPerPage);
+
+  const workflowSummary = assessmentDrafts.reduce((acc, draft) => {
+    acc.total += 1;
+    acc.completed += Number(draft.completionPercentage || 0);
+    if (draft.status === "approved") acc.approved += 1;
+    if (draft.status === "needs_revision") acc.needsRevision += 1;
+    if (draft.status === "pending_approval") acc.pending += 1;
+    if (draft.status === "draft") acc.draft += 1;
+    return acc;
+  }, { total: 0, completed: 0, approved: 0, needsRevision: 0, pending: 0, draft: 0 });
+
+  const averageReadiness = workflowSummary.total
+    ? Math.round(workflowSummary.completed / workflowSummary.total)
+    : 0;
+  const latestAssessment = assessmentDrafts[0] || null;
+  const latestMissing = latestAssessment?.gaps
+    ? (Array.isArray(latestAssessment.gaps)
+      ? latestAssessment.gaps
+      : String(latestAssessment.gaps).split(/\n|,|•/))
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 3)
+    : [];
+  const latestRecommendation = latestAssessment?.recommendation || "Open the workflow tab to review what is missing and what is recommended.";
+
+  const toMs = (value) => {
+    if (!value) return 0;
+    if (typeof value?.toDate === "function") return value.toDate().getTime();
+    if (value?.seconds) return value.seconds * 1000;
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === "number") return value;
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const getProposalReviewState = (fileName) => {
+    const normalizedName = String(fileName || "").toLowerCase();
+    const sharedMatches = sharedReviewStates.filter((record) => {
+      const recordName = String(record.fileName || "").toLowerCase();
+      const recordPath = String(record.filePath || "").toLowerCase();
+      const recordPathName = recordPath.split("/").pop() || "";
+      return (
+        recordName === normalizedName ||
+        recordPath === `proposals/${normalizedName}` ||
+        recordPathName === normalizedName ||
+        recordName === normalizedName.replace(/\.pdf$/, "") ||
+        recordPathName === normalizedName.replace(/\.pdf$/, "")
+      );
+    });
+
+    if (sharedMatches.length) {
+      const latestShared = [...sharedMatches].sort((a, b) => toMs(b.updatedAt || b.sharedAt) - toMs(a.updatedAt || a.sharedAt))[0];
+      const approvalState = String(latestShared.approvalStatus || latestShared.sharingStatus || "").toLowerCase();
+
+      if (approvalState === "approved" || approvalState === "ready_to_share") {
+        return {
+          reviewStatus: "approved",
+          reviewLabel: "Approved",
+          color: "#10B981",
+          bg: "rgba(16, 185, 129, 0.12)",
+          icon: MdCheckCircle
+        };
+      }
+
+      if (approvalState === "needs_revision" || approvalState === "not_ready") {
+        return {
+          reviewStatus: "needs_revision",
+          reviewLabel: "Needs Revision",
+          color: "#DC2626",
+          bg: "rgba(220, 38, 38, 0.12)",
+          icon: MdCancel
+        };
+      }
+    }
+
+    const relatedDrafts = assessmentDrafts.filter((draft) => {
+      const proposalName = String(draft.proposalName || "").toLowerCase();
+      const sourcePath = String(draft.sourceFilePath || draft.proposalId || "").toLowerCase();
+      const sourceFileName = sourcePath.split("/").pop() || "";
+      return (
+        proposalName === normalizedName ||
+        proposalName === normalizedName.replace(/\.pdf$/, "") ||
+        sourcePath.includes(normalizedName) ||
+        sourceFileName === normalizedName ||
+        sourceFileName === normalizedName.replace(/\.pdf$/, "")
+      );
+    });
+
+    if (!relatedDrafts.length) {
+      return {
+        reviewStatus: "pending_review",
+        reviewLabel: "Pending Review",
+        color: "#F59E0B",
+        bg: "rgba(245, 158, 11, 0.12)",
+        icon: MdInfo
+      };
+    }
+
+    const latest = [...relatedDrafts].sort((a, b) => toMs(b.updatedAt || b.createdAt) - toMs(a.updatedAt || a.createdAt))[0];
+
+    if (latest.status === "approved") {
+      return {
+        reviewStatus: "approved",
+        reviewLabel: "Approved",
+        color: "#10B981",
+        bg: "rgba(16, 185, 129, 0.12)",
+        icon: MdCheckCircle
+      };
+    }
+
+    if (latest.status === "needs_revision") {
+      return {
+        reviewStatus: "needs_revision",
+        reviewLabel: "Needs Revision",
+        color: "#DC2626",
+        bg: "rgba(220, 38, 38, 0.12)",
+        icon: MdCancel
+      };
+    }
+
+    if (latest.status === "pending_approval") {
+      return {
+        reviewStatus: "pending_approval",
+        reviewLabel: "Pending Approval",
+        color: "#2563EB",
+        bg: "rgba(37, 99, 235, 0.12)",
+        icon: MdWarning
+      };
+    }
+
+    return {
+      reviewStatus: latest.status || "draft",
+      reviewLabel: "In Review",
+      color: "#7C3AED",
+      bg: "rgba(124, 58, 237, 0.12)",
+      icon: MdRateReview
+    };
+  };
 
   const handleSelectProposal = (fileName) => {
     if (selectedProposals.includes(fileName)) {
@@ -656,6 +816,132 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     borderBottom: "1px solid #F1F5F9",
   });
 
+  const assessmentOverviewStyle = {
+    background: "#F8FBFF",
+    border: "1px solid #D7E7FF",
+    borderRadius: "16px",
+    padding: "18px",
+    marginBottom: "18px",
+    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.04)",
+  };
+
+  const assessmentOverviewHeaderStyle = {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: "16px",
+    flexWrap: "wrap",
+    marginBottom: "14px",
+  };
+
+  const assessmentEyebrowStyle = {
+    fontSize: "11px",
+    fontWeight: "700",
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: "#2563EB",
+    marginBottom: "4px",
+  };
+
+  const assessmentTitleStyle = {
+    margin: 0,
+    fontSize: "18px",
+    color: "#0F172A",
+  };
+
+  const assessmentActionButtonStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "8px",
+    border: "none",
+    background: "linear-gradient(135deg, #2563EB, #4F46E5)",
+    color: "#fff",
+    borderRadius: "12px",
+    padding: "10px 14px",
+    fontSize: "13px",
+    fontWeight: "700",
+    cursor: "pointer",
+    boxShadow: "0 10px 20px rgba(37, 99, 235, 0.22)",
+  };
+
+  const assessmentOverviewGridStyle = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    gap: "12px",
+    marginBottom: "12px",
+  };
+
+  const assessmentMetricCardStyle = {
+    background: "#fff",
+    border: "1px solid #E2E8F0",
+    borderRadius: "14px",
+    padding: "12px 14px",
+    minHeight: "74px",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "space-between",
+  };
+
+  const assessmentMetricLabelStyle = {
+    fontSize: "12px",
+    color: "#64748B",
+    fontWeight: "600",
+  };
+
+  const assessmentMetricValueStyle = {
+    fontSize: "22px",
+    color: "#0F172A",
+  };
+
+  const assessmentDetailGridStyle = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: "12px",
+  };
+
+  const assessmentDetailCardStyle = {
+    background: "#fff",
+    border: "1px solid #E2E8F0",
+    borderRadius: "14px",
+    padding: "14px",
+    minHeight: "120px",
+  };
+
+  const assessmentDetailLabelStyle = {
+    display: "block",
+    fontSize: "12px",
+    fontWeight: "700",
+    color: "#334155",
+    textTransform: "uppercase",
+    letterSpacing: "0.03em",
+    marginBottom: "10px",
+  };
+
+  const assessmentListStyle = {
+    margin: 0,
+    paddingLeft: "18px",
+    color: "#0F172A",
+    lineHeight: 1.6,
+  };
+
+  const assessmentListItemStyle = {
+    marginBottom: "6px",
+    wordBreak: "break-word",
+  };
+
+  const assessmentMutedTextStyle = {
+    margin: 0,
+    color: "#64748B",
+    lineHeight: 1.6,
+  };
+
+  const assessmentRecommendationStyle = {
+    margin: 0,
+    color: "#0F172A",
+    lineHeight: 1.7,
+    wordBreak: "break-word",
+  };
+
   if (loading) {
     return (
       <div style={loadingContainer}>
@@ -715,6 +1001,58 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
             <MdRefresh size={16} />
             Refresh
           </button>
+        </div>
+      </div>
+
+      <div style={assessmentOverviewStyle}>
+        <div style={assessmentOverviewHeaderStyle}>
+          <div>
+            <div style={assessmentEyebrowStyle}>Assessment overview</div>
+            <h3 style={assessmentTitleStyle}>Review before sharing</h3>
+          </div>
+          <button
+            onClick={() => onOpenAssessmentWorkflow?.()}
+            style={assessmentActionButtonStyle}
+          >
+            <MdRateReview size={16} />
+            Open workflow
+          </button>
+        </div>
+        <div style={assessmentOverviewGridStyle}>
+          <div style={assessmentMetricCardStyle}>
+            <span style={assessmentMetricLabelStyle}>Average readiness</span>
+            <strong style={assessmentMetricValueStyle}>{averageReadiness}%</strong>
+          </div>
+          <div style={assessmentMetricCardStyle}>
+            <span style={assessmentMetricLabelStyle}>Drafts</span>
+            <strong style={assessmentMetricValueStyle}>{workflowSummary.draft}</strong>
+          </div>
+          <div style={assessmentMetricCardStyle}>
+            <span style={assessmentMetricLabelStyle}>Pending review</span>
+            <strong style={assessmentMetricValueStyle}>{workflowSummary.pending}</strong>
+          </div>
+          <div style={assessmentMetricCardStyle}>
+            <span style={assessmentMetricLabelStyle}>Needs revision</span>
+            <strong style={assessmentMetricValueStyle}>{workflowSummary.needsRevision}</strong>
+          </div>
+        </div>
+        <div style={assessmentDetailGridStyle}>
+          <div style={assessmentDetailCardStyle}>
+            <span style={assessmentDetailLabelStyle}>What is missing</span>
+            {latestMissing.length > 0 ? (
+              <ul style={assessmentListStyle}>
+                {latestMissing.map((item, index) => (
+                  <li key={`${item}-${index}`} style={assessmentListItemStyle}>{item}</li>
+                ))}
+              </ul>
+            ) : (
+              <p style={assessmentMutedTextStyle}>No recent gaps captured yet.</p>
+            )}
+          </div>
+          <div style={assessmentDetailCardStyle}>
+            <span style={assessmentDetailLabelStyle}>Recommendation</span>
+            <p style={assessmentRecommendationStyle}>{latestRecommendation}</p>
+          </div>
         </div>
       </div>
 
@@ -832,6 +1170,7 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
                 const viewCount = getViewCount(file.name);
                 const isSelected = selectedProposals.includes(file.name);
                 const fileId = file.name.replace(/[^a-zA-Z0-9]/g, '_');
+                const reviewState = isArchived ? null : getProposalReviewState(file.name);
                 
                 return (
                   <tr key={index} style={index % 2 === 0 ? rowEvenStyle : rowOddStyle}>
@@ -849,7 +1188,31 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
                       </div>
                     </td>
                     <td style={tdStyle}>
-                      <ProposalStatusBadge status={status} size="small" />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <ProposalStatusBadge status={status} size="small" />
+                        {reviewState && (
+                          <div style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            padding: "3px 9px",
+                            borderRadius: 999,
+                            background: reviewState.bg,
+                            color: reviewState.color,
+                            border: `1px solid ${reviewState.color}22`,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            width: "fit-content",
+                            whiteSpace: "nowrap"
+                          }}>
+                            {(() => {
+                              const ReviewIcon = reviewState.icon;
+                              return <ReviewIcon size={12} />;
+                            })()}
+                            {reviewState.reviewLabel}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td style={tdStyle}>
                       <div style={viewCountStyle}>

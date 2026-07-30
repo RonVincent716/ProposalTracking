@@ -16,7 +16,7 @@ export const getSelectedTextData = () => {
     return null;
   }
 
-  const range = selection.getRangeAt(0);
+  const range = selection.getRangeAt(0); 
   const selectedText = selection.toString().trim();
   
   if (!selectedText) {

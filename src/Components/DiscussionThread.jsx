@@ -301,11 +301,11 @@ const styles = {
     opacity: 0.85
   },
   header: {
-    padding: '14px 16px',
+    padding: '12px 14px',
     background: '#F8FAFC',
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     cursor: 'pointer',
     borderBottom: '1px solid #EDF2F7'
   },
@@ -331,9 +331,11 @@ const styles = {
     fontSize: '13px',
     fontWeight: '600',
     color: '#1E293B',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis'
+    whiteSpace: 'normal',
+    overflow: 'visible',
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+    lineHeight: 1.4
   },
   headerMeta: {
     fontSize: '11px',
@@ -368,10 +370,12 @@ const styles = {
   },
   contextSection: {
     marginBottom: '12px',
-    padding: '10px 12px',
-    background: '#FFFFFF',
+    padding: '12px 14px',
+    background: '#F8FAFC',
     borderRadius: '10px',
-    border: '1px solid #E2E8F0'
+    border: '1px solid #D7E1EE',
+    maxHeight: '118px',
+    overflowY: 'auto'
   },
   contextLabel: {
     fontSize: '10px',
@@ -384,8 +388,11 @@ const styles = {
   contextText: {
     fontSize: '12px',
     color: '#334155',
-    lineHeight: 1.45,
-    fontStyle: 'italic'
+    lineHeight: 1.55,
+    fontStyle: 'italic',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word'
   },
   messagesContainer: {
     maxHeight: '330px',

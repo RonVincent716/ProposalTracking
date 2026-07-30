@@ -45,6 +45,17 @@ export default function Login() {
     return () => unsub();
   }, []);
 
+  useEffect(() => {
+    try {
+      const preferredEmail = localStorage.getItem("preferredLoginEmail");
+      if (preferredEmail) {
+        setEmail(preferredEmail);
+      }
+    } catch {
+      // no-op
+    }
+  }, []);
+
   // Email/password login
   const handleLogin = async () => {
     setError("");

@@ -5,6 +5,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { 
   collection, 
   addDoc, 
+  updateDoc,
   serverTimestamp,
   query,
   where,
@@ -60,6 +61,17 @@ export default function ProposalUploader() {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
+  const [assessmentDraft, setAssessmentDraft] = useState({
+    companyOverview: "",
+    strengths: "",
+    gaps: "",
+    recommendation: "",
+    riskLevel: "medium",
+    readinessScore: 60,
+    adminNotes: ""
+  });
+  const [assessmentSaving, setAssessmentSaving] = useState(false);
+  const [assessmentStatus, setAssessmentStatus] = useState("");
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
@@ -107,6 +119,65 @@ export default function ProposalUploader() {
     }, 500);
     return () => clearTimeout(delayDebounce);
   }, [searchTerm]);
+
+  useEffect(() => {
+    const email = (recipientEmail || "").trim().toLowerCase();
+    if (!email) {
+      setAssessmentDraft({
+        companyOverview: "",
+        strengths: "",
+        gaps: "",
+        recommendation: "",
+        riskLevel: "medium",
+        readinessScore: 60,
+        adminNotes: ""
+      });
+      setAssessmentStatus("");
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadAssessment = async () => {
+      try {
+        const assessmentRef = doc(db, "proposalAssessments", email);
+        const assessmentSnap = await getDoc(assessmentRef);
+        if (cancelled) return;
+
+        if (assessmentSnap.exists()) {
+          const data = assessmentSnap.data() || {};
+          setAssessmentDraft({
+            companyOverview: data.companyOverview || "",
+            strengths: Array.isArray(data.strengths)
+              ? data.strengths.join("\n")
+              : (data.strengths || ""),
+            gaps: Array.isArray(data.gaps)
+              ? data.gaps.join("\n")
+              : (data.gaps || ""),
+            recommendation: data.recommendation || "",
+            riskLevel: data.riskLevel || "medium",
+            readinessScore: Number.isFinite(Number(data.readinessScore)) ? Number(data.readinessScore) : 60,
+            adminNotes: data.adminNotes || ""
+          });
+          setAssessmentStatus("Assessment loaded");
+        } else {
+          setAssessmentDraft(buildAssessmentDraft());
+          setAssessmentStatus("Auto-generated");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Error loading assessment:", error);
+          setAssessmentStatus("Unable to load assessment");
+        }
+      }
+    };
+
+    loadAssessment();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [recipientEmail, selectedClient]);
 
   const sanitizeFileName = useCallback((fileName) => {
     return fileName.replace(/[^a-zA-Z0-9.\-_]/g, "_");
@@ -220,6 +291,43 @@ export default function ProposalUploader() {
 
           // Log upload activity
           await ActivityLogger.logUpload(file.name, file.size, file.type);
+
+          // Create assessment draft automatically
+          try {
+            await addDoc(collection(db, "assessmentDrafts"), {
+              proposalId: filePath,
+              proposalName: file.name,
+              clientEmail: recipientEmail?.toLowerCase() || "",
+              clientName: recipientName || "",
+              companyName: selectedClient?.companyName || "",
+              industry: selectedClient?.industry || "",
+              phone: selectedClient?.phone || "",
+              website: selectedClient?.website || "",
+              status: "draft",
+              completionPercentage: 0,
+              createdByAdminId: user.uid,
+              createdByAdminEmail: user.email,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              lastEditedByName: user.email?.split('@')[0] || 'Admin',
+              lastEditedAt: new Date().toISOString(),
+              draftHistory: [{
+                timestamp: new Date().toISOString(),
+                action: 'created',
+                editedBy: user.email
+              }],
+              autoSaveEnabled: true,
+              companyOverview: "",
+              strengths: "",
+              gaps: "",
+              recommendation: "",
+              readinessScore: 60,
+              riskLevel: "medium",
+              adminNotes: ""
+            });
+          } catch (err) {
+            console.error("Error creating assessment draft:", err);
+          }
         } catch (err) {
           console.error("Error saving to Firestore:", err);
         }
@@ -246,6 +354,126 @@ export default function ProposalUploader() {
     setSearchTerm("");
     setSearchResults([]);
   };
+
+  const generatedAssessment = useMemo(() => {
+    const email = (recipientEmail || selectedClient?.email || "").trim().toLowerCase();
+    const displayName =
+      selectedClient?.displayName ||
+      recipientName ||
+      (email ? email.split("@")[0] : "Unassigned Client");
+    const companyName =
+      selectedClient?.companyName ||
+      selectedClient?.businessName ||
+      selectedClient?.organization ||
+      "Not specified";
+    const industry = selectedClient?.industry || "Not specified";
+    const phone = selectedClient?.phone || selectedClient?.phoneNumber || "";
+    const website = selectedClient?.website || selectedClient?.companyWebsite || "";
+    const notes = selectedClient?.notes || selectedClient?.adminNotes || "";
+    const status = selectedClient?.status || "active";
+
+    let score = 35;
+    if (email) score += 15;
+    if (selectedClient?.displayName || recipientName) score += 10;
+    if (selectedClient?.companyName || selectedClient?.businessName || selectedClient?.organization) score += 10;
+    if (phone) score += 10;
+    if (website) score += 10;
+    if (selectedClient?.industry) score += 5;
+    if (notes) score += 5;
+    score = Math.min(score, 100);
+
+    const gaps = [];
+    if (!selectedClient) gaps.push("Client record has not been matched yet.");
+    if (!companyName || companyName === "Not specified") gaps.push("No company name is stored for this client.");
+    if (!phone) gaps.push("No phone number is available for follow-up.");
+    if (!website) gaps.push("No website or online presence is recorded.");
+    if (!selectedClient?.industry) gaps.push("Industry is not tagged, so the proposal may feel generic.");
+
+    const strengths = [];
+    if (email) strengths.push("A valid client email is ready for sharing.");
+    if (selectedClient?.displayName) strengths.push("Client name is already known.");
+    if (selectedClient?.status) strengths.push(`Client status is marked as ${selectedClient.status}.`);
+    if (notes) strengths.push("Admin notes are already attached to the account.");
+
+    const recommendations = [];
+    if (gaps.length > 0) recommendations.push("Use the proposal to fill the missing operational pieces.");
+    if (score >= 75) recommendations.push("Client looks ready for a direct send.");
+    else if (score >= 50) recommendations.push("Review the gaps first, then share.");
+    else recommendations.push("Consider adding more context before sending.");
+
+    const readinessLabel =
+      score >= 75 ? "High" : score >= 50 ? "Medium" : "Low";
+
+    return {
+      displayName,
+      companyName,
+      industry,
+      phone,
+      website,
+      status,
+      score,
+      readinessLabel,
+      gaps,
+      strengths,
+      recommendations,
+    };
+  }, [recipientEmail, recipientName, selectedClient]);
+
+  function buildAssessmentDraft(source = generatedAssessment) {
+    return {
+      companyOverview:
+        source.companyName && source.companyName !== "Not specified"
+          ? `${source.companyName}${source.industry && source.industry !== "Not specified" ? ` - ${source.industry}` : ""}`
+          : source.displayName,
+      strengths: source.strengths.join("\n"),
+      gaps: source.gaps.join("\n"),
+      recommendation: source.recommendations.join("\n"),
+      riskLevel: source.score >= 75 ? "low" : source.score >= 50 ? "medium" : "high",
+      readinessScore: source.score,
+      adminNotes: ""
+    };
+  }
+
+  const saveAssessment = useCallback(async () => {
+    const email = (recipientEmail || "").trim().toLowerCase();
+    if (!email) {
+      setAssessmentStatus("Enter a client email first");
+      return;
+    }
+
+    setAssessmentSaving(true);
+    setAssessmentStatus("");
+    try {
+      const payload = {
+        clientEmail: email,
+        clientName: recipientName || selectedClient?.displayName || email.split("@")[0],
+        companyOverview: assessmentDraft.companyOverview.trim(),
+        strengths: assessmentDraft.strengths
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean),
+        gaps: assessmentDraft.gaps
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean),
+        recommendation: assessmentDraft.recommendation.trim(),
+        riskLevel: assessmentDraft.riskLevel,
+        readinessScore: Number(assessmentDraft.readinessScore) || 0,
+        adminNotes: assessmentDraft.adminNotes.trim(),
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid || null,
+        updatedByEmail: user?.email || null
+      };
+
+      await setDoc(doc(db, "proposalAssessments", email), payload, { merge: true });
+      setAssessmentStatus("Assessment saved");
+    } catch (error) {
+      console.error("Error saving assessment:", error);
+      setAssessmentStatus("Failed to save assessment");
+    } finally {
+      setAssessmentSaving(false);
+    }
+  }, [assessmentDraft, recipientEmail, recipientName, selectedClient, user]);
 
   const sendEmail = useCallback(async () => {
     if (!recipientEmail) {
@@ -504,6 +732,141 @@ export default function ProposalUploader() {
                     The client will receive an email with a link to log in and access this proposal.
                     They can view, track time spent, and sign the document.
                   </span>
+                </div>
+
+                <div style={styles.assessmentPanel}>
+                  <div style={styles.assessmentHeader}>
+                    <div>
+                      <div style={styles.assessmentEyebrow}>Proposal Qualification</div>
+                      <h4 style={styles.assessmentTitle}>Auto-generated pre-sales assessment</h4>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                      <div style={styles.readinessBadge(assessmentDraft.readinessScore)}>
+                        {assessmentDraft.readinessScore >= 75 ? "High" : assessmentDraft.readinessScore >= 50 ? "Medium" : "Low"} ({assessmentDraft.readinessScore}%)
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#64748b" }}>
+                        {assessmentStatus || "Auto-generated"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={styles.assessmentGrid}>
+                    <div style={styles.assessmentCard}>
+                      <div style={styles.assessmentCardLabel}>Client</div>
+                      <div style={styles.assessmentCardValue}>{generatedAssessment.displayName}</div>
+                      <div style={styles.assessmentCardMeta}>{recipientEmail || "No email selected yet"}</div>
+                    </div>
+                    <div style={styles.assessmentCard}>
+                      <div style={styles.assessmentCardLabel}>Company</div>
+                      <div style={styles.assessmentCardValue}>{generatedAssessment.companyName}</div>
+                      <div style={styles.assessmentCardMeta}>{generatedAssessment.industry}</div>
+                    </div>
+                    <div style={styles.assessmentCard}>
+                      <div style={styles.assessmentCardLabel}>Contact</div>
+                      <div style={styles.assessmentCardValue}>{generatedAssessment.phone || "Not provided"}</div>
+                      <div style={styles.assessmentCardMeta}>{generatedAssessment.website || "No website recorded"}</div>
+                    </div>
+                  </div>
+
+                  <div style={styles.assessmentColumns}>
+                    <div style={styles.assessmentColumn}>
+                      <div style={styles.assessmentColumnTitle}>What looks strong</div>
+                      <div style={styles.assessmentAutoHint}>Detected automatically from the client record.</div>
+                      <textarea
+                        rows="4"
+                        style={styles.assessmentTextarea}
+                        value={assessmentDraft.strengths}
+                        onChange={(e) => setAssessmentDraft((current) => ({ ...current, strengths: e.target.value }))}
+                        placeholder="List what is already working well..."
+                      />
+                    </div>
+
+                    <div style={styles.assessmentColumn}>
+                      <div style={styles.assessmentColumnTitle}>What is missing</div>
+                      <div style={styles.assessmentAutoHint}>These are the gaps the proposal should address.</div>
+                      <textarea
+                        rows="4"
+                        style={styles.assessmentTextarea}
+                        value={assessmentDraft.gaps}
+                        onChange={(e) => setAssessmentDraft((current) => ({ ...current, gaps: e.target.value }))}
+                        placeholder="List the missing pieces or risks..."
+                      />
+                    </div>
+                  </div>
+
+                  <div style={styles.assessmentRecommendation}>
+                    <div style={styles.assessmentColumnTitle}>Company overview</div>
+                    <div style={styles.assessmentAutoHint}>Auto-generated from company and contact data.</div>
+                    <textarea
+                      rows="3"
+                      style={styles.assessmentTextarea}
+                      value={assessmentDraft.companyOverview}
+                      onChange={(e) => setAssessmentDraft((current) => ({ ...current, companyOverview: e.target.value }))}
+                      placeholder="Summarize the client, their situation, and the context..."
+                    />
+                    <div style={{ height: 10 }} />
+                    <div style={styles.assessmentColumnTitle}>Recommendation</div>
+                    <div style={styles.assessmentAutoHint}>Use this as the default sales angle for the proposal.</div>
+                    <textarea
+                      rows="3"
+                      style={styles.assessmentTextarea}
+                      value={assessmentDraft.recommendation}
+                      onChange={(e) => setAssessmentDraft((current) => ({ ...current, recommendation: e.target.value }))}
+                      placeholder="Write the action you recommend before sharing..."
+                    />
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "10px", marginTop: "12px" }}>
+                      <label style={styles.assessmentField}>
+                        <span style={styles.assessmentFieldLabel}>Readiness score</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={assessmentDraft.readinessScore}
+                          onChange={(e) => setAssessmentDraft((current) => ({ ...current, readinessScore: e.target.value }))}
+                          style={styles.assessmentInput}
+                        />
+                      </label>
+                      <label style={styles.assessmentField}>
+                        <span style={styles.assessmentFieldLabel}>Risk level</span>
+                        <select
+                          value={assessmentDraft.riskLevel}
+                          onChange={(e) => setAssessmentDraft((current) => ({ ...current, riskLevel: e.target.value }))}
+                          style={styles.assessmentInput}
+                        >
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div style={{ marginTop: "12px" }}>
+                      <div style={styles.assessmentFieldLabel}>Admin notes</div>
+                      <textarea
+                        rows="3"
+                        style={styles.assessmentTextarea}
+                        value={assessmentDraft.adminNotes}
+                        onChange={(e) => setAssessmentDraft((current) => ({ ...current, adminNotes: e.target.value }))}
+                        placeholder="Private internal notes..."
+                      />
+                    </div>
+                    <div style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        onClick={saveAssessment}
+                        disabled={assessmentSaving}
+                        style={styles.assessmentSaveButton}
+                      >
+                        {assessmentSaving ? "Saving..." : "Save assessment"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAssessmentDraft(buildAssessmentDraft())}
+                        style={styles.assessmentResetButton}
+                      >
+                        Auto-generate
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div style={styles.proposalPreview}>
@@ -875,6 +1238,57 @@ const styles = {
     justifyContent: 'center',
     gap: '8px'
   },
+  assessmentField: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px'
+  },
+  assessmentFieldLabel: {
+    fontSize: '12px',
+    fontWeight: 700,
+    color: '#334155'
+  },
+  assessmentInput: {
+    width: '100%',
+    border: '1px solid #cbd5e1',
+    borderRadius: '10px',
+    padding: '10px 12px',
+    fontSize: '13px',
+    background: '#fff',
+    color: '#0f172a',
+    boxSizing: 'border-box'
+  },
+  assessmentTextarea: {
+    width: '100%',
+    border: '1px solid #cbd5e1',
+    borderRadius: '10px',
+    padding: '10px 12px',
+    fontSize: '13px',
+    background: '#fff',
+    color: '#0f172a',
+    boxSizing: 'border-box',
+    resize: 'vertical',
+    minHeight: '84px',
+    fontFamily: 'inherit'
+  },
+  assessmentSaveButton: {
+    border: 'none',
+    borderRadius: '10px',
+    padding: '10px 14px',
+    background: 'linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%)',
+    color: '#fff',
+    fontWeight: 700,
+    cursor: 'pointer'
+  },
+  assessmentResetButton: {
+    border: '1px solid #cbd5e1',
+    borderRadius: '10px',
+    padding: '10px 14px',
+    background: '#fff',
+    color: '#334155',
+    fontWeight: 700,
+    cursor: 'pointer'
+  },
   searchSection: {
     marginBottom: '20px'
   },
@@ -934,6 +1348,117 @@ const styles = {
     alignItems: 'center',
     gap: '8px',
     lineHeight: '1.4'
+  },
+  assessmentPanel: {
+    border: '1px solid #dbeafe',
+    background: 'linear-gradient(180deg, #f8fbff 0%, #ffffff 100%)',
+    borderRadius: '14px',
+    padding: '16px',
+    marginBottom: '18px',
+    boxShadow: '0 6px 18px rgba(15, 23, 42, 0.05)'
+  },
+  assessmentHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '12px',
+    marginBottom: '14px',
+    flexWrap: 'wrap'
+  },
+  assessmentEyebrow: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#2563eb',
+    fontWeight: 700,
+    marginBottom: '4px'
+  },
+  assessmentTitle: {
+    margin: 0,
+    fontSize: '16px',
+    color: '#0f172a'
+  },
+  readinessBadge: (score) => ({
+    padding: '8px 12px',
+    borderRadius: '999px',
+    fontSize: '12px',
+    fontWeight: 700,
+    color: score >= 75 ? '#166534' : score >= 50 ? '#b45309' : '#b91c1c',
+    background: score >= 75 ? '#dcfce7' : score >= 50 ? '#fef3c7' : '#fee2e2',
+    border: '1px solid',
+    borderColor: score >= 75 ? '#86efac' : score >= 50 ? '#fcd34d' : '#fca5a5'
+  }),
+  assessmentGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '10px',
+    marginBottom: '12px'
+  },
+  assessmentCard: {
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
+    padding: '12px'
+  },
+  assessmentCardLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    color: '#64748b',
+    marginBottom: '6px',
+    fontWeight: 700
+  },
+  assessmentCardValue: {
+    fontSize: '14px',
+    fontWeight: 700,
+    color: '#0f172a',
+    marginBottom: '4px',
+    wordBreak: 'break-word'
+  },
+  assessmentCardMeta: {
+    fontSize: '12px',
+    color: '#64748b',
+    wordBreak: 'break-word'
+  },
+  assessmentColumns: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '12px',
+    marginBottom: '12px'
+  },
+  assessmentColumn: {
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
+    padding: '12px'
+  },
+  assessmentColumnTitle: {
+    fontSize: '13px',
+    fontWeight: 700,
+    color: '#0f172a',
+    marginBottom: '8px'
+  },
+  assessmentAutoHint: {
+    fontSize: '12px',
+    color: '#64748b',
+    marginBottom: '8px'
+  },
+  assessmentList: {
+    margin: 0,
+    paddingLeft: '18px',
+    color: '#475569',
+    fontSize: '13px',
+    lineHeight: 1.5
+  },
+  assessmentEmpty: {
+    fontSize: '13px',
+    color: '#64748b'
+  },
+  assessmentRecommendation: {
+    background: '#eff6ff',
+    border: '1px solid #bfdbfe',
+    borderRadius: '12px',
+    padding: '12px'
   },
   modalOverlay: {
     position: 'fixed',
