@@ -24,8 +24,9 @@ import {
  * @param {string} adminUserId - Admin's user ID
  * @param {string} adminEmail - Admin's email
  * @param {boolean} skipListener - Skip setting up main listener (default: false). Set to true when using in editor to avoid duplicate listeners
+ * @param {boolean} viewAllDrafts - Load every workflow request for admin review. Other users only receive their own requests.
  */
-export const useAssessmentDrafts = (adminUserId, adminEmail, skipListener = false) => {
+export const useAssessmentDrafts = (adminUserId, adminEmail, skipListener = false, viewAllDrafts = false) => {
   const [drafts, setDrafts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -51,11 +52,13 @@ export const useAssessmentDrafts = (adminUserId, adminEmail, skipListener = fals
     setLoading(true);
     setError(null);
 
-    const q = query(
-      collection(db, 'assessmentDrafts'),
-      where('createdByAdminId', '==', adminUserId),
-      orderBy('updatedAt', 'desc')
-    );
+    const q = viewAllDrafts
+      ? query(collection(db, 'assessmentDrafts'), orderBy('updatedAt', 'desc'))
+      : query(
+        collection(db, 'assessmentDrafts'),
+        where('createdByAdminId', '==', adminUserId),
+        orderBy('updatedAt', 'desc')
+      );
 
     const unsubscribe = onSnapshot(
       q,
@@ -84,7 +87,7 @@ export const useAssessmentDrafts = (adminUserId, adminEmail, skipListener = fals
         unsubscribersRef.current.drafts();
       }
     };
-  }, [adminUserId, skipListener]);
+  }, [adminUserId, skipListener, viewAllDrafts]);
 
   // Create a new draft
   const createDraft = useCallback(async (draftData) => {

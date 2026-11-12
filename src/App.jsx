@@ -1,9 +1,9 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import Login from "./pages/Login";
-import Dashboard from "./Pages/Dashboard";
-import ProposalEditor from "./Pages/ProposalEditor";
-import ProposalView from "./Pages/ProposalView";
+import Dashboard from "./pages/Dashboard";
+import ProposalEditor from "./pages/ProposalEditor";
+import ProposalView from "./pages/ProposalView";
 import ProposalDetail from "./pages/ProposalDetail"; // This is your main viewer
 import AuthPage from "./Components/AuthPage";
 import Signup from "./pages/Signup";

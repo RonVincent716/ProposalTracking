@@ -75,7 +75,7 @@ const getUnreadCount = (messages = [], seenMs = 0) =>
     return toMillis(msg.timestamp) > seenMs ? count + 1 : count;
   }, 0);
 
-const AdminDiscussionDashboard = ({ userId, userEmail, userRole, initialTab = 'discussions', onClose, onDiscussionSeen }) => {
+const AdminDiscussionDashboard = ({ userId, userEmail, userRole, initialTab = 'discussions', onClose, onDiscussionSeen, allowStaffView = false }) => {
   const [activeTab, setActiveTab] = useState(initialTab); // discussions, drafts
   const [selectedFilter, setSelectedFilter] = useState('open');
   const [allProposalDiscussions, setAllProposalDiscussions] = useState([]);
@@ -121,7 +121,7 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, initialTab = 'd
   const knownNotificationKeysRef = useRef(new Set());
   const lastSeenRef = useRef(lastSeenByDiscussion);
 
-  const isAdminUser = userRole === 'admin' || userRole === 'superadmin';
+  const isAdminUser = userRole === 'admin' || userRole === 'superadmin' || allowStaffView;
   const effectiveError = !isAdminUser ? 'Only admins can access this dashboard' : error;
 
   // Save starred discussions to localStorage
@@ -621,8 +621,10 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, initialTab = 'd
       );
     }
     
-    if (selectedFilter !== 'all') {
-      filtered = filtered.filter((discussion) => discussion.status === selectedFilter);
+    if (selectedFilter === 'open') {
+      filtered = filtered.filter((discussion) => String(discussion.status || 'open').toLowerCase() !== 'resolved');
+    } else if (selectedFilter === 'resolved') {
+      filtered = filtered.filter((discussion) => String(discussion.status || '').toLowerCase() === 'resolved');
     }
     
     filtered.sort((a, b) => {
@@ -641,7 +643,7 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, initialTab = 'd
     return filtered;
   }, [discussionsWithMessageState, searchTerm, selectedFilter, sortBy]);
 
-  const unresolvedCount = discussionsWithMessageState.filter((d) => d.status === 'open').length;
+  const unresolvedCount = discussionsWithMessageState.filter((d) => String(d.status || 'open').toLowerCase() !== 'resolved').length;
   const newClientMessageCount = discussionsWithMessageState.reduce(
     (count, discussion) => count + discussion.unreadCount,
     0
@@ -911,7 +913,7 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, initialTab = 'd
             >
               <span className="tab-dot open"></span>
               Open
-              <span className="tab-count">{discussionsWithMessageState.filter(d => d.status === 'open').length}</span>
+              <span className="tab-count">{discussionsWithMessageState.filter(d => String(d.status || 'open').toLowerCase() !== 'resolved').length}</span>
             </button>
             <button
               onClick={() => setSelectedFilter('resolved')}
@@ -919,7 +921,7 @@ const AdminDiscussionDashboard = ({ userId, userEmail, userRole, initialTab = 'd
             >
               <MdCheckCircle size={12} />
               Resolved
-              <span className="tab-count">{discussionsWithMessageState.filter(d => d.status === 'resolved').length}</span>
+              <span className="tab-count">{discussionsWithMessageState.filter(d => String(d.status || '').toLowerCase() === 'resolved').length}</span>
             </button>
             <button
               onClick={() => setSelectedFilter('all')}

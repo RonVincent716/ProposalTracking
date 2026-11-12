@@ -91,6 +91,17 @@ const initialFormState = {
   sections: "Cover\nExecutive Summary\nScope of Work\nTimeline\nPricing\nTerms"
 };
 
+const templateVariables = [
+  { token: "{client_name}", label: "Client name" },
+  { token: "{proposal_name}", label: "Proposal name" },
+  { token: "{client_company}", label: "Client company" },
+  { token: "{proposal_amount}", label: "Proposal amount" },
+  { token: "{currency}", label: "Currency" },
+  { token: "{expiry_date}", label: "Expiry date" },
+  { token: "{owner_name}", label: "Owner name" },
+  { token: "{current_date}", label: "Current date" }
+];
+
 const EMAILJS_CONFIG = {
   SERVICE_ID: "service_q6k7l9r",
   TEMPLATE_ID: "template_438lqns",
@@ -171,6 +182,24 @@ export default function MyTemplatesTab({ currentUser }) {
   const [selectedElementId, setSelectedElementId] = useState(null);
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadTarget, setImageUploadTarget] = useState("new");
+  const [contentBlocks, setContentBlocks] = useState([]);
+  const [contentBlockName, setContentBlockName] = useState("");
+  const [contentBlockCategory, setContentBlockCategory] = useState("General");
+  const [contentBlockText, setContentBlockText] = useState("");
+  const [savingContentBlock, setSavingContentBlock] = useState(false);
+  const [pricingItems, setPricingItems] = useState([]);
+  const [pricingItemName, setPricingItemName] = useState("");
+  const [pricingItemDescription, setPricingItemDescription] = useState("");
+  const [pricingItemPrice, setPricingItemPrice] = useState("");
+  const [pricingItemCurrency, setPricingItemCurrency] = useState("PHP");
+  const [savingPricingItem, setSavingPricingItem] = useState(false);
+  const [approvalRules, setApprovalRules] = useState({ highValueThreshold: 100000, discountPercentThreshold: 10 });
+  const [variablePreview, setVariablePreview] = useState({
+    clientCompany: "Client Company",
+    proposalAmount: "0.00",
+    currency: "PHP",
+    expiryDate: "Expiry Date"
+  });
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState("");
   const [recipientName, setRecipientName] = useState("");
@@ -185,6 +214,20 @@ export default function MyTemplatesTab({ currentUser }) {
 
   useEffect(() => {
     emailjs.init(EMAILJS_CONFIG.PUBLIC_KEY);
+  }, []);
+
+  useEffect(() => {
+    const pricingQuery = query(collection(db, "pricingCatalog"), orderBy("name", "asc"));
+    return onSnapshot(pricingQuery, (snapshot) => {
+      setPricingItems(snapshot.docs.map((recordDoc) => ({ id: recordDoc.id, ...recordDoc.data() })));
+    }, (error) => console.error("Error loading pricing catalog:", error));
+  }, []);
+
+  useEffect(() => {
+    const contentQuery = query(collection(db, "templateContentBlocks"), orderBy("updatedAt", "desc"));
+    return onSnapshot(contentQuery, (snapshot) => {
+      setContentBlocks(snapshot.docs.map((recordDoc) => ({ id: recordDoc.id, ...recordDoc.data() })));
+    }, (error) => console.error("Error loading template content library:", error));
   }, []);
 
   useEffect(() => {
@@ -287,6 +330,7 @@ export default function MyTemplatesTab({ currentUser }) {
     setClientPreviewName("Client Name");
     setProposalPreviewName("Proposal Name");
     setCanvasElements(buildDefaultCanvasElements());
+    setApprovalRules({ highValueThreshold: 100000, discountPercentThreshold: 10 });
     setSelectedElementId(null);
     setSelectedSectionIndex(0);
     setBuilderOpen(true);
@@ -317,6 +361,7 @@ export default function MyTemplatesTab({ currentUser }) {
         }))
       : buildDefaultCanvasElements();
     setCanvasElements(incomingCanvas);
+    setApprovalRules(template.approvalRules || { highValueThreshold: 100000, discountPercentThreshold: 10 });
     setSelectedElementId(incomingCanvas[0]?.id || null);
     setSelectedSectionIndex(0);
     setBuilderOpen(true);
@@ -354,6 +399,10 @@ export default function MyTemplatesTab({ currentUser }) {
         clientPreviewName: clientPreviewName.trim() || "Client Name",
         proposalPreviewName: proposalPreviewName.trim() || "Proposal Name",
         canvasElements,
+        approvalRules: {
+          highValueThreshold: Number(approvalRules.highValueThreshold) || 0,
+          discountPercentThreshold: Number(approvalRules.discountPercentThreshold) || 0
+        },
         updatedAt: serverTimestamp(),
         updatedBy: currentUser?.uid || null,
         updatedByEmail: currentUser?.email || null
@@ -397,6 +446,7 @@ export default function MyTemplatesTab({ currentUser }) {
         clientPreviewName: template.clientPreviewName || "Client Name",
         proposalPreviewName: template.proposalPreviewName || "Proposal Name",
         canvasElements: template.canvasElements || buildDefaultCanvasElements(),
+        approvalRules: template.approvalRules || { highValueThreshold: 100000, discountPercentThreshold: 10 },
         createdAt: serverTimestamp(),
         createdBy: currentUser?.uid || null,
         createdByEmail: currentUser?.email || null,
@@ -453,7 +503,195 @@ export default function MyTemplatesTab({ currentUser }) {
     if (element.type === "proposal_name") return proposalPreviewName || "{proposal_name}";
     if (element.type === "section_title") return sectionName;
     if (element.type === "signature") return "Client Signature: __________________";
-    return element.text || "Text block";
+    if (element.type === "pricing_item") {
+      const amount = Number(element.unitPrice || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+      return `${element.itemName || "Pricing Item"}\n${element.currency || "PHP"} ${amount}${element.description ? `\n${element.description}` : ""}`;
+    }
+    const replacements = {
+      "{client_name}": clientPreviewName || "Client Name",
+      "{proposal_name}": proposalPreviewName || "Proposal Name",
+      "{client_company}": variablePreview.clientCompany || "Client Company",
+      "{proposal_amount}": variablePreview.proposalAmount || "0.00",
+      "{currency}": variablePreview.currency || "PHP",
+      "{expiry_date}": variablePreview.expiryDate || "Expiry Date",
+      "{owner_name}": currentUser?.displayName || currentUser?.email?.split("@")[0] || "Proposal Owner",
+      "{current_date}": new Date().toLocaleDateString()
+    };
+    return Object.entries(replacements).reduce(
+      (text, [token, value]) => text.replaceAll(token, value),
+      element.text || "Text block"
+    );
+  };
+
+  const saveContentBlock = async () => {
+    if (!contentBlockName.trim() || !contentBlockText.trim()) {
+      window.alert("A content block name and text are required.");
+      return;
+    }
+    setSavingContentBlock(true);
+    try {
+      await addDoc(collection(db, "templateContentBlocks"), {
+        name: contentBlockName.trim(),
+        category: contentBlockCategory,
+        text: contentBlockText.trim(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdBy: currentUser?.uid || null,
+        createdByEmail: currentUser?.email || null
+      });
+      setContentBlockName("");
+      setContentBlockText("");
+    } catch (error) {
+      console.error("Error saving template content block:", error);
+      window.alert("Unable to save the content block right now.");
+    } finally {
+      setSavingContentBlock(false);
+    }
+  };
+
+  const insertContentBlock = (block) => {
+    const id = `content-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setCanvasElements((prev) => [...prev, {
+      id,
+      type: "content_block",
+      text: block.text,
+      sourceContentBlockId: block.id,
+      sourceContentBlockName: block.name,
+      x: 120,
+      y: 180 + prev.length * 28,
+      width: 480,
+      fontSize: 18,
+      fontWeight: 400,
+      color: "#0f172a"
+    }]);
+    setSelectedElementId(id);
+  };
+
+  const insertVariable = (token) => {
+    const id = `variable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setCanvasElements((prev) => [...prev, {
+      id, type: "text", text: token, x: 180, y: 180 + prev.length * 28,
+      width: 360, fontSize: 20, fontWeight: 600, color: "#0f172a"
+    }]);
+    setSelectedElementId(id);
+  };
+
+  const savePricingItem = async () => {
+    const unitPrice = Number(pricingItemPrice);
+    if (!pricingItemName.trim() || !Number.isFinite(unitPrice) || unitPrice < 0) {
+      window.alert("A service name and a valid non-negative unit price are required.");
+      return;
+    }
+    setSavingPricingItem(true);
+    try {
+      await addDoc(collection(db, "pricingCatalog"), {
+        name: pricingItemName.trim(),
+        description: pricingItemDescription.trim(),
+        unitPrice,
+        currency: pricingItemCurrency,
+        active: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdBy: currentUser?.uid || null,
+        createdByEmail: currentUser?.email || null
+      });
+      setPricingItemName("");
+      setPricingItemDescription("");
+      setPricingItemPrice("");
+    } catch (error) {
+      console.error("Error saving pricing item:", error);
+      window.alert("Unable to save the pricing item right now.");
+    } finally {
+      setSavingPricingItem(false);
+    }
+  };
+
+  const insertPricingItem = (item) => {
+    const id = `price-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setCanvasElements((prev) => [...prev, {
+      id,
+      type: "pricing_item",
+      catalogItemId: item.id,
+      itemName: item.name,
+      description: item.description || "",
+      unitPrice: Number(item.unitPrice || 0),
+      currency: item.currency || "PHP",
+      x: 120,
+      y: 200 + prev.length * 36,
+      width: 440,
+      fontSize: 18,
+      fontWeight: 600,
+      color: "#0f172a"
+    }]);
+    setSelectedElementId(id);
+  };
+
+  const formatMoney = (amount, currency = "PHP") =>
+    `${currency} ${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const addPricingTable = () => {
+    const id = `pricing-table-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const lines = pricingItems.filter((item) => item.active !== false).slice(0, 3).map((item) => ({
+      id: `line-${item.id}`,
+      name: item.name,
+      description: item.description || "",
+      quantity: 1,
+      unitPrice: Number(item.unitPrice || 0)
+    }));
+    setCanvasElements((prev) => [...prev, {
+      id,
+      type: "pricing_table",
+      currency: pricingItems[0]?.currency || "PHP",
+      lineItems: lines.length ? lines : [{ id: `line-${Date.now()}`, name: "Service", description: "", quantity: 1, unitPrice: 0 }],
+      discountPercent: 0,
+      taxPercent: 0,
+      x: 90,
+      y: 180,
+      width: 570,
+      fontSize: 15,
+      color: "#0f172a"
+    }]);
+    setSelectedElementId(id);
+  };
+
+  const updatePricingTable = (update) => {
+    if (!selectedElement || selectedElement.type !== "pricing_table") return;
+    updateSelectedElement(update);
+  };
+
+  const getPricingTotals = (element) => {
+    const includedRows = (element.lineItems || []).filter((row) => !row.optional || row.included !== false);
+    const subtotal = includedRows.reduce((sum, row) => sum + Number(row.quantity || 0) * Number(row.unitPrice || 0), 0);
+    const discount = subtotal * (Math.max(0, Number(element.discountPercent || 0)) / 100);
+    const taxable = subtotal - discount;
+    const tax = taxable * (Math.max(0, Number(element.taxPercent || 0)) / 100);
+    return { subtotal, discount, tax, total: taxable + tax };
+  };
+
+  const getApprovalRequirement = () => {
+    const tables = canvasElements.filter((element) => element.type === "pricing_table");
+    const proposalTotal = tables.reduce((sum, table) => sum + getPricingTotals(table).total, 0);
+    const highestDiscount = tables.reduce((highest, table) => Math.max(highest, Number(table.discountPercent || 0)), 0);
+    const highValue = Number(approvalRules.highValueThreshold) > 0 && proposalTotal >= Number(approvalRules.highValueThreshold);
+    const highDiscount = Number(approvalRules.discountPercentThreshold) > 0 && highestDiscount >= Number(approvalRules.discountPercentThreshold);
+    return { required: highValue || highDiscount, proposalTotal, highestDiscount, highValue, highDiscount };
+  };
+
+  const renderPricingTable = (element) => {
+    const currency = element.currency || "PHP";
+    const rows = element.lineItems || [];
+    const totals = getPricingTotals(element);
+    return (
+      <div style={{ width: "100%", background: "#fff", border: "1px solid #cbd5e1", borderRadius: 6, overflow: "hidden", fontSize: 13, pointerEvents: "none" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 64px 100px 112px", gap: 8, padding: "8px 10px", background: "#0f172a", color: "#fff", fontWeight: 700 }}><span>Item</span><span>Qty</span><span>Rate</span><span>Total</span></div>
+        {rows.map((row) => <div key={row.id} style={{ display: "grid", gridTemplateColumns: "1fr 64px 100px 112px", gap: 8, padding: "8px 10px", borderTop: "1px solid #e2e8f0", opacity: row.optional && row.included === false ? 0.5 : 1 }}><span>{row.name || "Service"}{row.optional ? " (Optional)" : ""}</span><span>{row.quantity || 0}</span><span>{formatMoney(row.unitPrice, currency)}</span><span>{formatMoney(Number(row.quantity || 0) * Number(row.unitPrice || 0), currency)}</span></div>)}
+        <div style={{ padding: "8px 10px", borderTop: "1px solid #e2e8f0", textAlign: "right" }}>Subtotal: {formatMoney(totals.subtotal, currency)}<br />Discount: -{formatMoney(totals.discount, currency)}<br />Tax: {formatMoney(totals.tax, currency)}</div>
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: "10px", background: "#f8fafc", fontWeight: 800 }}>Total: {formatMoney(totals.total, currency)}</div>
+      </div>
+    );
   };
 
   const startDragElement = (element, event) => {
@@ -631,6 +869,32 @@ export default function MyTemplatesTab({ currentUser }) {
           return;
         }
 
+        if (element.type === "pricing_table") {
+          const currency = element.currency || "PHP";
+          const rows = element.lineItems || [];
+          const totals = getPricingTotals(element);
+          const table = document.createElement("div");
+          table.style.position = "absolute";
+          table.style.left = `${element.x || 0}px`;
+          table.style.top = `${element.y || 0}px`;
+          table.style.width = `${element.width || 570}px`;
+          table.style.border = "1px solid #cbd5e1";
+          table.style.fontSize = "13px";
+          const lines = ["Item | Qty | Rate | Total", ...rows.map((row) => `${row.name || "Service"}${row.optional ? " (Optional)" : ""} | ${row.quantity || 0} | ${formatMoney(row.unitPrice, currency)} | ${formatMoney(Number(row.quantity || 0) * Number(row.unitPrice || 0), currency)}`), `Subtotal: ${formatMoney(totals.subtotal, currency)}`, `Discount: -${formatMoney(totals.discount, currency)}`, `Tax: ${formatMoney(totals.tax, currency)}`, `Total: ${formatMoney(totals.total, currency)}`];
+          lines.forEach((line, lineIndex) => {
+            const lineNode = document.createElement("div");
+            lineNode.textContent = line;
+            lineNode.style.padding = "7px 10px";
+            lineNode.style.whiteSpace = "pre-wrap";
+            lineNode.style.borderTop = lineIndex === 0 ? "none" : "1px solid #e2e8f0";
+            if (lineIndex === 0) { lineNode.style.background = "#0f172a"; lineNode.style.color = "#fff"; lineNode.style.fontWeight = "700"; }
+            if (lineIndex === lines.length - 1) { lineNode.style.textAlign = "right"; lineNode.style.fontWeight = "800"; lineNode.style.background = "#f8fafc"; }
+            table.appendChild(lineNode);
+          });
+          page.appendChild(table);
+          return;
+        }
+
         const textNode = document.createElement("div");
         textNode.textContent = resolveCanvasText(element, sectionName);
         textNode.style.position = "absolute";
@@ -701,6 +965,33 @@ export default function MyTemplatesTab({ currentUser }) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(recipientEmail.trim())) {
       setShareError("Enter a valid email address.");
+      return;
+    }
+
+    const approval = getApprovalRequirement();
+    if (approval.required) {
+      try {
+        await addDoc(collection(db, "proposalApprovalRequests"), {
+          templateId: editingTemplateId || null,
+          templateName: formData.name || "Untitled Template",
+          recipientEmail: recipientEmail.trim().toLowerCase(),
+          recipientName: recipientName.trim() || recipientEmail.trim().split("@")[0],
+          proposalTotal: approval.proposalTotal,
+          highestDiscount: approval.highestDiscount,
+          approvalRules: {
+            highValueThreshold: Number(approvalRules.highValueThreshold) || 0,
+            discountPercentThreshold: Number(approvalRules.discountPercentThreshold) || 0
+          },
+          status: "pending_approval",
+          requestedBy: currentUser?.uid || null,
+          requestedByEmail: currentUser?.email || null,
+          createdAt: serverTimestamp()
+        });
+        setShareError("This proposal requires approval. An approval request was created and the proposal was not sent.");
+      } catch (error) {
+        console.error("Error creating approval request:", error);
+        setShareError("This proposal requires approval, but the approval request could not be created.");
+      }
       return;
     }
 
@@ -1049,6 +1340,10 @@ export default function MyTemplatesTab({ currentUser }) {
                     <MdEdit size={14} />
                     Signature Line
                   </button>
+                  <button onClick={addPricingTable} style={toolButtonStyle}>
+                    <MdGridView size={14} />
+                    Pricing Table
+                  </button>
                   <button
                     onClick={() => requestImageUpload("new")}
                     style={toolButtonStyle}
@@ -1057,6 +1352,30 @@ export default function MyTemplatesTab({ currentUser }) {
                     <MdImage size={14} />
                     {imageUploading ? "Uploading..." : "Upload Image"}
                   </button>
+                </div>
+
+                <div style={toolsWrapStyle}>
+                  <div style={railHeaderStyle}><span>CONTENT LIBRARY</span></div>
+                  {contentBlocks.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "#64748b", padding: "4px 2px" }}>Save reusable content from the panel on the right.</div>
+                  ) : contentBlocks.slice(0, 8).map((block) => (
+                    <button key={block.id} onClick={() => insertContentBlock(block)} style={toolButtonStyle} title={block.text}>
+                      <MdDescription size={14} />
+                      {block.name}
+                    </button>
+                  ))}
+                </div>
+
+                <div style={toolsWrapStyle}>
+                  <div style={railHeaderStyle}><span>PRICING CATALOG</span></div>
+                  {pricingItems.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "#64748b", padding: "4px 2px" }}>Add approved services and rates from the panel on the right.</div>
+                  ) : pricingItems.filter((item) => item.active !== false).slice(0, 8).map((item) => (
+                    <button key={item.id} onClick={() => insertPricingItem(item)} style={toolButtonStyle} title={item.description || item.name}>
+                      <MdAdd size={14} />
+                      {item.name} ({item.currency || "PHP"} {Number(item.unitPrice || 0).toLocaleString()})
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -1086,8 +1405,10 @@ export default function MyTemplatesTab({ currentUser }) {
                           onDragStart={(event) => event.preventDefault()}
                           style={canvasImageStyle(element)}
                         />
+                      ) : element.type === "pricing_table" ? (
+                        renderPricingTable(element)
                       ) : (
-                        resolveCanvasText(element)
+                        <span style={{ whiteSpace: "pre-wrap" }}>{resolveCanvasText(element)}</span>
                       )}
                     </div>
                   ))}
@@ -1136,6 +1457,52 @@ export default function MyTemplatesTab({ currentUser }) {
                     style={fieldInputStyle}
                   />
                 </label>
+
+                <div style={canvasEditorPanelStyle}>
+                  <div style={canvasEditorTitleStyle}>Template Variables</div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Click a variable to add it to the canvas. It resolves when the template is used.</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {templateVariables.map((variable) => (
+                      <button key={variable.token} type="button" onClick={() => insertVariable(variable.token)} style={{ ...toolButtonStyle, width: "auto", padding: "6px 8px" }}>
+                        {variable.label}
+                      </button>
+                    ))}
+                  </div>
+                  <label style={fieldLabelStyle}>
+                    Client Company (Preview)
+                    <input value={variablePreview.clientCompany} onChange={(event) => setVariablePreview((prev) => ({ ...prev, clientCompany: event.target.value }))} style={fieldInputStyle} />
+                  </label>
+                  <label style={fieldLabelStyle}>
+                    Amount (Preview)
+                    <input value={variablePreview.proposalAmount} onChange={(event) => setVariablePreview((prev) => ({ ...prev, proposalAmount: event.target.value }))} style={fieldInputStyle} />
+                  </label>
+                  <label style={fieldLabelStyle}>
+                    Currency (Preview)
+                    <input value={variablePreview.currency} onChange={(event) => setVariablePreview((prev) => ({ ...prev, currency: event.target.value }))} style={fieldInputStyle} />
+                  </label>
+                  <label style={fieldLabelStyle}>
+                    Expiry Date (Preview)
+                    <input value={variablePreview.expiryDate} onChange={(event) => setVariablePreview((prev) => ({ ...prev, expiryDate: event.target.value }))} style={fieldInputStyle} />
+                  </label>
+                </div>
+
+                <div style={canvasEditorPanelStyle}>
+                  <div style={canvasEditorTitleStyle}>Save to Content Library</div>
+                  <label style={fieldLabelStyle}>Block Name<input value={contentBlockName} onChange={(event) => setContentBlockName(event.target.value)} style={fieldInputStyle} placeholder="e.g. Company Overview" /></label>
+                  <label style={fieldLabelStyle}>Category<select value={contentBlockCategory} onChange={(event) => setContentBlockCategory(event.target.value)} style={fieldInputStyle}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>
+                  <label style={fieldLabelStyle}>Reusable Text<textarea value={contentBlockText} onChange={(event) => setContentBlockText(event.target.value)} style={{ ...fieldInputStyle, minHeight: 76, resize: "vertical" }} placeholder="Use {client_name}, {proposal_amount}, and other variables." /></label>
+                  <button type="button" onClick={saveContentBlock} disabled={savingContentBlock} style={primaryActionStyle}>{savingContentBlock ? "Saving..." : "Save Content Block"}</button>
+                </div>
+
+                <div style={canvasEditorPanelStyle}>
+                  <div style={canvasEditorTitleStyle}>Pricing Catalog</div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Save approved services and prices, then add them to any template from the left panel.</div>
+                  <label style={fieldLabelStyle}>Service / Item Name<input value={pricingItemName} onChange={(event) => setPricingItemName(event.target.value)} style={fieldInputStyle} placeholder="e.g. Website Design" /></label>
+                  <label style={fieldLabelStyle}>Description<textarea value={pricingItemDescription} onChange={(event) => setPricingItemDescription(event.target.value)} style={{ ...fieldInputStyle, minHeight: 62, resize: "vertical" }} placeholder="Optional scope description" /></label>
+                  <label style={fieldLabelStyle}>Unit Price<input type="number" min="0" step="0.01" value={pricingItemPrice} onChange={(event) => setPricingItemPrice(event.target.value)} style={fieldInputStyle} placeholder="0.00" /></label>
+                  <label style={fieldLabelStyle}>Currency<select value={pricingItemCurrency} onChange={(event) => setPricingItemCurrency(event.target.value)} style={fieldInputStyle}><option value="PHP">PHP</option><option value="USD">USD</option><option value="EUR">EUR</option></select></label>
+                  <button type="button" onClick={savePricingItem} disabled={savingPricingItem} style={primaryActionStyle}>{savingPricingItem ? "Saving..." : "Save Pricing Item"}</button>
+                </div>
 
                 <label style={fieldLabelStyle}>
                   Current Section
@@ -1187,11 +1554,39 @@ export default function MyTemplatesTab({ currentUser }) {
                 </label>
 
                 <div style={canvasEditorPanelStyle}>
+                  <div style={canvasEditorTitleStyle}>Approval Rules</div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Sending is paused for approval when either threshold is reached.</div>
+                  <label style={fieldLabelStyle}>Require approval at total amount<input type="number" min="0" step="0.01" value={approvalRules.highValueThreshold} onChange={(event) => setApprovalRules((prev) => ({ ...prev, highValueThreshold: event.target.value }))} style={fieldInputStyle} /></label>
+                  <label style={fieldLabelStyle}>Require approval at discount (%)<input type="number" min="0" max="100" step="0.01" value={approvalRules.discountPercentThreshold} onChange={(event) => setApprovalRules((prev) => ({ ...prev, discountPercentThreshold: event.target.value }))} style={fieldInputStyle} /></label>
+                  {(() => { const approval = getApprovalRequirement(); return approval.required ? <div style={{ color: "#b45309", fontSize: 12, fontWeight: 700 }}>Current pricing requires approval.</div> : <div style={{ color: "#047857", fontSize: 12 }}>Current pricing can be sent without approval.</div>; })()}
+                </div>
+
+                <div style={canvasEditorPanelStyle}>
                   <div style={canvasEditorTitleStyle}>Canvas Element</div>
                   {!selectedElement ? (
                     <div style={canvasEditorEmptyStyle}>Click an item in the page to edit it.</div>
                   ) : (
                     <>
+                      {selectedElement.type === "pricing_table" && (
+                        <div style={canvasEditorPanelStyle}>
+                          <div style={canvasEditorTitleStyle}>Pricing Table Items</div>
+                          {(selectedElement.lineItems || []).map((line, index) => (
+                            <div key={line.id || index} style={{ borderBottom: "1px solid #e2e8f0", paddingBottom: 8, marginBottom: 8 }}>
+                              <input value={line.name || ""} onChange={(event) => updatePricingTable({ lineItems: selectedElement.lineItems.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} style={fieldInputStyle} placeholder="Item name" />
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 6 }}>
+                                <input type="number" min="0" step="1" value={line.quantity ?? 1} onChange={(event) => updatePricingTable({ lineItems: selectedElement.lineItems.map((item, itemIndex) => itemIndex === index ? { ...item, quantity: Number(event.target.value) } : item) })} style={fieldInputStyle} placeholder="Qty" />
+                                <input type="number" min="0" step="0.01" value={line.unitPrice ?? 0} onChange={(event) => updatePricingTable({ lineItems: selectedElement.lineItems.map((item, itemIndex) => itemIndex === index ? { ...item, unitPrice: Number(event.target.value) } : item) })} style={fieldInputStyle} placeholder="Unit price" />
+                              </div>
+                              <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6, fontSize: 12 }}><input type="checkbox" checked={Boolean(line.optional)} onChange={(event) => updatePricingTable({ lineItems: selectedElement.lineItems.map((item, itemIndex) => itemIndex === index ? { ...item, optional: event.target.checked, included: event.target.checked ? item.included !== false : true } : item) })} /> Optional add-on</label>
+                              {line.optional && <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4, fontSize: 12 }}><input type="checkbox" checked={line.included !== false} onChange={(event) => updatePricingTable({ lineItems: selectedElement.lineItems.map((item, itemIndex) => itemIndex === index ? { ...item, included: event.target.checked } : item) })} /> Included in total</label>}
+                            </div>
+                          ))}
+                          <button type="button" onClick={() => updatePricingTable({ lineItems: [...(selectedElement.lineItems || []), { id: `line-${Date.now()}`, name: "Service", quantity: 1, unitPrice: 0 }] })} style={toolButtonStyle}><MdAdd size={14} /> Add Line Item</button>
+                          <label style={fieldLabelStyle}>Currency<select value={selectedElement.currency || "PHP"} onChange={(event) => updatePricingTable({ currency: event.target.value })} style={fieldInputStyle}><option value="PHP">PHP</option><option value="USD">USD</option><option value="EUR">EUR</option></select></label>
+                          <label style={fieldLabelStyle}>Discount (%)<input type="number" min="0" max="100" step="0.01" value={selectedElement.discountPercent || 0} onChange={(event) => updatePricingTable({ discountPercent: Number(event.target.value) || 0 })} style={fieldInputStyle} /></label>
+                          <label style={fieldLabelStyle}>Tax (%)<input type="number" min="0" max="100" step="0.01" value={selectedElement.taxPercent || 0} onChange={(event) => updatePricingTable({ taxPercent: Number(event.target.value) || 0 })} style={fieldInputStyle} /></label>
+                        </div>
+                      )}
                       <label style={fieldLabelStyle}>
                         Text
                         <input
@@ -1200,7 +1595,7 @@ export default function MyTemplatesTab({ currentUser }) {
                           style={fieldInputStyle}
                           disabled={
                             selectedElement.type === "section_title" ||
-                            selectedElement.type === "image"
+                            selectedElement.type === "image" || selectedElement.type === "pricing_table"
                           }
                         />
                       </label>

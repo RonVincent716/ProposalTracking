@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   MdAdd,
   MdArticle,
@@ -13,11 +13,14 @@ import {
   MdWarning,
   MdRefresh,
   MdReplay,
-  MdRateReview
+  MdRateReview,
+  MdOpenInNew,
+  MdPictureAsPdf
 } from 'react-icons/md';
+import { collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
+import { getDownloadURL, ref } from 'firebase/storage';
 import { useAssessmentDrafts } from '../hooks/useAssessmentDrafts';
-import { db } from '../firebase';
-import { collection, getDocs, query, updateDoc, where } from 'firebase/firestore';
+import { db, storage } from '../firebase';
 
 const statusConfig = {
   draft: { label: 'Draft', color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.12)' },
@@ -45,6 +48,7 @@ export default function AssessmentWorkflowPanel({ user, role }) {
   const [selectedDraft, setSelectedDraft] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
   const [revisionModalOpen, setRevisionModalOpen] = useState(false);
+  const [documentPreview, setDocumentPreview] = useState({ loading: false, url: '', error: '' });
 
   const {
     drafts,
@@ -52,24 +56,7 @@ export default function AssessmentWorkflowPanel({ user, role }) {
     error,
     createDraft,
     saveDraft
-  } = useAssessmentDrafts(user?.uid || '', user?.email || '');
-
-  useEffect(() => {
-    if (!drafts.length) return;
-    try {
-      const raw = localStorage.getItem("dashboard-pending-assessment-review");
-      if (!raw) return;
-      const pending = JSON.parse(raw);
-      const target = drafts.find((draft) => draft.id === pending.draftId);
-      if (target) {
-        setSelectedDraft(target);
-        setEditDraft({ ...target });
-        localStorage.removeItem("dashboard-pending-assessment-review");
-      }
-    } catch (error) {
-      console.error("Error loading pending assessment review:", error);
-    }
-  }, [drafts]);
+  } = useAssessmentDrafts(user?.uid || '', user?.email || '', false, role === 'admin' || role === 'superadmin');
 
   const workflowStats = useMemo(() => {
     const stats = {
@@ -152,39 +139,24 @@ export default function AssessmentWorkflowPanel({ user, role }) {
         workflowStage = 'client_signature';
       }
 
+      const sharingStatus = nextStatus === 'approved' || nextStatus === 'sent_for_signature'
+        ? 'ready_to_share'
+        : nextStatus === 'needs_revision'
+          ? 'not_ready'
+          : (draft.sharingStatus || 'not_ready');
+
       await saveDraft(draft.id, {
         ...draft,
         status: nextStatus,
         workflowStage,
-        sharingStatus: nextStatus === 'approved' || nextStatus === 'sent_for_signature' ? 'ready_to_share' : (nextStatus === 'needs_revision' ? 'not_ready' : (draft.sharingStatus || 'not_ready')),
-        canShare: nextStatus === 'approved' || nextStatus === 'sent_for_signature',
+        requestStatus: nextStatus,
+        sharingStatus,
+        canShare: sharingStatus === 'ready_to_share',
         approvalNotes: notes,
         lastWorkflowAction: action,
         updatedAt: new Date()
       });
-
-      if (nextStatus === 'approved' || nextStatus === 'needs_revision' || nextStatus === 'sent_for_signature') {
-        try {
-          const proposalName = draft.proposalName || '';
-          const sourcePath = draft.sourceFilePath || draft.proposalId || '';
-          const sharedQuery = query(
-            collection(db, 'sharedProposals'),
-            where('filePath', '==', sourcePath || `proposals/${proposalName}`)
-          );
-          const sharedSnapshot = await getDocs(sharedQuery);
-
-          await Promise.all(sharedSnapshot.docs.map((sharedDoc) =>
-            updateDoc(sharedDoc.ref, {
-              approvalStatus: nextStatus === 'approved' || nextStatus === 'sent_for_signature' ? 'approved' : 'needs_revision',
-              sharingStatus: nextStatus === 'approved' || nextStatus === 'sent_for_signature' ? 'ready_to_share' : 'not_ready',
-              canShare: nextStatus === 'approved' || nextStatus === 'sent_for_signature',
-              updatedAt: new Date()
-            })
-          ));
-        } catch (syncError) {
-          console.error('Error syncing approval state to shared proposals:', syncError);
-        }
-      }
+      await syncSharedProposalStatus(draft, nextStatus, sharingStatus, notes);
     } catch (err) {
       console.error('Error updating workflow:', err);
       window.alert('Unable to move this item through the workflow.');
@@ -196,11 +168,76 @@ export default function AssessmentWorkflowPanel({ user, role }) {
   const handleOpenDraftDetails = (draft) => {
     setSelectedDraft(draft);
     setEditDraft({ ...draft });
+    setDocumentPreview({ loading: false, url: '', error: '' });
+
+    // Approval requests created from an uploaded proposal should immediately show its file.
+    if (draft.sourceFilePath || draft.filePath || draft.proposalId || draft.structuredProposalId || draft.downloadUrl || draft.fileUrl) {
+      handlePreviewDocument(draft);
+    }
   };
 
   const handleCloseDraftDetails = () => {
     setSelectedDraft(null);
     setEditDraft(null);
+    setDocumentPreview({ loading: false, url: '', error: '' });
+  };
+
+  const syncSharedProposalStatus = async (draft, status, sharingStatus, approvalNotes) => {
+    const filePath = draft.sourceFilePath || (typeof draft.proposalId === 'string' && draft.proposalId.startsWith('proposals/') ? draft.proposalId : '');
+    if (!filePath) return;
+
+    const sharedSnapshot = await getDocs(query(collection(db, 'sharedProposals'), where('filePath', '==', filePath)));
+    await Promise.all(sharedSnapshot.docs.map((sharedDoc) => updateDoc(sharedDoc.ref, {
+      approvalStatus: status,
+      sharingStatus,
+      canShare: sharingStatus === 'ready_to_share',
+      approvalNotes: approvalNotes || '',
+      updatedAt: new Date()
+    })));
+  };
+
+  const resolveProposalDocument = async (draft) => {
+    // Existing assessment records store the Storage path in sourceFilePath or proposalId.
+    const storedPath = [draft.sourceFilePath, draft.filePath, draft.proposalId]
+      .find((value) => typeof value === 'string' && value.startsWith('proposals/'));
+
+    if (storedPath) {
+      return getDownloadURL(ref(storage, storedPath));
+    }
+
+    if (draft.downloadUrl || draft.fileUrl) {
+      return draft.downloadUrl || draft.fileUrl;
+    }
+
+    // New structured proposals use a Firestore document ID, so resolve its current file path.
+    const structuredProposalId = draft.structuredProposalId || draft.proposalId;
+    if (structuredProposalId && typeof structuredProposalId === 'string' && !structuredProposalId.includes('/')) {
+      const proposalSnapshot = await getDoc(doc(db, 'proposals', structuredProposalId));
+      if (proposalSnapshot.exists()) {
+        const proposal = proposalSnapshot.data();
+        if (proposal.downloadUrl) return proposal.downloadUrl;
+        if (proposal.filePath) return getDownloadURL(ref(storage, proposal.filePath));
+      }
+    }
+
+    throw new Error('No uploaded document is linked to this approval request.');
+  };
+
+  const handlePreviewDocument = async (draft) => {
+    setDocumentPreview({ loading: true, url: '', error: '' });
+    try {
+      const url = await resolveProposalDocument(draft);
+      setDocumentPreview({ loading: false, url, error: '' });
+    } catch (err) {
+      console.error('Unable to load proposal document:', err);
+      setDocumentPreview({
+        loading: false,
+        url: '',
+        error: err?.code === 'storage/object-not-found'
+          ? 'The uploaded proposal file is no longer available in storage.'
+          : (err?.message || 'Unable to load the uploaded proposal document.')
+      });
+    }
   };
 
   const handleSaveDraftEdits = async () => {
@@ -210,48 +247,28 @@ export default function AssessmentWorkflowPanel({ user, role }) {
       // if saving from a revision flow, mark status appropriately
       const nextStatus = revisionModalOpen ? 'needs_revision' : (editDraft.status || 'draft');
       const workflowStage = revisionModalOpen ? 'revision' : (editDraft.workflowStage || nextStatus);
-      const nextSharingStatus = nextStatus === 'approved' || nextStatus === 'sent_for_signature'
-        ? 'ready_to_share'
-        : nextStatus === 'needs_revision'
-          ? 'not_ready'
-          : (editDraft.sharingStatus || 'not_ready');
-
+      const revisionMetadata = revisionModalOpen
+        ? {
+          requestStatus: 'needs_revision',
+          revisionRequestedByEmail: user?.email || '',
+          revisionRequestedByName: user?.displayName || user?.email?.split('@')[0] || 'Admin',
+          revisionRequestedAt: new Date()
+        }
+        : {};
+      const sharingStatus = nextStatus === 'approved' || nextStatus === 'sent_for_signature' ? 'ready_to_share' : 'not_ready';
       await saveDraft(editDraft.id, {
         ...editDraft,
+        ...revisionMetadata,
         status: nextStatus,
         workflowStage,
-        sharingStatus: nextSharingStatus,
-        canShare: nextStatus === 'approved' || nextStatus === 'sent_for_signature',
+        sharingStatus,
+        canShare: sharingStatus === 'ready_to_share',
         updatedAt: new Date()
       });
-      setSelectedDraft({ ...editDraft, status: nextStatus, workflowStage });
+      await syncSharedProposalStatus(editDraft, nextStatus, sharingStatus, editDraft.approvalNotes || '');
+      setSelectedDraft({ ...editDraft, ...revisionMetadata, status: nextStatus, workflowStage });
       setEditDraft(null);
       setRevisionModalOpen(false);
-
-      try {
-        const proposalName = editDraft.proposalName || '';
-        const sourcePath = editDraft.sourceFilePath || editDraft.proposalId || '';
-        const sharedQuery = query(
-          collection(db, 'sharedProposals'),
-          where('filePath', '==', sourcePath || `proposals/${proposalName}`)
-        );
-        const sharedSnapshot = await getDocs(sharedQuery);
-
-        await Promise.all(sharedSnapshot.docs.map((sharedDoc) =>
-          updateDoc(sharedDoc.ref, {
-            approvalStatus: nextStatus === 'approved' || nextStatus === 'sent_for_signature'
-              ? 'approved'
-              : nextStatus === 'needs_revision'
-                ? 'needs_revision'
-                : 'pending_review',
-            sharingStatus: nextSharingStatus,
-            canShare: nextStatus === 'approved' || nextStatus === 'sent_for_signature',
-            updatedAt: new Date()
-          })
-        ));
-      } catch (syncError) {
-        console.error('Error syncing revision state to shared proposals:', syncError);
-      }
     } catch (err) {
       console.error('Error saving draft edits:', err);
       window.alert('Unable to save changes right now.');
@@ -428,9 +445,9 @@ export default function AssessmentWorkflowPanel({ user, role }) {
                     <MdTaskAlt size={15} />
                     Approve
                   </button>
-                <button style={styles.smallButton} onClick={() => handleWorkflowAction(draft, 'send_signature')} disabled={busyDraftId === draft.id}>
+                  <button style={styles.smallButton} onClick={() => handleWorkflowAction(draft, 'send_signature')} disabled={busyDraftId === draft.id}>
                     <MdRateReview size={15} />
-                    Ready to Share
+                    E-signature
                   </button>
                 </div>
               </div>
@@ -451,7 +468,15 @@ export default function AssessmentWorkflowPanel({ user, role }) {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button style={styles.smallButton} onClick={() => { setEditDraft(null); setSelectedDraft(null); }}>
+                <button
+                  style={styles.smallButton}
+                  onClick={() => handlePreviewDocument(selectedDraft)}
+                  disabled={documentPreview.loading}
+                >
+                  <MdPictureAsPdf size={16} />
+                  {documentPreview.loading ? 'Loading document...' : 'View document'}
+                </button>
+                <button style={styles.smallButton} onClick={handleCloseDraftDetails}>
                   Close
                 </button>
               </div>
@@ -482,6 +507,22 @@ export default function AssessmentWorkflowPanel({ user, role }) {
                 <span style={{ fontSize: 12, color: '#64748B' }}>Review the document content and leave your recommendations below.</span>
               </div>
               <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+                {documentPreview.error && (
+                  <div role="alert" style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, padding: 12, color: '#B91C1C', fontSize: 13 }}>
+                    {documentPreview.error}
+                  </div>
+                )}
+                {documentPreview.url && (
+                  <div style={{ border: '1px solid #CBD5E1', borderRadius: 12, overflow: 'hidden', background: '#F8FAFC' }}>
+                    <div style={{ padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, borderBottom: '1px solid #E2E8F0' }}>
+                      <strong style={{ fontSize: 13 }}>Uploaded proposal document</strong>
+                      <a href={documentPreview.url} target="_blank" rel="noreferrer" style={{ color: '#1D4ED8', fontSize: 13, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        Open in new tab <MdOpenInNew size={15} />
+                      </a>
+                    </div>
+                    <iframe title={`${selectedDraft.proposalName || selectedDraft.companyName || 'Proposal'} preview`} src={documentPreview.url} style={{ display: 'block', width: '100%', height: 520, border: 0 }} />
+                  </div>
+                )}
                 <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 12, padding: 14 }}>
                   <div style={{ fontWeight: 700, marginBottom: 6 }}>Company overview</div>
                   <div style={{ whiteSpace: 'pre-wrap', color: '#334155' }}>{selectedDraft.companyOverview || 'No company overview provided.'}</div>

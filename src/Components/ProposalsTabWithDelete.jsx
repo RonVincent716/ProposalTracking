@@ -13,7 +13,8 @@ import {
   writeBatch,
   addDoc,
   setDoc,
-  serverTimestamp
+  serverTimestamp,
+  onSnapshot
 } from "firebase/firestore";
 import { 
   MdDescription, 
@@ -36,12 +37,14 @@ import {
   MdBlockFlipped,
   MdArchive,
   MdUnarchive,
-  MdRateReview
+  MdRateReview,
+  MdSend
 } from "react-icons/md";
 import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
 import { usePermissions } from "../utils/permissions";
 import { ActivityLogger } from "../utils/activityLogger";
 import { useAssessmentDrafts } from "../hooks/useAssessmentDrafts";
+import ProposalReviewCenter from "./ProposalReviewCenter";
 
 export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadClick, onShareClick, onSignClick, onOpenAssessmentWorkflow }) {
   const [files, setFiles] = useState([]);
@@ -55,10 +58,12 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
   const [archivedProposals, setArchivedProposals] = useState([]);
   const [sharedReviewStates, setSharedReviewStates] = useState([]);
   const [archiveView, setArchiveView] = useState("active");
+  const [showReviewCenter, setShowReviewCenter] = useState(false);
   
   // Permission system
   const { role } = usePermissions();
-  const { drafts: assessmentDrafts } = useAssessmentDrafts(user?.uid || "", user?.email || "", true);
+  const { drafts: assessmentDrafts } = useAssessmentDrafts(user?.uid || "", user?.email || "");
+  const canOpenAssessmentWorkflow = role === "admin" || role === "superadmin";
   
   // Selection states
   const [selectedProposals, setSelectedProposals] = useState([]);
@@ -182,15 +187,17 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
   const loadSharedReviewStates = async () => {
     try {
       const sharedQuery = query(collection(db, "sharedProposals"));
-      const snapshot = await getDocs(sharedQuery);
-      const sharedData = [];
-      snapshot.forEach((sharedDoc) => {
-        sharedData.push({
-          id: sharedDoc.id,
-          ...sharedDoc.data()
+      const unsubscribe = onSnapshot(sharedQuery, (snapshot) => {
+        const sharedData = [];
+        snapshot.forEach((sharedDoc) => {
+          sharedData.push({
+            id: sharedDoc.id,
+            ...sharedDoc.data()
+          });
         });
+        setSharedReviewStates(sharedData);
       });
-      setSharedReviewStates(sharedData);
+      return unsubscribe;
     } catch (error) {
       console.error("Error loading shared review states:", error);
     }
@@ -297,31 +304,6 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
       );
     });
 
-    if (sharedMatches.length) {
-      const latestShared = [...sharedMatches].sort((a, b) => toMs(b.updatedAt || b.sharedAt) - toMs(a.updatedAt || a.sharedAt))[0];
-      const approvalState = String(latestShared.approvalStatus || latestShared.sharingStatus || "").toLowerCase();
-
-      if (approvalState === "approved" || approvalState === "ready_to_share") {
-        return {
-          reviewStatus: "approved",
-          reviewLabel: "Approved",
-          color: "#10B981",
-          bg: "rgba(16, 185, 129, 0.12)",
-          icon: MdCheckCircle
-        };
-      }
-
-      if (approvalState === "needs_revision" || approvalState === "not_ready") {
-        return {
-          reviewStatus: "needs_revision",
-          reviewLabel: "Needs Revision",
-          color: "#DC2626",
-          bg: "rgba(220, 38, 38, 0.12)",
-          icon: MdCancel
-        };
-      }
-    }
-
     const relatedDrafts = assessmentDrafts.filter((draft) => {
       const proposalName = String(draft.proposalName || "").toLowerCase();
       const sourcePath = String(draft.sourceFilePath || draft.proposalId || "").toLowerCase();
@@ -335,19 +317,11 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
       );
     });
 
-    if (!relatedDrafts.length) {
-      return {
-        reviewStatus: "pending_review",
-        reviewLabel: "Pending Review",
-        color: "#F59E0B",
-        bg: "rgba(245, 158, 11, 0.12)",
-        icon: MdInfo
-      };
-    }
+    const latest = relatedDrafts.length
+      ? [...relatedDrafts].sort((a, b) => toMs(b.updatedAt || b.createdAt) - toMs(a.updatedAt || a.createdAt))[0]
+      : null;
 
-    const latest = [...relatedDrafts].sort((a, b) => toMs(b.updatedAt || b.createdAt) - toMs(a.updatedAt || a.createdAt))[0];
-
-    if (latest.status === "approved") {
+    if (latest?.status === "approved") {
       return {
         reviewStatus: "approved",
         reviewLabel: "Approved",
@@ -357,17 +331,19 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
       };
     }
 
-    if (latest.status === "needs_revision") {
+    if (latest?.status === "needs_revision") {
       return {
         reviewStatus: "needs_revision",
         reviewLabel: "Needs Revision",
         color: "#DC2626",
         bg: "rgba(220, 38, 38, 0.12)",
-        icon: MdCancel
+        icon: MdCancel,
+        revisionNotes: latest.approvalNotes || latest.recommendation || "",
+        revisedBy: latest.revisionRequestedByName || latest.revisionRequestedByEmail || "Admin"
       };
     }
 
-    if (latest.status === "pending_approval") {
+    if (latest?.status === "pending_approval") {
       return {
         reviewStatus: "pending_approval",
         reviewLabel: "Pending Approval",
@@ -377,13 +353,28 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
       };
     }
 
-    return {
-      reviewStatus: latest.status || "draft",
-      reviewLabel: "In Review",
-      color: "#7C3AED",
-      bg: "rgba(124, 58, 237, 0.12)",
-      icon: MdRateReview
-    };
+    if (latest) {
+      return {
+        reviewStatus: latest.status || "draft",
+        reviewLabel: "In Review",
+        color: "#7C3AED",
+        bg: "rgba(124, 58, 237, 0.12)",
+        icon: MdRateReview
+      };
+    }
+
+    if (sharedMatches.length) {
+      const latestShared = [...sharedMatches].sort((a, b) => toMs(b.updatedAt || b.sharedAt) - toMs(a.updatedAt || a.sharedAt))[0];
+      const approvalState = String(latestShared.approvalStatus || latestShared.sharingStatus || "").toLowerCase();
+      if (approvalState === "approved" || approvalState === "ready_to_share") {
+        return { reviewStatus: "approved", reviewLabel: "Approved", color: "#10B981", bg: "rgba(16, 185, 129, 0.12)", icon: MdCheckCircle };
+      }
+      if (approvalState === "needs_revision" || approvalState === "not_ready") {
+        return { reviewStatus: "needs_revision", reviewLabel: "Needs Revision", color: "#DC2626", bg: "rgba(220, 38, 38, 0.12)", icon: MdCancel, revisionNotes: latestShared.approvalNotes || "" };
+      }
+    }
+
+    return { reviewStatus: "pending_review", reviewLabel: "Pending Review", color: "#F59E0B", bg: "rgba(245, 158, 11, 0.12)", icon: MdInfo };
   };
 
   const handleSelectProposal = (fileName) => {
@@ -736,6 +727,9 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
     setOpenDropdownId(null);
     
     switch(action) {
+      case 'request_review':
+        handleRequestAdminReview(file);
+        break;
       case 'share':
         onShareClick?.(file);
         break;
@@ -753,6 +747,79 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
         break;
       default:
         break;
+    }
+  };
+
+  const handleRequestAdminReview = async (file) => {
+    try {
+      const fileName = file.name;
+      const filePath = `proposals/${fileName}`;
+      const existingDraft = assessmentDrafts.find((draft) => {
+        const draftName = String(draft.proposalName || "").toLowerCase();
+        const draftPath = String(draft.sourceFilePath || draft.proposalId || "").toLowerCase();
+        const normalizedName = fileName.toLowerCase();
+        return (
+          draftName === normalizedName ||
+          draftName === normalizedName.replace(/\.pdf$/, "") ||
+          draftPath === filePath.toLowerCase() ||
+          draftPath.endsWith(normalizedName) ||
+          draftPath.endsWith(normalizedName.replace(/\.pdf$/, ""))
+        );
+      });
+
+      const payload = {
+        proposalId: filePath,
+        proposalName: fileName,
+        sourceFilePath: filePath,
+        companyName: fileName.replace(/\.pdf$/i, ""),
+        clientName: "Client review pending",
+        clientEmail: "",
+        companyOverview: "Proposal sent for admin review from the proposal tab.",
+        strengths: "Staff requested review before client sharing.",
+        gaps: "Awaiting admin assessment.",
+        recommendation: "Open the assessment workflow, review the proposal, and decide whether it is ready to send or needs revision.",
+        riskLevel: "medium",
+        readinessScore: 50,
+        adminNotes: "",
+        status: "pending_approval",
+        workflowStage: "internal_review",
+        sharingStatus: "not_ready",
+        canShare: false,
+        updatedAt: serverTimestamp(),
+        requestSource: "proposal_tab",
+        requestStatus: "waiting_for_admin",
+        createdByAdminId: user?.uid || "",
+        createdByAdminEmail: user?.email || "",
+        requestedByUserId: user?.uid || "",
+        requestedByEmail: user?.email || ""
+      };
+
+      if (existingDraft?.id) {
+        await setDoc(doc(db, "assessmentDrafts", existingDraft.id), payload, { merge: true });
+      } else {
+        await addDoc(collection(db, "assessmentDrafts"), {
+          ...payload,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      await addDoc(collection(db, "proposalNotifications"), {
+        type: "review_request",
+        proposalName: fileName,
+        filePath,
+        message: `A staff member requested admin review for ${fileName}.`,
+        createdAt: serverTimestamp(),
+        read: false,
+        roleTarget: "admin"
+      });
+
+      await ActivityLogger.logReview(filePath, fileName, "request_admin_review", "Requested admin assessment before sharing to client.");
+
+      alert(`Review request sent for "${fileName}". The admin can now assess it before sharing.`);
+      onOpenAssessmentWorkflow?.();
+    } catch (error) {
+      console.error("Error requesting admin review:", error);
+      alert("Failed to send review request.");
     }
   };
 
@@ -1010,12 +1077,18 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
             <div style={assessmentEyebrowStyle}>Assessment overview</div>
             <h3 style={assessmentTitleStyle}>Review before sharing</h3>
           </div>
-          <button
-            onClick={() => onOpenAssessmentWorkflow?.()}
-            style={assessmentActionButtonStyle}
-          >
+          {canOpenAssessmentWorkflow && (
+            <button
+              onClick={() => onOpenAssessmentWorkflow?.()}
+              style={assessmentActionButtonStyle}
+            >
+              <MdRateReview size={16} />
+              Open workflow
+            </button>
+          )}
+          <button onClick={() => setShowReviewCenter(true)} style={assessmentActionButtonStyle}>
             <MdRateReview size={16} />
-            Open workflow
+            Review center
           </button>
         </div>
         <div style={assessmentOverviewGridStyle}>
@@ -1055,6 +1128,15 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
           </div>
         </div>
       </div>
+
+      {showReviewCenter && (
+        <ProposalReviewCenter
+          user={user}
+          role={role}
+          onOpenWorkflow={() => onOpenAssessmentWorkflow?.()}
+          onClose={() => setShowReviewCenter(false)}
+        />
+      )}
 
       <div style={archiveTabsStyle}>
         <button
@@ -1191,26 +1273,34 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         <ProposalStatusBadge status={status} size="small" />
                         {reviewState && (
-                          <div style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 6,
-                            padding: "3px 9px",
-                            borderRadius: 999,
-                            background: reviewState.bg,
-                            color: reviewState.color,
-                            border: `1px solid ${reviewState.color}22`,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            width: "fit-content",
-                            whiteSpace: "nowrap"
-                          }}>
-                            {(() => {
-                              const ReviewIcon = reviewState.icon;
-                              return <ReviewIcon size={12} />;
-                            })()}
-                            {reviewState.reviewLabel}
-                          </div>
+                          <>
+                            <div style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "3px 9px",
+                              borderRadius: 999,
+                              background: reviewState.bg,
+                              color: reviewState.color,
+                              border: `1px solid ${reviewState.color}22`,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              width: "fit-content",
+                              whiteSpace: "nowrap"
+                            }}>
+                              {(() => {
+                                const ReviewIcon = reviewState.icon;
+                                return <ReviewIcon size={12} />;
+                              })()}
+                              {reviewState.reviewLabel}
+                            </div>
+                            {reviewState.reviewStatus === "needs_revision" && (
+                              <div style={{ maxWidth: 260, padding: "8px 10px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B", fontSize: 12, lineHeight: 1.4 }}>
+                                <strong>Admin revision note{reviewState.revisedBy ? ` · ${reviewState.revisedBy}` : ""}:</strong>{" "}
+                                {reviewState.revisionNotes || "The admin requested changes. Open the workflow request for details."}
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </td>
@@ -1279,6 +1369,19 @@ export default function ProposalsTabWithDelete({ user, onViewClick, onDownloadCl
                             <div style={dropdownMenuStyle}>
                               {!isArchived && (
                                 <>
+                                  <div
+                                    onClick={(e) => handleDropdownAction(e, 'request_review', file)}
+                                    style={dropdownItemStyle("#2563EB")}
+                                    onMouseEnter={(e) => {
+                                      e.currentTarget.style.background = "#EFF6FF";
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.background = "#fff";
+                                    }}
+                                  >
+                                    <MdRateReview size={16} />
+                                    Request Admin Review
+                                  </div>
                                   <div
                                     onClick={(e) => handleDropdownAction(e, 'share', file)}
                                     style={dropdownItemStyle("#F59E0B")}

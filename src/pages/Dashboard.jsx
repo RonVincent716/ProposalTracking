@@ -58,6 +58,7 @@ import RealTimeViewTracker from "../Components/RealTimeViewTracker";
 import MyTemplatesTab from "../Components/MyTemplatesTab";
 import FollowUpCenter from "../Components/FollowUpCenter";
 import AdminDiscussionDashboard from "../Components/AdminDiscussionDashboard";
+import ClientDiscussionCenter from "../Components/ClientDiscussionCenter";
 import AssessmentWorkflowPanel from "../Components/AssessmentWorkflowPanel";
 import ClientsTab from "../Components/ClientsTab";
 import UserProfile from "../Components/UserProfile";
@@ -1479,6 +1480,19 @@ export default function Dashboard() {
       .map((view) => view.viewerEmail || view.viewerId)
       .filter(Boolean)
   ).size;
+  const getUserReadinessBadge = (proposal) => {
+    const approvalStatus = String(proposal?.approvalStatus || proposal?.reviewStatus || "").toLowerCase();
+    const sharingStatus = String(proposal?.sharingStatus || "").toLowerCase();
+
+    if (approvalStatus === "needs_revision" || sharingStatus === "not_ready") return "Needs revision";
+    if (approvalStatus === "approved" && (sharingStatus === "ready_to_share" || sharingStatus === "shared")) return "Ready to send";
+    if (approvalStatus === "approved") return "Approved by admin";
+    if (approvalStatus === "pending_approval" || approvalStatus === "pending_review") return "Waiting for admin review";
+    return "Draft";
+  };
+  const readyToSendCount = files.filter((file) => getUserReadinessBadge(file) === "Ready to send").length;
+  const waitingForAdminCount = files.filter((file) => getUserReadinessBadge(file) === "Waiting for admin review").length;
+  const needsRevisionCount = files.filter((file) => getUserReadinessBadge(file) === "Needs revision").length;
 
   const roleDashboardTitle =
     role === "superadmin"
@@ -1493,6 +1507,8 @@ export default function Dashboard() {
       : role === "admin"
         ? "Execution-focused metrics to manage proposals and discussions quickly."
         : "Your focused workspace for daily proposal and communication activity.";
+  const normalizedRole = String(role || "").toLowerCase();
+  const isStaffRole = normalizedRole === "user" || normalizedRole === "users" || normalizedRole === "staff";
 
   const roleDashboardCards = useMemo(() => {
     if (role === "superadmin") {
@@ -1519,6 +1535,9 @@ export default function Dashboard() {
 
     return [
       { key: "my-proposals", label: "Available Proposals", value: files.length, icon: MdDescription, color: "#2563EB" },
+      { key: "ready-share", label: "Ready to Send", value: readyToSendCount, icon: MdCheckCircleOutline, color: "#10B981" },
+      { key: "waiting-review", label: "Waiting on Admin", value: waitingForAdminCount, icon: MdNotificationsNone, color: "#F59E0B" },
+      { key: "needs-revision", label: "Needs Revision", value: needsRevisionCount, icon: MdWarning, color: "#EF4444" },
       { key: "views", label: "View Records", value: views.length, icon: MdVisibility, color: "#0EA5E9" },
       { key: "active-now", label: "Active Live Sessions", value: uniqueActiveViewerCount, icon: MdTimeline, color: "#F59E0B" },
       { key: "signed", label: "Signed Proposals", value: signedProposals.length, icon: MdCheckCircleOutline, color: "#10B981" },
@@ -1568,6 +1587,26 @@ export default function Dashboard() {
       { id: "profile", label: "My Profile", icon: MdPerson, action: () => setActiveTab("profile"), visible: true }
     ];
   }, [role, canAccessUsersTab, canAccessUserActivity, canAccessDiscussions]);
+
+  const renderStaffDiscussionView = () => (
+    <div style={{
+      background: "#fff",
+      borderRadius: "16px",
+      padding: "0px",
+      marginTop: "0px",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+      minHeight: "calc(100vh - 200px)",
+      overflow: "visible"
+    }}>
+      <AdminDiscussionDashboard
+        userEmail={user?.email}
+        userId={user?.uid}
+        userRole={role}
+        initialTab="discussions"
+        allowStaffView={true}
+      />
+    </div>
+  );
 
   const formatActiveLastSeen = (date) => {
     if (!date) return "Just now";
@@ -2714,6 +2753,55 @@ export default function Dashboard() {
               {!sidebarCollapsed && <span>Upload</span>}
             </button>
 
+            {isStaffRole && (
+            <button 
+              style={{
+                padding: sidebarCollapsed ? "12px" : "10px 16px",
+                border: "none",
+                borderRadius: 12,
+                cursor: "pointer",
+                background: showAdminDiscussionDashboard && adminDiscussionInitialTab === 'discussions'
+                  ? "linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.15) 100%)" 
+                  : "transparent",
+                color: showAdminDiscussionDashboard && adminDiscussionInitialTab === 'discussions' ? "#00D4FF" : "rgba(255, 255, 255, 0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                gap: 12,
+                fontSize: sidebarCollapsed ? 0 : 14,
+                fontWeight: showAdminDiscussionDashboard && adminDiscussionInitialTab === 'discussions' ? 600 : 500,
+                transition: "all 0.2s ease",
+                boxShadow: showAdminDiscussionDashboard && adminDiscussionInitialTab === 'discussions'
+                  ? "0 2px 12px rgba(0, 212, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)" 
+                  : "none",
+                border: showAdminDiscussionDashboard && adminDiscussionInitialTab === 'discussions' ? "1px solid rgba(0, 212, 255, 0.3)" : "1px solid transparent",
+                whiteSpace: "nowrap",
+              }} 
+              onClick={() => {
+                setShowAdminDiscussionDashboard(false);
+                setActiveTab('discussions');
+              }}
+            >
+              <MdChat size={sidebarCollapsed ? 22 : 18} />
+              {!sidebarCollapsed && <span>Discussions</span>}
+              {unreadDiscussionCount > 0 && !sidebarCollapsed && (
+                <span style={{
+                  marginLeft: "auto",
+                  background: "#EF4444",
+                  color: "#FFFFFF",
+                  borderRadius: "12px",
+                  padding: "2px 8px",
+                  fontSize: "12px",
+                  fontWeight: "700",
+                  minWidth: "24px",
+                  textAlign: "center"
+                }}>
+                  {unreadDiscussionCount}
+                </span>
+              )}
+            </button>
+            )}
+
             <button 
               style={{
                 padding: sidebarCollapsed ? "12px" : "10px 16px",
@@ -2743,7 +2831,7 @@ export default function Dashboard() {
               {!sidebarCollapsed && <span>Live Views</span>}
             </button>
 
-            {canAccessDiscussions && (
+            {!isStaffRole && canAccessDiscussions && (
               <button 
                 style={{
                   padding: sidebarCollapsed ? "12px" : "10px 16px",
@@ -2814,7 +2902,7 @@ export default function Dashboard() {
 
             )}
 
-            {canAccessDiscussions && (
+            {!isStaffRole && canAccessDiscussions && (
               <button 
                 style={{
                   padding: sidebarCollapsed ? "12px" : "10px 16px",
@@ -2848,6 +2936,7 @@ export default function Dashboard() {
               </button>
             )}
 
+            {!isStaffRole && (
             <button 
               style={{
                 padding: sidebarCollapsed ? "12px" : "10px 16px",
@@ -2879,9 +2968,10 @@ export default function Dashboard() {
               <MdGroup size={sidebarCollapsed ? 22 : 18} />
               {!sidebarCollapsed && <span>Clients</span>}
             </button>
+            )}
 
             {/* SEE MORE BUTTON */}
-            {!isRestrictedUser && (
+            {!isStaffRole && !isRestrictedUser && (
             <button 
               style={{
                 padding: sidebarCollapsed ? "12px" : "10px 16px",
@@ -2926,6 +3016,8 @@ export default function Dashboard() {
                 marginTop: "4px",
                 borderTop: "1px solid rgba(0, 212, 255, 0.15)",
               }}>
+                {!isStaffRole && (
+                <>
                 <button 
                   style={{
                     padding: sidebarCollapsed ? "10px" : "10px 16px",
@@ -2983,7 +3075,10 @@ export default function Dashboard() {
                   <MdTimeline size={sidebarCollapsed ? 20 : 16} />
                   {!sidebarCollapsed && <span>Engagement</span>}
                 </button>
+                </>
+                )}
 
+                {!isStaffRole && (
                 <button 
                   style={{
                     padding: sidebarCollapsed ? "10px" : "10px 16px",
@@ -3012,8 +3107,9 @@ export default function Dashboard() {
                   <MdAnalytics size={sidebarCollapsed ? 20 : 16} />
                   {!sidebarCollapsed && <span>Analytics</span>}
                 </button>
+                )}
 
-                {canAccessUsersTab && (
+            {!isStaffRole && canAccessUsersTab && (
                 <button 
                   style={{
                     padding: sidebarCollapsed ? "10px" : "10px 16px",
@@ -4043,6 +4139,33 @@ export default function Dashboard() {
                 );
               })}
             </div>
+
+            {role === "user" && (
+              <div style={{
+                background: "linear-gradient(135deg, #FFFFFF 0%, #F8FAFF 100%)",
+                border: "1px solid #E2E8F0",
+                borderRadius: 16,
+                padding: "16px 18px",
+                boxShadow: "0 6px 18px rgba(15, 23, 42, 0.06)",
+                marginBottom: 18
+              }}>
+                <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      Staff proposal readiness
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 15, fontWeight: 700, color: "#0F172A" }}>
+                      Proposals must be reviewed by admin before they can be sent to the client.
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <span style={readyStatePillStyle("#FEF3C7", "#B45309", "#F59E0B")}>Waiting on admin review: {waitingForAdminCount}</span>
+                    <span style={readyStatePillStyle("#FEE2E2", "#B91C1C", "#EF4444")}>Needs revision: {needsRevisionCount}</span>
+                    <span style={readyStatePillStyle("#ECFDF5", "#047857", "#10B981")}>Ready to send: {readyToSendCount}</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div style={{
               background: "#fff",
@@ -5109,8 +5232,12 @@ export default function Dashboard() {
           </>
         )}
 
+        {isStaffRole && activeTab === "discussions" && renderStaffDiscussionView()}
+
+        {isStaffRole && activeTab === "discussions" && renderStaffDiscussionView()}
+
         {/* NEW ANALYTICS TAB - Page View Tracking */}
-        {!isRestrictedUser && activeTab === "analytics" && (
+        {!isStaffRole && !isRestrictedUser && activeTab === "analytics" && (
           <div style={{
             background: "#fff",
             borderRadius: "16px",
@@ -5938,6 +6065,20 @@ const toastTimerStyle = {
   borderTop: "1px solid rgba(255, 255, 255, 0.05)",
   letterSpacing: "0.3px",
 };
+
+const readyStatePillStyle = (background, color, borderColor) => ({
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "6px",
+  padding: "6px 10px",
+  borderRadius: "999px",
+  background,
+  color,
+  border: `1px solid ${borderColor}`,
+  fontSize: "12px",
+  fontWeight: "700",
+  whiteSpace: "nowrap"
+});
 
 /* Signed Proposals Styles */
 const signedSummaryStyle = {

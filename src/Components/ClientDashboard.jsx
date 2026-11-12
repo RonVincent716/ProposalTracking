@@ -666,6 +666,25 @@ export default function ClientDashboard() {
 
   const unreadNotificationCount = unreadRepliesCount + unreadReminderCount;
 
+  const getClientReadinessBadge = (proposal) => {
+    const approvalStatus = String(proposal?.approvalStatus || proposal?.reviewStatus || "pending_review").toLowerCase();
+    const sharingStatus = String(proposal?.sharingStatus || "").toLowerCase();
+
+    if (approvalStatus === "needs_revision") {
+      return { text: "Needs revision", background: "#fef2f2", color: "#b91c1c", border: "#fca5a5" };
+    }
+
+    if (approvalStatus === "approved" && (sharingStatus === "ready_to_share" || sharingStatus === "shared")) {
+      return { text: "Ready for approval", background: "#ecfdf5", color: "#047857", border: "#86efac" };
+    }
+
+    if (approvalStatus === "approved") {
+      return { text: "Approved", background: "#ecfdf5", color: "#047857", border: "#86efac" };
+    }
+
+    return { text: "Under review", background: "#fff7ed", color: "#c2410c", border: "#fdba74" };
+  };
+
   const sidebarItems = [
     { id: "dashboard", icon: <MdSpaceDashboard size={20} />, label: "Dashboard", action: () => setActiveTab("dashboard") },
     { id: "all", icon: <MdFolder size={20} />, label: "All Proposals", action: () => { setActiveTab("all"); setStatusFilter("all"); }, count: proposals.length },
@@ -673,7 +692,7 @@ export default function ClientDashboard() {
     { id: "recent", icon: <MdHistory size={20} />, label: "Recently Viewed", action: () => setActiveTab("recent"), count: recentlyViewed.length },
     { id: "pending", icon: <MdPending size={20} />, label: "Pending", action: () => { setActiveTab("all"); setStatusFilter("pending"); }, count: stats.pending },
     { id: "signed", icon: <MdVerified size={20} />, label: "Signed", action: () => { setActiveTab("all"); setStatusFilter("signed"); }, count: stats.signed },
-  ];
+  ];    
 
   const renderContent = () => {
     if (activeTab === "discussions") {
@@ -718,14 +737,16 @@ export default function ClientDashboard() {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "4px",
-                padding: "2px 6px",
-                borderRadius: "8px",
+                padding: "2px 8px",
+                borderRadius: "999px",
                 fontSize: "10px",
                 fontWeight: "700",
-                background: proposal.approvalStatus === "approved" ? "#ecfdf5" : proposal.approvalStatus === "needs_revision" ? "#fef2f2" : "#fff7ed",
-                color: proposal.approvalStatus === "approved" ? "#047857" : proposal.approvalStatus === "needs_revision" ? "#b91c1c" : "#c2410c"
+                background: getClientReadinessBadge(proposal).background,
+                color: getClientReadinessBadge(proposal).color,
+                border: `1px solid ${getClientReadinessBadge(proposal).border}`,
+                whiteSpace: "nowrap"
               }}>
-                {proposal.approvalStatus === "approved" ? "Approved" : proposal.approvalStatus === "needs_revision" ? "Needs Revision" : "Pending Review"}
+                {getClientReadinessBadge(proposal).text}
               </span>
               {proposal.hasAdminReplies && (
                 <span style={{ marginLeft: "8px", display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 6px", borderRadius: "8px", fontSize: "10px", fontWeight: "500", background: proposal.unreadAdminReplies ? "#fef3c7" : "#ecfdf5", color: proposal.unreadAdminReplies ? "#d97706" : "#059669" }}>
@@ -741,14 +762,16 @@ export default function ClientDashboard() {
                     display: "inline-flex",
                     alignItems: "center",
                     gap: "4px",
-                    padding: "2px 6px",
-                    borderRadius: "8px",
+                    padding: "2px 8px",
+                    borderRadius: "999px",
                     fontSize: "10px",
                     fontWeight: "700",
-                    background: proposal.approvalStatus === "approved" ? "#ecfdf5" : proposal.approvalStatus === "needs_revision" ? "#fef2f2" : "#fff7ed",
-                    color: proposal.approvalStatus === "approved" ? "#047857" : proposal.approvalStatus === "needs_revision" ? "#b91c1c" : "#c2410c"
+                    background: getClientReadinessBadge(proposal).background,
+                    color: getClientReadinessBadge(proposal).color,
+                    border: `1px solid ${getClientReadinessBadge(proposal).border}`,
+                    whiteSpace: "nowrap"
                   }}>
-                    {proposal.approvalStatus === "approved" ? "Approved" : proposal.approvalStatus === "needs_revision" ? "Needs Revision" : "Pending Review"}
+                    {getClientReadinessBadge(proposal).text}
                   </span>
                   <button onClick={() => handleViewProposal(proposal)} style={recentProposalButtonStyle}>
                     {proposal.status === "signed" ? "View Signed" : "View"}
@@ -1209,7 +1232,7 @@ export default function ClientDashboard() {
                 </div>
                 <button
                   onClick={() => setShowFeedbackModal(false)}
-                  style={feedbackModalCloseButtonStyle}
+                  style={feedbackModalCloseButtonStyle} 
                 >
                   <MdClose size={20} />
                 </button>
@@ -1593,6 +1616,23 @@ const modalConfirmButtonStyle = (disabled) => ({
   transition: "all 0.2s",
 });
 
+// Used by both the dashboard component and the extracted proposal-list view.
+const getClientReadinessBadge = (proposal) => {
+  const approvalStatus = String(proposal?.approvalStatus || proposal?.reviewStatus || "pending_review").toLowerCase();
+  const sharingStatus = String(proposal?.sharingStatus || "").toLowerCase();
+
+  if (approvalStatus === "needs_revision") {
+    return { text: "Needs revision", background: "#fef2f2", color: "#b91c1c", border: "#fca5a5" };
+  }
+  if (approvalStatus === "approved" && (sharingStatus === "ready_to_share" || sharingStatus === "shared")) {
+    return { text: "Ready for approval", background: "#ecfdf5", color: "#047857", border: "#86efac" };
+  }
+  if (approvalStatus === "approved") {
+    return { text: "Approved", background: "#ecfdf5", color: "#047857", border: "#86efac" };
+  }
+  return { text: "Under review", background: "#fff7ed", color: "#c2410c", border: "#fdba74" };
+};
+
 // StatCard Component
 const StatCard = ({ icon, color, value, label, trend }) => (
   <div style={statCardStyle}>
@@ -1756,6 +1796,22 @@ const ProposalsList = ({ proposals, handleViewProposal, handleSignProposal, hand
               <td style={listCellStyle}>
                 <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                   <ProposalStatusBadge status={proposal.status} size="small" />
+                  <span style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    padding: "2px 8px",
+                    borderRadius: "999px",
+                    fontSize: "10px",
+                    fontWeight: "700",
+                    background: getClientReadinessBadge(proposal).background,
+                    color: getClientReadinessBadge(proposal).color,
+                    border: `1px solid ${getClientReadinessBadge(proposal).border}`,
+                    width: "fit-content",
+                    whiteSpace: "nowrap"
+                  }}>
+                    {getClientReadinessBadge(proposal).text}
+                  </span>
                   {proposal.hasNewVersion && (
                     <div style={newVersionBadgeStyle}>
                       <MdSchedule size={12} />

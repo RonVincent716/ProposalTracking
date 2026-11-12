@@ -9,6 +9,7 @@ import {
   browserPopupRedirectResolver
 } from "firebase/auth";
 import { getStorage } from "firebase/storage"; // <-- Import Storage
+import { getFunctions } from "firebase/functions";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBhCJK7ueC34n7hAFHYJg78tnXj8_eruBA",
@@ -31,10 +32,11 @@ try {
     ],
     popupRedirectResolver: browserPopupRedirectResolver
   });
-} catch (error) {
+} catch {
   authInstance = getAuth(app);
 }
 
 export const auth = authInstance;
 export const db = getFirestore(app);
 export const storage = getStorage(app); // <-- Initialize Storage
+export const functions = getFunctions(app);

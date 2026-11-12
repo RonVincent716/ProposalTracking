@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { auth, db } from "../firebase";
-import { initializeApp, deleteApp } from "firebase/app";
-import { createUserWithEmailAndPassword, getAuth, signOut } from "firebase/auth";
+import { auth, db, functions } from "../firebase";
+import { httpsCallable } from "firebase/functions";
 import {
   collection,
   getDocs,
@@ -9,7 +8,6 @@ import {
   doc,
   deleteDoc,
   getDoc,
-  setDoc,
   serverTimestamp
 } from "firebase/firestore";
 import "./UserManagement.css";
@@ -87,11 +85,8 @@ export default function UserManagement() {
 
     try {
       setActionUserId(userId);
-      const userDocRef = doc(db, "users", userId);
-      await updateDoc(userDocRef, {
-        role: newRole,
-        roleUpdatedAt: serverTimestamp()
-      });
+      const changeUserRole = httpsCallable(functions, "changeUserRole");
+      await changeUserRole({ userId, role: newRole });
       
       // Update local state
       setUsers(users.map(user => 
@@ -159,31 +154,17 @@ export default function UserManagement() {
     }
 
     setCreatingUser(true);
-    let tempApp = null;
-    let secondaryAuth = null;
-
     try {
-      const appName = `superadmin-create-user-${Date.now()}`;
-      tempApp = initializeApp(auth.app.options, appName);
-      secondaryAuth = getAuth(tempApp);
-
-      const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-      const createdUid = cred.user.uid;
-      const now = new Date();
-
-      await setDoc(doc(db, "users", createdUid), {
-        uid: createdUid,
+      const createManagedUser = httpsCallable(functions, "createManagedUser");
+      const result = await createManagedUser({
         email,
-        displayName: displayName || email.split("@")[0],
+        password,
+        displayName,
         role: newUserRole,
-        status: newUserStatus,
-        createdAt: serverTimestamp(),
-        createdBy: currentUserId,
-        roleUpdatedAt: serverTimestamp(),
-        statusUpdatedAt: serverTimestamp(),
-        suspendedAt: newUserStatus === "suspended" ? serverTimestamp() : null,
-        suspendedBy: newUserStatus === "suspended" ? currentUserId : null
+        status: newUserStatus
       });
+      const createdUid = result.data.uid;
+      const now = new Date();
 
       setUsers((prev) => [
         {
@@ -212,20 +193,6 @@ export default function UserManagement() {
       console.error("Error creating user:", error);
       alert(getFriendlyAuthError(error));
     } finally {
-      if (secondaryAuth) {
-        try {
-          await signOut(secondaryAuth);
-        } catch (error) {
-          console.warn("Secondary auth sign-out warning:", error);
-        }
-      }
-      if (tempApp) {
-        try {
-          await deleteApp(tempApp);
-        } catch (error) {
-          console.warn("Temporary app cleanup warning:", error);
-        }
-      }
       setCreatingUser(false);
     }
   };

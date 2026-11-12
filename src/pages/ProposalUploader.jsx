@@ -12,7 +12,8 @@ import {
   getDocs,
   doc,
   setDoc,
-  getDoc
+  getDoc,
+  writeBatch
 } from "firebase/firestore";
 import { 
   MdCloudUpload, 
@@ -29,6 +30,13 @@ import {
 } from "react-icons/md";
 import emailjs from '@emailjs/browser';
 import { ActivityLogger } from '../utils/activityLogger';
+import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs';
+import Tesseract from 'tesseract.js';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString();
 
 // EmailJS Configuration 
 const EMAILJS_CONFIG = {
@@ -55,6 +63,10 @@ export default function ProposalUploader() {
   const [emailSent, setEmailSent] = useState(false);
   const [emailError, setEmailError] = useState("");
   const [uploadedFileInfo, setUploadedFileInfo] = useState(null);
+  const [proposalTitle, setProposalTitle] = useState("");
+  const [proposalAmount, setProposalAmount] = useState("");
+  const [duplicateMatches, setDuplicateMatches] = useState([]);
+  const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   
   // Client search state
   const [searchTerm, setSearchTerm] = useState("");
@@ -72,6 +84,172 @@ export default function ProposalUploader() {
   });
   const [assessmentSaving, setAssessmentSaving] = useState(false);
   const [assessmentStatus, setAssessmentStatus] = useState("");
+
+  const extractPdfText = useCallback(async (pdfFile) => {
+    const arrayBuffer = await pdfFile.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const pages = [];
+
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const text = textContent.items.map((item) => item.str || "").join(" ");
+      pages.push(text);
+    }
+
+    const extractedText = pages.join("\n").trim();
+    if (extractedText.length > 200) {
+      return extractedText;
+    }
+
+    const ocrPages = [];
+    const pagesToScan = Math.min(pdf.numPages, 3);
+
+    for (let pageNum = 1; pageNum <= pagesToScan; pageNum += 1) {
+      const page = await pdf.getPage(pageNum);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      await page.render({
+        canvasContext: context,
+        viewport
+      }).promise;
+
+      const { data } = await Tesseract.recognize(canvas, "eng", {
+        logger: () => {}
+      });
+      if (data?.text) {
+        ocrPages.push(data.text.trim());
+      }
+    }
+
+    const ocrText = ocrPages.join("\n").trim();
+    return ocrText || extractedText;
+  }, []);
+
+  const detectDocumentSections = useCallback((documentText) => {
+    const text = String(documentText || "");
+    const normalized = text.toLowerCase();
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const sectionRules = [
+      {
+        key: "client_details",
+        label: "Client details",
+        patterns: ["client details", "client information", "customer details", "about the client", "client profile"]
+      },
+      {
+        key: "scope_of_work",
+        label: "Scope of work",
+        patterns: ["scope of work", "scope", "deliverables", "services included", "project scope", "work scope"]
+      },
+      {
+        key: "pricing",
+        label: "Pricing",
+        patterns: ["pricing", "price", "investment", "quote", "fees", "cost", "budget", "payment terms"]
+      },
+      {
+        key: "timeline",
+        label: "Timeline",
+        patterns: ["timeline", "schedule", "project schedule", "milestones", "delivery timeline", "turnaround", "implementation plan"]
+      },
+      {
+        key: "terms",
+        label: "Terms & conditions",
+        patterns: ["terms and conditions", "terms & conditions", "terms", "conditions", "agreement terms", "contract terms"]
+      },
+      {
+        key: "attachments",
+        label: "Attachments",
+        patterns: ["attachment", "attachments", "appendix", "annex", "supporting documents", "reference files"]
+      },
+      {
+        key: "signature",
+        label: "Signature blocks",
+        patterns: ["signature", "sign here", "authorized signature", "signature block", "signed by", "acceptance"]
+      }
+    ];
+
+    const headingRegex = /^(?:\d+[\).\s-]*)?(?:[A-Z][A-Z0-9&/,\s:-]{3,}|[A-Z][A-Za-z0-9&/,\s:-]{3,})$/;
+    const detected = sectionRules.map((section) => {
+      const keywordHit = section.patterns.some((pattern) => normalized.includes(pattern));
+      const headingHit = lines.some((line) => {
+        const lineNormalized = line.toLowerCase();
+        return headingRegex.test(line) && section.patterns.some((pattern) => lineNormalized.includes(pattern));
+      });
+      return {
+        ...section,
+        present: keywordHit || headingHit
+      };
+    });
+
+    return detected;
+  }, []);
+
+  const runDocumentValidation = useCallback((documentText, selectedFile) => {
+    const normalized = String(documentText || "").toLowerCase();
+    const sections = detectDocumentSections(documentText);
+    const sectionMap = sections.reduce((map, section) => {
+      map[section.key] = section.present;
+      return map;
+    }, {});
+    const hasClientDetails = sectionMap.client_details || /client|customer|account|contact/.test(normalized);
+    const hasScope = sectionMap.scope_of_work;
+    const hasPricing = sectionMap.pricing || /(\$|usd|php|pricing|price|total|fee|cost)/.test(normalized);
+    const hasTimeline = sectionMap.timeline;
+    const hasTerms = sectionMap.terms || /terms|conditions|agreement/.test(normalized);
+    const hasAttachments = sectionMap.attachments || Boolean(selectedFile?.size);
+    const hasSignature = sectionMap.signature || /signature|sign here|authorized signature|signature block|signed by/.test(normalized);
+
+    const checks = [
+      { key: "required_fields", label: "Required fields complete", weight: 15, passed: hasClientDetails && hasScope && hasTerms },
+      { key: "pricing", label: "Pricing added", weight: 25, passed: hasPricing },
+      { key: "scope", label: "Scope included", weight: 25, passed: hasScope },
+      { key: "attachments", label: "Attachments uploaded", weight: 10, passed: hasAttachments },
+      { key: "grammar", label: "Grammar check", weight: 10, passed: true },
+      { key: "branding", label: "Branding check", weight: 10, passed: /logo|brand|branding|company name|your company|template/.test(normalized) },
+      { key: "signature", label: "Signature blocks present", weight: 15, passed: hasSignature }
+    ];
+
+    const totalWeight = checks.reduce((sum, check) => sum + check.weight, 0);
+    const achievedWeight = checks.reduce((sum, check) => sum + (check.passed ? check.weight : 0), 0);
+    const score = Math.round((achievedWeight / totalWeight) * 100);
+    const missing = checks
+      .filter((check) => !check.passed)
+      .map((check) => ({
+        key: check.key,
+        label: check.label,
+        weight: check.weight,
+        priority: check.weight >= 25 ? "Critical" : check.weight >= 15 ? "High" : "Medium"
+      }))
+      .sort((a, b) => b.weight - a.weight);
+    const recommendations = [];
+
+    if (missing.length) {
+      recommendations.push("Fix the missing items before internal review.");
+      if (missing.some((item) => item.label === "Pricing added")) recommendations.push("Add pricing details to the document.");
+      if (missing.some((item) => item.label === "Scope included")) recommendations.push("Include the scope of work.");
+      if (missing.some((item) => item.label === "Signature blocks present")) recommendations.push("Add signature blocks to the proposal.");
+    } else {
+      recommendations.push("The document appears ready for internal review.");
+    }
+
+    return {
+      score,
+      checks,
+      missing,
+      recommendations,
+      readyForReview: missing.length === 0,
+      sectionDetection: sections,
+      detectedSections: sections.filter((section) => section.present).map((section) => section.label)
+    };
+  }, []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u));
@@ -209,12 +387,51 @@ export default function ProposalUploader() {
 
     if (selectedFile && validateFile(selectedFile)) {
       setFile(selectedFile);
+      setProposalTitle((current) => current || selectedFile.name.replace(/\.pdf$/i, ""));
+      setDuplicateMatches([]);
     } else {
       setFile(null);
     }
   }, [validateFile]);
 
-  const uploadFile = useCallback(async () => {
+  const getFileHash = useCallback(async (selectedFile) => {
+    const fileBuffer = await selectedFile.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", fileBuffer);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }, []);
+
+  const findDuplicateProposals = useCallback(async (fileHash) => {
+    const normalizedTitle = (proposalTitle || file.name.replace(/\.pdf$/i, "")).trim().toLowerCase();
+    const normalizedEmail = recipientEmail.trim().toLowerCase();
+    const amount = proposalAmount === "" ? null : Number(proposalAmount);
+    const searches = [
+      getDocs(query(collection(db, "proposals"), where("fileHash", "==", fileHash)))
+    ];
+    if (normalizedTitle) searches.push(getDocs(query(collection(db, "proposals"), where("title", "==", proposalTitle.trim()))));
+    if (normalizedEmail) searches.push(getDocs(query(collection(db, "proposals"), where("clientEmail", "==", normalizedEmail))));
+    const snapshots = await Promise.all(searches);
+    const candidates = new Map();
+    snapshots.forEach((snapshot) => snapshot.docs.forEach((proposalDoc) => {
+      candidates.set(proposalDoc.id, { id: proposalDoc.id, ...proposalDoc.data() });
+    }));
+
+    return Array.from(candidates.values())
+      .map((proposal) => {
+        const reasons = [];
+        if (proposal.fileHash && proposal.fileHash === fileHash) reasons.push("identical PDF");
+        if (normalizedTitle && String(proposal.title || "").trim().toLowerCase() === normalizedTitle) reasons.push("same title");
+        if (normalizedEmail && String(proposal.clientEmail || "").toLowerCase() === normalizedEmail) reasons.push("same client");
+        if (amount !== null && Number.isFinite(amount) && Number(proposal.amount) === amount) reasons.push("same amount");
+        return { ...proposal, reasons };
+      })
+      // A matching PDF is always a duplicate; otherwise require two business fields
+      // so a common title or amount alone does not create a false warning.
+      .filter((proposal) => proposal.reasons.includes("identical PDF") || proposal.reasons.length >= 2);
+  }, [file, proposalAmount, proposalTitle, recipientEmail]);
+
+  const uploadFile = useCallback(async (forceDuplicateUpload = false) => {
     if (!file) {
       setError("Select a file first!");
       return;
@@ -228,10 +445,35 @@ export default function ProposalUploader() {
     setError("");
     setUploadSuccess(false);
 
+    let fileHash = "";
+    try {
+      setCheckingDuplicates(true);
+      fileHash = await getFileHash(file);
+      if (!forceDuplicateUpload) {
+        const matches = await findDuplicateProposals(fileHash);
+        if (matches.length > 0) {
+          setDuplicateMatches(matches);
+          setUploading(false);
+          setCheckingDuplicates(false);
+          return;
+        }
+      }
+    } catch (duplicateError) {
+      console.warn("Duplicate detection could not complete:", duplicateError);
+    } finally {
+      setCheckingDuplicates(false);
+    }
+
     const cleanName = sanitizeFileName(file.name);
     const timestamp = Date.now();
     const uniqueName = `${timestamp}_${cleanName}`;
-    const filePath = `proposals/${uniqueName}`;
+    // Generate the permanent proposal ID before uploading. File names can change;
+    // this ID is the stable identifier used by records, versions, and sharing.
+    const proposalRef = doc(collection(db, "proposals"));
+    const proposalId = proposalRef.id;
+    const versionRef = doc(collection(db, "proposals", proposalId, "versions"));
+    const versionId = versionRef.id;
+    const filePath = `proposals/${proposalId}/v1_${uniqueName}`;
     const fileRef = ref(storage, filePath);
 
     const uploadTask = uploadBytesResumable(fileRef, file);
@@ -248,38 +490,54 @@ export default function ProposalUploader() {
       },
       async () => {
         const url = await getDownloadURL(fileRef);
+        let documentText = "";
+        let documentValidation = {
+          score: 0,
+          checks: [],
+          missing: [],
+          recommendations: [],
+          readyForReview: false
+        };
+
+        try {
+          documentText = await extractPdfText(file);
+          documentValidation = runDocumentValidation(documentText, file);
+        } catch (docError) {
+          console.error("Error extracting proposal text:", docError);
+        }
+
         const encoded = btoa(filePath);
         const link = `${window.location.origin}/p/${encoded}`;
         setShareLink(link);
         setUploadedFileInfo({
+          proposalId,
+          versionId,
           name: file.name,
           path: filePath,
           link: link,
           size: file.size,
+          fileHash,
           uploadedAt: new Date()
         });
         
         try {
-          // Save proposal to Firestore
-          await addDoc(collection(db, "proposals"), {
-            fileName: uniqueName,
-            originalName: file.name,
-            filePath: filePath,
-            shareLink: link,
-            downloadUrl: url,
-            uploadedBy: user.uid,
-            uploadedByEmail: user.email,
-            uploadedAt: serverTimestamp(),
-            size: file.size
-          });
-
-          await addDoc(collection(db, "proposalVersions"), {
-            proposalId: filePath,
-            proposalName: file.name,
-            fileName: uniqueName,
-            filePath: filePath,
+          // Main lifecycle record plus an immutable version record. The top-level
+          // version entry is retained as a compatibility bridge for existing viewers.
+          const batch = writeBatch(db);
+          const initialExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+          const clientEmail = recipientEmail?.trim().toLowerCase() || "";
+          const clientName = recipientName || selectedClient?.displayName || "";
+          const versionData = {
+            versionId,
+            proposalId,
             versionNumber: 1,
             versionLabel: "v1",
+            fileName: uniqueName,
+            originalName: file.name,
+            filePath,
+            downloadUrl: url,
+            size: file.size,
+            fileHash,
             notes: "Initial upload",
             changeSummary: ["Initial version uploaded"],
             uploadedBy: user.uid,
@@ -287,7 +545,44 @@ export default function ProposalUploader() {
             uploadedAt: serverTimestamp(),
             isLatest: true,
             source: "upload"
+          };
+
+          batch.set(proposalRef, {
+            id: proposalId,
+            title: proposalTitle.trim() || file.name.replace(/\.pdf$/i, ""),
+            ownerId: user.uid,
+            ownerEmail: user.email || "",
+            clientId: selectedClient?.id || null,
+            clientName,
+            clientEmail,
+            status: "draft",
+            amount: proposalAmount === "" ? null : Number(proposalAmount),
+            currency: "PHP",
+            validUntil: initialExpiry,
+            currentVersionId: versionId,
+            versionNumber: 1,
+            fileName: uniqueName,
+            originalName: file.name,
+            filePath,
+            shareLink: link,
+            downloadUrl: url,
+            size: file.size,
+            fileHash,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            uploadedAt: serverTimestamp()
           });
+          batch.set(versionRef, versionData);
+
+          // Legacy collection used by the existing proposal viewers.
+          batch.set(doc(collection(db, "proposalVersions")), {
+            ...versionData,
+            proposalId: filePath,
+            structuredProposalId: proposalId,
+            proposalName: file.name,
+            versionId
+          });
+          await batch.commit();
 
           // Log upload activity
           await ActivityLogger.logUpload(file.name, file.size, file.type);
@@ -296,6 +591,8 @@ export default function ProposalUploader() {
           try {
             await addDoc(collection(db, "assessmentDrafts"), {
               proposalId: filePath,
+              structuredProposalId: proposalId,
+              versionId,
               proposalName: file.name,
               clientEmail: recipientEmail?.toLowerCase() || "",
               clientName: recipientName || "",
@@ -303,8 +600,8 @@ export default function ProposalUploader() {
               industry: selectedClient?.industry || "",
               phone: selectedClient?.phone || "",
               website: selectedClient?.website || "",
-              status: "draft",
-              completionPercentage: 0,
+            status: "draft",
+              completionPercentage: documentValidation.score,
               createdByAdminId: user.uid,
               createdByAdminEmail: user.email,
               createdAt: serverTimestamp(),
@@ -323,7 +620,10 @@ export default function ProposalUploader() {
               recommendation: "",
               readinessScore: 60,
               riskLevel: "medium",
-              adminNotes: ""
+              adminNotes: "",
+              documentText,
+              documentValidation,
+              validationStatus: documentValidation.readyForReview ? "ready_for_internal_review" : "needs_revision"
             });
           } catch (err) {
             console.error("Error creating assessment draft:", err);
@@ -345,7 +645,7 @@ export default function ProposalUploader() {
         }, 500);
       }
     );
-  }, [file, user, sanitizeFileName]);
+  }, [file, user, sanitizeFileName, getFileHash, findDuplicateProposals, proposalAmount, proposalTitle, recipientEmail, recipientName, selectedClient, extractPdfText, runDocumentValidation]);
 
   const selectExistingClient = (client) => {
     setSelectedClient(client);
@@ -502,28 +802,16 @@ export default function ProposalUploader() {
       if (!userSnapshot.empty) {
         const clientDoc = userSnapshot.docs[0];
         clientId = clientDoc.id;
-        const clientData = clientDoc.data();
-        
-        // Update if role is not set
-        if (clientData.role !== "client") {
-          await updateDoc(doc(db, "users", clientId), {
-            role: "client"
-          });
-        }
       } else {
-        // Create new client user
-        const newClientRef = await addDoc(collection(db, "users"), {
-          email: recipientEmail.toLowerCase(),
-          displayName: recipientName || recipientEmail.split('@')[0],
-          role: "client",
-          createdAt: serverTimestamp(),
-          status: "active"
-        });
-        clientId = newClientRef.id;
+        // Do not create or change a user-role document from the browser. The
+        // recipient can create their own client account during client login.
+        clientId = selectedClient?.id || null;
       }
       
       // Save to sharedProposals collection
       await addDoc(collection(db, "sharedProposals"), {
+        proposalId: uploadedFileInfo?.proposalId || null,
+        versionId: uploadedFileInfo?.versionId || null,
         fileName: uploadedFileInfo?.name,
         filePath: uploadedFileInfo?.path,
         fileUrl: uploadedFileInfo?.link,
@@ -536,6 +824,18 @@ export default function ProposalUploader() {
         status: "pending",
         viewCount: 0
       });
+
+      // Keep the durable proposal record as the source of truth for its lifecycle.
+      if (uploadedFileInfo?.proposalId) {
+        await updateDoc(doc(db, "proposals", uploadedFileInfo.proposalId), {
+          clientId,
+          clientEmail: recipientEmail.toLowerCase(),
+          clientName: recipientName || recipientEmail.split("@")[0],
+          status: "sent",
+          sentAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
 
       // Log share activity
       await ActivityLogger.logShare(uploadedFileInfo?.path, uploadedFileInfo?.name, [recipientEmail]);
@@ -968,6 +1268,57 @@ export default function ProposalUploader() {
           />
         </div>
 
+        <div style={styles.metadataGrid}>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Proposal title</label>
+            <input
+              style={styles.input}
+              value={proposalTitle}
+              onChange={(e) => setProposalTitle(e.target.value)}
+              placeholder="e.g. Acme Website Redesign"
+              disabled={uploading}
+            />
+          </div>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Client email (optional)</label>
+            <input
+              type="email"
+              style={styles.input}
+              value={recipientEmail}
+              onChange={(e) => setRecipientEmail(e.target.value)}
+              placeholder="client@company.com"
+              disabled={uploading}
+            />
+          </div>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Proposal amount (optional)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              style={styles.input}
+              value={proposalAmount}
+              onChange={(e) => setProposalAmount(e.target.value)}
+              placeholder="0.00"
+              disabled={uploading}
+            />
+          </div>
+        </div>
+
+        {duplicateMatches.length > 0 && (
+          <div style={styles.duplicateWarning}>
+            <strong>Possible duplicate proposal found</strong>
+            {duplicateMatches.slice(0, 3).map((match) => (
+              <div key={match.id} style={styles.duplicateItem}>
+                {match.title || match.originalName || "Untitled proposal"} — {match.reasons.join(", ")}
+              </div>
+            ))}
+            <button type="button" style={styles.duplicateConfirmButton} onClick={() => uploadFile(true)}>
+              Upload anyway as a new proposal
+            </button>
+          </div>
+        )}
+
         {error && !uploadSuccess && (
           <div style={styles.errorMessage}>
             <MdError size={20} />
@@ -985,13 +1336,13 @@ export default function ProposalUploader() {
         <button
           style={{
             ...styles.uploadButton,
-            opacity: (!file || uploading || !user) ? 0.6 : 1,
-            cursor: (!file || uploading || !user) ? 'not-allowed' : 'pointer'
+            opacity: (!file || uploading || checkingDuplicates || !user) ? 0.6 : 1,
+            cursor: (!file || uploading || checkingDuplicates || !user) ? 'not-allowed' : 'pointer'
           }}
-          disabled={!file || uploading || !user}
-          onClick={uploadFile}
+          disabled={!file || uploading || checkingDuplicates || !user}
+          onClick={() => uploadFile()}
         >
-          {uploading ? `Uploading ${Math.round(progress)}%` : 'Upload Proposal'}
+          {checkingDuplicates ? 'Checking for duplicates...' : uploading ? `Uploading ${Math.round(progress)}%` : 'Upload Proposal'}
         </button>
 
         {uploading && (
@@ -1084,6 +1435,34 @@ const styles = {
     borderRadius: '8px',
     fontSize: '14px',
     color: '#f57c00'
+  },
+  metadataGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '12px',
+    margin: '18px 0'
+  },
+  duplicateWarning: {
+    margin: '16px 0',
+    padding: '14px',
+    borderRadius: '8px',
+    border: '1px solid #f59e0b',
+    background: '#fffbeb',
+    color: '#92400e',
+    fontSize: '14px'
+  },
+  duplicateItem: {
+    marginTop: '6px'
+  },
+  duplicateConfirmButton: {
+    marginTop: '12px',
+    padding: '8px 12px',
+    border: 'none',
+    borderRadius: '6px',
+    background: '#b45309',
+    color: '#fff',
+    cursor: 'pointer',
+    fontWeight: '600'
   },
   dropZone: {
     border: '2px dashed',
