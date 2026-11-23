@@ -8,7 +8,7 @@ import ProposalDetail from "./pages/ProposalDetail"; // This is your main viewer
 import AuthPage from "./Components/AuthPage";
 import Signup from "./pages/Signup";
 import ProposalSigning from "./pages/ProposalSigning";
-import ThankYou from "./pages/ThankYou";
+import ThankYou from "./pages/Thankyou";
 import ClientLogin from "./pages/ClientLogin"; // Add this import
 import ClientDashboard from "./Components/ClientDashboard"; // Add this import
 import SmartProposalViewer from "./Components/SmartProposalViewer"; // Add this import
