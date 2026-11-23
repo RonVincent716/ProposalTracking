@@ -47,7 +47,7 @@ import {
   MdNotifications,
   MdRateReview
 } from "react-icons/md";
-import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
+import ProposalStatusBadge from "../pages/ProposalStatusBadge";
 import ClientDiscussionCenter from "./ClientDiscussionCenter";
 
 const toDateOrNull = (value) => {

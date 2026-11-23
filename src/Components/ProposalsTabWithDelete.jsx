@@ -40,7 +40,7 @@ import {
   MdRateReview,
   MdSend
 } from "react-icons/md";
-import ProposalStatusBadge from "../Pages/ProposalStatusBadge";
+import ProposalStatusBadge from "../pages/ProposalStatusBadge";
 import { usePermissions } from "../utils/permissions";
 import { ActivityLogger } from "../utils/activityLogger";
 import { useAssessmentDrafts } from "../hooks/useAssessmentDrafts";

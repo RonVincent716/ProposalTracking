@@ -27,7 +27,7 @@ import {
   MdSearch,
   MdRefresh
 } from "react-icons/md";
-import ProposalStatusBadge from "./ProposalStatusBadge";
+import ProposalStatusBadge from "../pages/ProposalStatusBadge";
 
 export default function ProposalsTab({ user, onShareClick, onSignClick, onViewClick, onDownloadClick }) {
   const [files, setFiles] = useState([]);
