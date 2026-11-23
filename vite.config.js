@@ -5,12 +5,22 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: true,
+    allowedHosts: ['.airoapp.ai'],
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
       'Cross-Origin-Embedder-Policy': 'unsafe-none',
     },
     watch: {
       usePolling: true,
+    },
+  },
+  preview: {
+    host: true,
+    allowedHosts: ['.airoapp.ai'],
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+      'Cross-Origin-Embedder-Policy': 'unsafe-none',
     },
   },
 })
